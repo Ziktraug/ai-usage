@@ -25,7 +25,7 @@ import { validWorkSessionReadScope, type WorkSessionReadScope, workSessionScopeS
  * What is different from the skill family, and deliberately so:
  *
  * - **The family stays outside the served revision.** Nothing here touches `usage_rows`,
- *   `served_report_*`, the replication outbox or the merge bundle, and an import does not advance
+ *   `served_report_*` or the merge bundle, and an import does not advance
  *   the store generation: the served revision is not stale because a Desktop registry file moved.
  *   The Work view reads this table directly on a collection-SWR policy.
  * - **One row per desktop session, overwritten in place.** The registry file is the app's current

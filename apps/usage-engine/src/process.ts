@@ -206,6 +206,25 @@ const trackOperation = <Value>(operation: Promise<Value>): TrackedOperation<Valu
   return { promise, state: () => state };
 };
 
+/**
+ * A termination that lands while a startup phase is still in flight waits for that phase to settle,
+ * so a clean stop can still release the writer lease. Only a forced termination stops the wait;
+ * without one the phase stays pending and the caller keeps its retain-and-clean-up-late path.
+ */
+const settleUnlessForced = async (
+  operation: TrackedOperation<unknown>,
+  forcedTermination: Promise<UsageEngineTerminationSignal> | undefined,
+): Promise<void> => {
+  if (operation.state() !== 'pending' || !forcedTermination) {
+    return;
+  }
+  const settled = operation.promise.then(
+    () => undefined,
+    () => undefined,
+  );
+  await Promise.race([settled, forcedTermination.then(() => undefined)]);
+};
+
 const disposeRuntimeForProcess = async (
   runtime: UsageEngineRuntimeHost,
   retainWriterLease: boolean,
@@ -296,6 +315,7 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
     const cleanupFailures: unknown[] = [];
     let retainWriterLease = false;
     if (!rendezvous && rendezvousPublication) {
+      await settleUnlessForced(rendezvousPublication, options.forcedTermination);
       if (rendezvousPublication.state() === 'fulfilled') {
         rendezvous = await rendezvousPublication.promise;
       } else if (rendezvousPublication.state() === 'pending') {
@@ -321,6 +341,7 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
       }
     }
     if (!server && serverStart) {
+      await settleUnlessForced(serverStart, options.forcedTermination);
       if (serverStart.state() === 'fulfilled') {
         server = await serverStart.promise;
       } else if (serverStart.state() === 'pending') {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Client } from '@orpc/client';
 import { createORPCSvelteQueryUtils } from '@orpc/svelte-query';
 import { QueryObserver } from '@tanstack/svelte-query';
+import { createWebRpcClient } from '../rpc/client';
 import { createWebQueryClient, dehydrateWebQueryClient } from './client';
 import { createPublicationQueryInvalidator, createWebQueryRuntime, webQueryOwnership } from './composition';
 import { skillObservationsKey } from './identities/skills';
@@ -15,24 +16,26 @@ const BULK_GC_TIME_MS = 20;
 const BULK_GC_SETTLE_MS = 50;
 
 describe('Web Query composition', () => {
-  test('QUERY-CONVERGENCE-REQUEST-RUNTIME: isolates request clients and injects each request fetch', async () => {
+  test('QUERY-CONVERGENCE-REQUEST-RUNTIME: isolates request clients over each request RPC client', async () => {
     const alphaRequests: Request[] = [];
     const betaRequests: Request[] = [];
     const alpha = createWebQueryRuntime({
-      fetch: (request) => {
-        alphaRequests.push(request);
-        return Promise.resolve(invalidRpcResponse());
-      },
-      requestOwner: 'alpha',
-      url: new URL('http://127.0.0.1:41001/alpha'),
+      rpc: createWebRpcClient({
+        fetch: (request) => {
+          alphaRequests.push(request);
+          return Promise.resolve(invalidRpcResponse());
+        },
+        url: new URL('http://127.0.0.1:41001/rpc'),
+      }),
     });
     const beta = createWebQueryRuntime({
-      fetch: (request) => {
-        betaRequests.push(request);
-        return Promise.resolve(invalidRpcResponse());
-      },
-      requestOwner: 'beta',
-      url: new URL('http://127.0.0.1:41002/beta'),
+      rpc: createWebRpcClient({
+        fetch: (request) => {
+          betaRequests.push(request);
+          return Promise.resolve(invalidRpcResponse());
+        },
+        url: new URL('http://127.0.0.1:41002/rpc'),
+      }),
     });
     const isolationKey = finiteSwrKey('runtime', 'owner');
     alpha.queryClient.setQueryData(isolationKey, 'alpha');
@@ -46,8 +49,6 @@ describe('Web Query composition', () => {
     expect(betaRequests).toHaveLength(1);
     expect(alphaRequests[0]?.url).toStartWith('http://127.0.0.1:41001/rpc/report/revisionManifest');
     expect(betaRequests[0]?.url).toStartWith('http://127.0.0.1:41002/rpc/report/revisionManifest');
-    expect(alphaRequests[0]?.headers.get('x-ai-usage-request-owner')).toBe('alpha');
-    expect(betaRequests[0]?.headers.get('x-ai-usage-request-owner')).toBe('beta');
     alpha.queryClient.clear();
     beta.queryClient.clear();
   });
@@ -66,9 +67,11 @@ describe('Web Query composition', () => {
     });
     const serverUpdatedAt = serverClient.getQueryState(key)?.dataUpdatedAt;
     const runtime = createWebQueryRuntime({
-      fetch: () => Promise.resolve(invalidRpcResponse()),
       hydrationState: dehydrateWebQueryClient(serverClient),
-      url: new URL('http://127.0.0.1:41003/'),
+      rpc: createWebRpcClient({
+        fetch: () => Promise.resolve(invalidRpcResponse()),
+        url: new URL('http://127.0.0.1:41003/rpc'),
+      }),
     });
     let browserRequests = 0;
     const observer = new QueryObserver(runtime.queryClient, {
@@ -175,10 +178,7 @@ describe('Web Query composition', () => {
       'work-attempts',
       'delegation-settings',
       'delegation-jobs',
-      'memory',
-      'projects',
       'sync',
-      'replication',
       'sources',
     ]);
     // Exactly two families react to a completed publication cycle, and they react differently. The

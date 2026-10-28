@@ -1,11 +1,7 @@
+import type { WebContract } from '@ai-usage/web-contract';
+import type { Router } from '@orpc/server';
 import type { DelegationRpcDependencies } from './delegation';
 import { createDelegationRpcRouter } from './delegation';
-import type { MemoryRpcDependencies } from './memory';
-import { createMemoryRpcRouter } from './memory';
-import type { ProjectsRpcDependencies } from './projects';
-import { createProjectsRpcRouter } from './projects';
-import type { ReplicationRpcDependencies } from './replication';
-import { createReplicationRpcRouter } from './replication';
 import type { ReportRpcServices } from './report';
 import { createReportRpcRouter } from './report';
 import type { SessionRpcDependencies } from './session';
@@ -24,9 +20,6 @@ import { createWorkThreadsRpcRouter, type WorkThreadsRpcDependencies } from './w
 
 export interface WebRpcRouterDependencies {
   readonly delegation: DelegationRpcDependencies;
-  readonly memory: MemoryRpcDependencies;
-  readonly projects: ProjectsRpcDependencies;
-  readonly replication: ReplicationRpcDependencies;
   readonly report: ReportRpcServices;
   readonly session: SessionRpcDependencies;
   readonly skills: {
@@ -40,19 +33,18 @@ export interface WebRpcRouterDependencies {
   readonly workThreads: WorkThreadsRpcDependencies;
 }
 
-export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) => ({
-  ...createReportRpcRouter(dependencies.report),
-  delegation: createDelegationRpcRouter(dependencies.delegation),
-  memory: createMemoryRpcRouter(dependencies.memory),
-  projects: createProjectsRpcRouter(dependencies.projects),
-  replication: createReplicationRpcRouter(dependencies.replication),
-  session: createSessionRpcRouter(dependencies.session),
-  skills: createSkillsRouter(dependencies.skills.selectCapability, dependencies.skills.preflight),
-  sync: createSyncRpcRouter(dependencies.sync),
-  work: createWorkRpcRouter(dependencies.work),
-  workAttempts: createWorkAttemptsRpcRouter(dependencies.workAttempts),
-  workRouting: createWorkRoutingRpcRouter(dependencies.workRouting),
-  workThreads: createWorkThreadsRpcRouter(dependencies.workThreads),
-});
+/** Implements every contract procedure: a declared procedure without an implementation does not type-check. */
+export const createWebRpcRouter = (dependencies: WebRpcRouterDependencies) =>
+  ({
+    ...createReportRpcRouter(dependencies.report),
+    delegation: createDelegationRpcRouter(dependencies.delegation),
+    session: createSessionRpcRouter(dependencies.session),
+    skills: createSkillsRouter(dependencies.skills.selectCapability, dependencies.skills.preflight),
+    sync: createSyncRpcRouter(dependencies.sync),
+    work: createWorkRpcRouter(dependencies.work),
+    workAttempts: createWorkAttemptsRpcRouter(dependencies.workAttempts),
+    workRouting: createWorkRoutingRpcRouter(dependencies.workRouting),
+    workThreads: createWorkThreadsRpcRouter(dependencies.workThreads),
+  }) satisfies Router<WebContract, Record<never, never>>;
 
 export type WebRpcRouter = ReturnType<typeof createWebRpcRouter>;

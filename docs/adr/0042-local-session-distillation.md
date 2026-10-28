@@ -2,7 +2,9 @@
 
 - **Status**: Accepted; superseded in part by [ADR 0049](0049-retire-session-distillation.md)
   for the retired feature. Its data-preservation obligation, keeping the analysis tables and
-  rows, is the general rule of [ADR 0075](0075-local-store-schema-evolution.md).
+  rows, is the general rule of [ADR 0075](0075-local-store-schema-evolution.md). Since
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md) (2026-10-27) the Memory store holding
+  those tables is no longer opened; its file is kept.
 - **Date**: 2026-10-04
 - **Extends**: 0024, 0026, 0038, 0040, 0041
 
@@ -59,7 +61,7 @@ or Markdown authority would duplicate lifecycle and integrity ownership.
 ## Evidence
 
 - [Execution plan](../../plans/115-local-session-distillation.md)
-- [Semantic contract](../../packages/platform-core/src/session-distillation.ts)
-- [Evidence reader](../../packages/local-machine/src/distillation-evidence.ts)
-- [Skill](../../skills/session-distillation/SKILL.md)
-- [Synthetic evaluation](../../tools/fixtures/distillation/evaluation.json)
+- Semantic contract: `packages/platform-core/src/session-distillation.ts`, removed by ADR 0084 (git history keeps it)
+- Evidence reader: `packages/local-machine/src/distillation-evidence.ts`, removed by ADR 0084 (git history keeps it)
+- Skill: `skills/session-distillation/SKILL.md`, removed by ADR 0049 (git history keeps it)
+- Synthetic evaluation: `tools/fixtures/distillation/evaluation.json`, removed by ADR 0049 (git history keeps it)

@@ -36,7 +36,6 @@ import {
 import {
   parseUsageEnginePublicationRevision,
   type UsageEngineProjectSourceReference,
-  type UsageEngineReplicationStatusOutput,
 } from '@ai-usage/usage-engine-control';
 import { createUsageFileMergeService, type UsageFileMergeService, UsageMergeError } from '@ai-usage/usage-merge';
 import {
@@ -519,7 +518,6 @@ export interface LiveUsageEngineRuntimeOptions {
   readonly now?: () => Date;
   readonly operatorCwd: string;
   readonly readInput?: typeof readUsageEngineInput;
-  readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly reportRecovery?: (result: UsageEngineRecoveryReport) => void;
   /** One operator-log line per review attempt or delegation transition (ADR 0053, 0077); never a transcript. */
   readonly reportReviewAttempt?: (line: string) => void;
@@ -1156,7 +1154,6 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
         await eventRuntime.dispose();
       }
     },
-    ...(options.readReplicationStatus === undefined ? {} : { readReplicationStatus: options.readReplicationStatus }),
     delegation,
     reviewAttempts,
     routingQualification,

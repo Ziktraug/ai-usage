@@ -19,7 +19,6 @@ import {
   parseUsageEngineProjectGroupReferenceCommand,
   parseUsageEngineProtocolVersion,
   parseUsageEngineReplayCursor,
-  parseUsageEngineReplicationStatusOutput,
   parseUsageEngineReviewAttemptOutput,
   parseUsageEngineStatus,
   parseUsageEngineWorkThreadOutput,
@@ -94,7 +93,7 @@ describe('narrow project group reference command parser', () => {
     },
   );
 
-  test.each(['publish', 'detect-all', 'run-all-enabled', 'replication-status', 'collect-fresh-quota'])(
+  test.each(['publish', 'detect-all', 'run-all-enabled', 'collect-fresh-quota'])(
     'rejects the otherwise valid unrelated %s command',
     (kind) => {
       const unrelated = { command: kind };
@@ -248,7 +247,6 @@ describe('usage engine control contracts', () => {
       { command: 'run-source', sourceId: 'codex.sessions' },
       { command: 'collect-fresh-report', harness: null, includeCursor: false },
       { command: 'publish' },
-      { command: 'replication-status' },
       { command: 'set-source-enabled', enabled: false, sourceId: 'rtk.savings' },
       { command: 'replace-project-aliases', projectAliases: [{ match: ['fixture/*'], name: 'Fixture' }] },
       { command: 'replace-project-groups', projectGroups: [] },
@@ -322,6 +320,26 @@ describe('usage engine control contracts', () => {
     for (const command of commands) {
       expect(parseUsageEngineCommand(command) as unknown).toEqual(command);
     }
+  });
+
+  test('rejects the removed replication-status command and its completion', () => {
+    expect(() => parseUsageEngineCommand({ command: 'replication-status' })).toThrow('command kind is unknown');
+    expect(() =>
+      parseUsageEngineCommandCompletion({
+        command: 'replication-status',
+        commandId: 'command-1',
+        completedAt: fixtureGeneratedAt,
+        output: {
+          kind: 'replication-status',
+          lastDiagnostic: null,
+          memory: null,
+          mode: 'local-only',
+          runtimeState: 'disabled',
+          usage: null,
+        },
+        state: 'succeeded',
+      }),
+    ).toThrow('completion command kind is unknown');
   });
 
   test('rejects unknown fields, source IDs, data payloads, and over-budget UTF-8', () => {
@@ -433,8 +451,10 @@ describe('usage engine control contracts', () => {
   });
 
   test('rejects protocol mismatches and inconsistent status identities', () => {
-    expect(Number(parseUsageEngineProtocolVersion(USAGE_ENGINE_PROTOCOL_VERSION))).toBe(3);
+    expect(Number(parseUsageEngineProtocolVersion(USAGE_ENGINE_PROTOCOL_VERSION))).toBe(4);
     expect(() => parseUsageEngineProtocolVersion(1)).toThrow('protocol');
+    // Protocol 3 still offered `replication-status`; a protocol-3 peer fails closed.
+    expect(() => parseUsageEngineProtocolVersion(3)).toThrow('protocol');
     expect(parseUsageEngineStatus(fixtureStatus()) as unknown).toEqual(fixtureStatus());
     expect(() =>
       parseUsageEngineStatus({
@@ -443,43 +463,6 @@ describe('usage engine control contracts', () => {
       }),
     ).toThrow('instance');
     expect(() => parseUsageEngineStatus({ ...fixtureStatus(), sessions: [] })).toThrow('unknown');
-  });
-
-  test('parses content-free replication status and rejects inconsistent local mode', () => {
-    const status = {
-      kind: 'replication-status',
-      lastDiagnostic: { code: 'retry-scheduled', problemCode: 'rate-limited', streamId: 'usage-v1' },
-      memory: null,
-      mode: 'connected',
-      runtimeState: 'waiting',
-      usage: {
-        acknowledged: 8,
-        acknowledgedThroughGeneration: 8,
-        blocked: 0,
-        inFlight: 0,
-        lastAcknowledgedAt: fixtureGeneratedAt,
-        lastErrorCode: 'rate-limited',
-        nextRetryAt: fixtureGeneratedAt,
-        oldestUnacknowledgedAt: fixtureGeneratedAt,
-        pending: 2,
-        streamId: 'usage-v1',
-      },
-    } as const;
-    expect(parseUsageEngineReplicationStatusOutput(status) as unknown).toEqual(status);
-    expect(() =>
-      parseUsageEngineReplicationStatusOutput({
-        ...status,
-        lastDiagnostic: null,
-        mode: 'local-only',
-        runtimeState: 'disabled',
-      }),
-    ).toThrow('inconsistent');
-    expect(() =>
-      parseUsageEngineReplicationStatusOutput({
-        ...status,
-        usage: { ...status.usage, streamId: 'memory-v1' },
-      }),
-    ).toThrow('inconsistent');
   });
 
   test('parses admission results, bounded completion events, and error responses', () => {

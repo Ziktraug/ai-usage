@@ -5,7 +5,7 @@ import {
   isExecutorAccountFingerprint,
   ROUTING_QUALIFICATION_BOUNDS,
 } from '@ai-usage/report-core/work-routing-vocabulary';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   array,
   boolean,
@@ -25,6 +25,7 @@ import {
   variant,
 } from 'valibot';
 import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { emptyInputSchema, isJsonWireValue, jsonWireValueSchema, publicMessageSchema } from './schema-conventions';
 
 /**
@@ -214,13 +215,29 @@ const workRoutingErrors = {
 } as const;
 
 export const workRoutingContract = {
-  context: oc
-    .route({ method: 'GET', path: '/work/routing-context' })
+  context: rpcProcedure({
+    errors: workRoutingErrors,
+    method: 'GET',
+    path: '/work/routing-context',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(emptyInputSchema)
-    .output(workRoutingContextSchema)
-    .errors(workRoutingErrors),
-  qualify: oc
-    .route({ method: 'POST', path: '/work/routing-qualification' })
+    .output(workRoutingContextSchema),
+  qualify: rpcProcedure({
+    errors: {
+      EngineUnavailable: publicErrorMap.EngineUnavailable,
+      Forbidden: publicErrorMap.Forbidden,
+      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+      InvalidInput: publicErrorMap.InvalidInput,
+    },
+    method: 'POST',
+    path: '/work/routing-qualification',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(workRoutingQualifyInputSchema)
     .output(workRoutingQualifyOutputSchema),
 } as const;

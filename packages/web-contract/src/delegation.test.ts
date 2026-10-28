@@ -1052,6 +1052,7 @@ describe('delegation web contract', () => {
     expect(Object.keys(delegationContract.saveSettings['~orpc'].errorMap ?? {}).sort()).toEqual([
       'Conflict',
       'EngineUnavailable',
+      'Forbidden',
       'ForbiddenDemo',
       'InvalidInput',
       'Unavailable',

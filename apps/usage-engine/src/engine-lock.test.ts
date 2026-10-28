@@ -18,6 +18,7 @@ import {
 } from 'node:fs/promises';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
+import { USAGE_ENGINE_PROTOCOL_VERSION } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken, usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
 import {
   acquireUsageEngineLock,
@@ -77,6 +78,23 @@ const writeLock = async (stateDirectory: string, value: unknown, mode = 0o600): 
   const lockPath = usageEngineLockPath(databasePath);
   await writeFile(lockPath, `${JSON.stringify(value)}\n`, { mode });
   return lockPath;
+};
+
+/** A rendezvous document exactly as the previous protocol's engine published it. */
+const previousProtocolRendezvous = (stateDirectory: string, instanceId: string) => ({
+  instanceId,
+  port: 41_052,
+  protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION - 1,
+  targetId: targetIdFor(stateDirectory),
+  token: 'a'.repeat(43),
+});
+
+/** Writes rendezvous.json directly, as a JSON document or as raw text. */
+const writeRendezvousDocument = async (stateDirectory: string, document: unknown): Promise<string> => {
+  const rendezvousPath = usageEngineRendezvousPath(stateDirectory);
+  const text = typeof document === 'string' ? document : `${JSON.stringify(document)}\n`;
+  await writeFile(rendezvousPath, text, { mode: 0o600 });
+  return rendezvousPath;
 };
 
 const recoveryClaimPathFor = (lockPath: string, pid: number, processStartTimeTicks = 'none'): string => {
@@ -428,6 +446,86 @@ describe('usage engine writer lock', () => {
     );
     await expect(Bun.file(mismatchedLock).exists()).resolves.toBe(true);
     await expect(Bun.file(usageEngineRendezvousPath(mismatchedDirectory)).exists()).resolves.toBe(true);
+  });
+
+  test('recovers a stale lock whose rendezvous a previous-protocol engine published', async () => {
+    // An engine from the previous release, killed while serving, leaves its own protocol version
+    // in rendezvous.json beside a dead-PID lock; ownership, not the version, decides recovery.
+    const stateDirectory = await createFixture();
+    const rendezvousPath = await writeRendezvousDocument(
+      stateDirectory,
+      previousProtocolRendezvous(stateDirectory, INSTANCE_ID),
+    );
+    const lockPath = await writeLock(stateDirectory, await lockMetadata(stateDirectory, 2_147_483_647));
+
+    const recovered = await acquireLock(stateDirectory, OTHER_INSTANCE_ID);
+
+    await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
+    expect(JSON.parse(await readFile(lockPath, 'utf8'))).toMatchObject({ instanceId: OTHER_INSTANCE_ID });
+    await recovered.release();
+  });
+
+  test('preserves a previous-protocol stale rendezvous owned by another instance', async () => {
+    const stateDirectory = await createFixture();
+    const rendezvousPath = await writeRendezvousDocument(
+      stateDirectory,
+      previousProtocolRendezvous(stateDirectory, OTHER_INSTANCE_ID),
+    );
+    const lockPath = await writeLock(stateDirectory, await lockMetadata(stateDirectory, 2_147_483_647));
+    const [lockBefore, rendezvousBefore] = await Promise.all([
+      readFile(lockPath, 'utf8'),
+      readFile(rendezvousPath, 'utf8'),
+    ]);
+
+    await expect(acquireLock(stateDirectory, OTHER_INSTANCE_ID)).rejects.toThrow(
+      'stale lock and rendezvous identities differ and were preserved',
+    );
+    await expect(readFile(lockPath, 'utf8')).resolves.toBe(lockBefore);
+    await expect(readFile(rendezvousPath, 'utf8')).resolves.toBe(rendezvousBefore);
+  });
+
+  test.each([
+    ['is not JSON', (_stateDirectory: string) => '{"instanceId":'],
+    [
+      'carries a fractional protocol version',
+      (stateDirectory: string) => ({
+        ...previousProtocolRendezvous(stateDirectory, INSTANCE_ID),
+        protocolVersion: 3.5,
+      }),
+    ],
+    [
+      'carries a zero protocol version',
+      (stateDirectory: string) => ({ ...previousProtocolRendezvous(stateDirectory, INSTANCE_ID), protocolVersion: 0 }),
+    ],
+    [
+      'carries a textual protocol version',
+      (stateDirectory: string) => ({
+        ...previousProtocolRendezvous(stateDirectory, INSTANCE_ID),
+        protocolVersion: '3',
+      }),
+    ],
+    [
+      'carries an unknown field',
+      (stateDirectory: string) => ({ ...previousProtocolRendezvous(stateDirectory, INSTANCE_ID), host: '127.0.0.1' }),
+    ],
+    [
+      'carries a malformed token',
+      (stateDirectory: string) => ({ ...previousProtocolRendezvous(stateDirectory, INSTANCE_ID), token: 'short' }),
+    ],
+  ])('preserves a stale rendezvous that %s and refuses recovery', async (_case, document) => {
+    const stateDirectory = await createFixture();
+    const rendezvousPath = await writeRendezvousDocument(stateDirectory, document(stateDirectory));
+    const lockPath = await writeLock(stateDirectory, await lockMetadata(stateDirectory, 2_147_483_647));
+    const [lockBefore, rendezvousBefore] = await Promise.all([
+      readFile(lockPath, 'utf8'),
+      readFile(rendezvousPath, 'utf8'),
+    ]);
+
+    await expect(acquireLock(stateDirectory, OTHER_INSTANCE_ID)).rejects.toThrow(
+      'stale rendezvous ownership could not be validated and was preserved',
+    );
+    await expect(readFile(lockPath, 'utf8')).resolves.toBe(lockBefore);
+    await expect(readFile(rendezvousPath, 'utf8')).resolves.toBe(rendezvousBefore);
   });
 
   test('repairs the exact interrupted rendezvous hard link before stale recovery', async () => {

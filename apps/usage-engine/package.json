@@ -16,18 +16,8 @@
     "test": "bun test --parallel"
   },
   "dependencies": {
-    "@ai-usage/authorization": "workspace:*",
     "@ai-usage/effect-runtime": "workspace:*",
-    "@ai-usage/identity": "workspace:*",
     "@ai-usage/local-machine": "workspace:*",
-    "@ai-usage/memory-service": "workspace:*",
-    "@ai-usage/memory-sqlite": "workspace:*",
-    "@ai-usage/platform-core": "workspace:*",
-    "@ai-usage/project-registry": "workspace:*",
-    "@ai-usage/replication-client": "workspace:*",
-    "@ai-usage/replication-outbox": "workspace:*",
-    "@ai-usage/replication-protocol": "workspace:*",
-    "@ai-usage/report-core": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-engine-runtime": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",

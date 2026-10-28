@@ -45,20 +45,6 @@ export interface CursorImportArgs {
   file: string;
 }
 
-export interface MemorySearchArgs {
-  cursor: string | null;
-  includeSpaceWide: boolean;
-  json: boolean;
-  limit: number;
-  matchingMode: 'hybrid' | 'literal';
-  projectId: string | null;
-  query: string;
-}
-
-export interface ReplicationStatusArgs {
-  json: boolean;
-}
-
 export interface WorkContextArgs {
   json: boolean;
   /** As given: a relative checkout path is resolved against the operator's working directory. */
@@ -127,8 +113,6 @@ export type CliCommand =
   | { _tag: 'Merge'; args: MergeArgs }
   | { _tag: 'Machine' }
   | { _tag: 'MachineSetLabel'; label: string }
-  | { _tag: 'MemorySearch'; args: MemorySearchArgs }
-  | { _tag: 'ReplicationStatus'; args: ReplicationStatusArgs }
   | { _tag: 'WorkContext'; args: WorkContextArgs }
   | { _tag: 'DelegationQualify'; args: DelegationQualifyArgs }
   | { _tag: 'DelegationStart'; args: DelegationStartArgs }
@@ -195,8 +179,6 @@ export const helpText =
   '  snapshot               write a portable usage snapshot\n' +
   '  merge                  merge usage snapshots into a report\n' +
   '  machine                show or update this machine identity\n' +
-  '  memory search <query>  search accepted local Memory\n' +
-  '  replication status     show outbound publication state\n' +
   '  work context           stored Work context of one checkout or project\n' +
   '  delegation <command>   qualify, start, follow and cancel delegated read-only reviews\n' +
   '  projects list          summarize detected projects\n' +
@@ -231,15 +213,6 @@ export const helpText =
   '\nMachine:\n' +
   '  machine                show this machine id and label\n' +
   '  machine set-label <x>  update this machine label\n' +
-  '\nMemory:\n' +
-  '  memory search <query> [--literal] [--project <id>] [--include-space-wide]\n' +
-  '                         retrieve bounded accepted Memory cards\n' +
-  '  --limit <n>            return 1..25 results (default 10)\n' +
-  '  --cursor <cursor>      request the next page for the same query\n' +
-  '  --json                 emit the exact search response contract\n' +
-  '\nReplication:\n' +
-  '  replication status [--json]\n' +
-  '                         show content-free Usage and Memory outbox state\n' +
   '\nWork:\n' +
   '  work context (--checkout <path>... | --project-label <name>) [--since-days <1-3650>] [--json]\n' +
   '                         waits, settled decisions, linked facts and coverage from\n' +
@@ -503,94 +476,6 @@ const parseCursorCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgume
     return yield* Effect.fail(cliArgumentError(`Unknown cursor subcommand: ${subcommand ?? ''}`.trim()));
   });
 
-const PROJECT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-
-const parseMemorySearchArgs = (argv: string[]): Effect.Effect<MemorySearchArgs, CliArgumentError> =>
-  Effect.gen(function* () {
-    const args: MemorySearchArgs = {
-      cursor: null,
-      includeSpaceWide: false,
-      json: false,
-      limit: 10,
-      matchingMode: 'hybrid',
-      projectId: null,
-      query: '',
-    };
-    const rest = [...argv];
-    while (rest.length) {
-      const arg = rest.shift()!;
-      if (arg === '--literal') {
-        args.matchingMode = 'literal';
-      } else if (arg === '--project') {
-        const projectId = yield* parseRequiredValue(rest, '--project');
-        if (!PROJECT_ID_PATTERN.test(projectId)) {
-          return yield* Effect.fail(cliArgumentError('--project expects a UUID'));
-        }
-        args.projectId = projectId;
-      } else if (arg === '--include-space-wide') {
-        args.includeSpaceWide = true;
-      } else if (arg === '--limit') {
-        args.limit = yield* parsePositiveInt(yield* parseRequiredValue(rest, '--limit'), '--limit');
-        if (args.limit > 25) {
-          return yield* Effect.fail(cliArgumentError('--limit expects an integer from 1 to 25'));
-        }
-      } else if (arg === '--cursor') {
-        const cursor = yield* parseRequiredValue(rest, '--cursor');
-        if (new TextEncoder().encode(cursor).byteLength > 4096) {
-          return yield* Effect.fail(cliArgumentError('--cursor exceeds its byte limit'));
-        }
-        args.cursor = cursor;
-      } else if (arg === '--json') {
-        args.json = true;
-      } else if (arg.startsWith('--')) {
-        return yield* Effect.fail(cliArgumentError(`Unknown option for memory search: ${arg}`));
-      } else if (args.query.length === 0) {
-        args.query = arg.trim();
-      } else {
-        return yield* Effect.fail(cliArgumentError('memory search expects one quoted query'));
-      }
-    }
-    if (args.query.length === 0) {
-      return yield* Effect.fail(cliArgumentError('memory search expects a query'));
-    }
-    if ([...args.query].length > 512 || new TextEncoder().encode(args.query).byteLength > 2048) {
-      return yield* Effect.fail(cliArgumentError('memory search query exceeds its limit'));
-    }
-    if (args.includeSpaceWide && args.projectId === null) {
-      return yield* Effect.fail(cliArgumentError('--include-space-wide requires --project'));
-    }
-    return args;
-  });
-
-const parseMemoryCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
-  Effect.gen(function* () {
-    const rest = [...argv];
-    const subcommand = rest.shift();
-    if (subcommand === 'search') {
-      return { _tag: 'MemorySearch', args: yield* parseMemorySearchArgs(rest) };
-    }
-    return yield* Effect.fail(cliArgumentError(`Unknown memory subcommand: ${subcommand ?? ''}`.trim()));
-  });
-
-const parseReplicationCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
-  Effect.gen(function* () {
-    const rest = [...argv];
-    const subcommand = rest.shift();
-    if (subcommand !== 'status') {
-      return yield* Effect.fail(cliArgumentError(`Unknown replication subcommand: ${subcommand ?? ''}`.trim()));
-    }
-    let json = false;
-    while (rest.length) {
-      const arg = rest.shift();
-      if (arg === '--json') {
-        json = true;
-      } else {
-        return yield* Effect.fail(cliArgumentError(`Unknown option for replication status: ${arg ?? ''}`.trim()));
-      }
-    }
-    return { _tag: 'ReplicationStatus', args: { json } };
-  });
-
 const WORK_CONTEXT_SCOPE_MESSAGE = 'work context expects exactly one of --checkout or --project-label';
 
 const parseWorkCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
@@ -846,14 +731,6 @@ export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgum
     if (command === 'projects') {
       rest.shift();
       return yield* parseProjectsCommand(rest);
-    }
-    if (command === 'memory') {
-      rest.shift();
-      return yield* parseMemoryCommand(rest);
-    }
-    if (command === 'replication') {
-      rest.shift();
-      return yield* parseReplicationCommand(rest);
     }
     if (command === 'cursor') {
       rest.shift();

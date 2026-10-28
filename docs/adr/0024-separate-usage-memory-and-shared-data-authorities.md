@@ -1,8 +1,9 @@
 # ADR 0024: Separate usage, Memory, and shared data authorities
 
-- **Status**: Accepted; amended by
+- **Status**: Retired; amended by
   [ADR 0074](0074-local-only-single-operator-product.md) (shared PostgreSQL
-  authority withdrawn); retires with accepted Memory in plan 120 phase B
+  authority withdrawn); retired 2026-10-27 by
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md) (the Memory store is no longer opened)
 - **Date**: 2026-08-29
 - **Amends**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
   only by limiting its database and direct-reader clauses to the existing usage

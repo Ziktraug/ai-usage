@@ -1,4 +1,5 @@
 import type { RuntimeMode } from '../../../runtime-mode';
+import { rpcProcedureRequestPolicies } from '../../server/rpc/request-policy';
 import { isManagementPath } from './navigation';
 
 export type DemoRouteDecision = 'allow' | 'not-found' | 'redirect-report';
@@ -10,9 +11,11 @@ const protectedPaths = new Set([
   '/api/source-control/command',
 ]);
 
-// The Work view's synthetic task service lives in the demo process's memory: its three procedures
-// are the only RPC transport a demo serves.
-const demoRpcPaths = new Set(['/rpc/workThreads/list', '/rpc/workThreads/detail', '/rpc/workThreads/command']);
+// Only procedures declared `demo: 'synthetic-only'` in the contract are served by a demo: today the
+// Work view's synthetic task service, which lives in the demo process's memory.
+const demoRpcPaths: ReadonlySet<string> = new Set(
+  rpcProcedureRequestPolicies.filter(({ demo }) => demo === 'synthetic-only').map(({ path }) => `/rpc${path}`),
+);
 
 export const demoRouteDecision = (pathname: string, mode: RuntimeMode): DemoRouteDecision => {
   if (mode !== 'demo') {

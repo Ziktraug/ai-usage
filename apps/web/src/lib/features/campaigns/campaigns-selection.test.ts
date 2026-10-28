@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { campaignMapFixtureGeneratedAt, campaignMapFixtureRootKey } from '../../../campaign-map-fixture';
 import { dashboardSearchDefaultsFor } from '../../../dashboard-search';
 import { createHydratedWebQueryClient } from '../../query/client';
+import { createWebRpcClient } from '../../rpc/client';
 import { loadCampaignsPageData } from './campaigns-load';
 import { campaignMembersOptions, campaignsRequest } from './campaigns-query';
 import { readCampaignSelection } from './campaigns-selection';
@@ -33,7 +34,10 @@ describe('Campaign URL selection', () => {
   test('SSR recovers an invalid bookmark into a hydrated recent campaign without transport', async () => {
     const data = await loadCampaignsPageData(
       {
-        fetch: () => Promise.reject(new Error('Synthetic selection must not call transport')),
+        rpc: createWebRpcClient({
+          fetch: () => Promise.reject(new Error('Synthetic selection must not call transport')),
+          url: 'http://127.0.0.1:4176/rpc',
+        }),
         url: urlFor(' '.repeat(3)),
       },
       'demo',

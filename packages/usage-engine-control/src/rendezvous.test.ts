@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, link, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { USAGE_ENGINE_PROTOCOL_VERSION } from './contracts';
+import { parseUsageEngineInstanceId, USAGE_ENGINE_PROTOCOL_VERSION } from './contracts';
 import {
   assertUsageEngineRendezvousTarget,
+  loadStaleUsageEngineRendezvousOwner,
   loadUsageEngineRendezvous,
   parseUsageEngineLoopbackOrigin,
   parseUsageEngineRendezvous,
@@ -93,6 +94,75 @@ describe('usage engine rendezvous', () => {
     };
     expect(parseMismatch).toThrow(UsageEngineRendezvousError);
     expect(parseMismatch).toThrow(expect.objectContaining({ reason: 'protocol-mismatch' }));
+  });
+
+  test('fails closed when a live client loads a previous-protocol rendezvous file', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-engine-rendezvous-'));
+    roots.push(root);
+    const filePath = path.join(root, 'engine.json');
+    await writeFile(
+      filePath,
+      `${JSON.stringify({ ...rendezvousValue, protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION - 1 })}\n`,
+      { mode: 0o600 },
+    );
+
+    await expect(loadUsageEngineRendezvous(filePath)).rejects.toThrow(
+      expect.objectContaining({ name: 'UsageEngineRendezvousError', reason: 'protocol-mismatch' }),
+    );
+  });
+
+  test.each([
+    ['a superseded engine', USAGE_ENGINE_PROTOCOL_VERSION - 1],
+    ['this engine', USAGE_ENGINE_PROTOCOL_VERSION],
+    ['an unreleased engine', USAGE_ENGINE_PROTOCOL_VERSION + 1],
+  ])('reads only the owner of a stale rendezvous published by %s', async (_case, protocolVersion) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-engine-rendezvous-'));
+    roots.push(root);
+    const filePath = path.join(root, 'engine.json');
+    await writeFile(filePath, `${JSON.stringify({ ...rendezvousValue, protocolVersion })}\n`, { mode: 0o600 });
+
+    const owner = await loadStaleUsageEngineRendezvousOwner(filePath);
+    expect(owner).toBe(parseUsageEngineInstanceId(rendezvousValue.instanceId));
+    expect(JSON.stringify(owner)).not.toContain(rendezvousValue.token);
+  });
+
+  test('keeps every field and file check when reading a stale rendezvous owner', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-engine-rendezvous-'));
+    roots.push(root);
+    const filePath = path.join(root, 'engine.json');
+    const previousProtocol = { ...rendezvousValue, protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION - 1 };
+    const { token: _token, ...withoutToken } = previousProtocol;
+    const rejects = async (document: unknown, message: string): Promise<void> => {
+      await writeFile(filePath, `${JSON.stringify(document)}\n`, { mode: 0o600 });
+      await expect(loadStaleUsageEngineRendezvousOwner(filePath)).rejects.toThrow(message);
+    };
+
+    for (const protocolVersion of [0, -1, 3.5, '3', null, 2 ** 53]) {
+      await rejects({ ...previousProtocol, protocolVersion }, 'protocol version');
+    }
+    await rejects({ ...previousProtocol, host: '127.0.0.1' }, 'unknown');
+    await rejects(withoutToken, 'missing');
+    await rejects({ ...previousProtocol, port: 0 }, 'port');
+    await rejects({ ...previousProtocol, instanceId: '' }, 'instance');
+    await rejects({ ...previousProtocol, targetId: 'A'.repeat(64) }, 'target');
+    await rejects({ ...previousProtocol, token: `${'x'.repeat(32)}+` }, 'token');
+
+    await writeFile(filePath, '{"instanceId":', { mode: 0o600 });
+    await expect(loadStaleUsageEngineRendezvousOwner(filePath)).rejects.toThrow('valid JSON');
+
+    await writeFile(filePath, `${JSON.stringify(previousProtocol)}\n`, { mode: 0o600 });
+    const linkPath = path.join(root, 'engine-link.json');
+    await symlink(filePath, linkPath);
+    await expect(loadStaleUsageEngineRendezvousOwner(linkPath)).rejects.toThrow('regular');
+    const hardLinkPath = path.join(root, 'engine-hard-link.json');
+    await link(filePath, hardLinkPath);
+    await expect(loadStaleUsageEngineRendezvousOwner(filePath)).rejects.toThrow('regular');
+    await rm(hardLinkPath);
+    await chmod(filePath, 0o644);
+    await expect(loadStaleUsageEngineRendezvousOwner(filePath)).rejects.toThrow('owner-only');
+    await chmod(filePath, 0o600);
+    await chmod(root, 0o755);
+    await expect(loadStaleUsageEngineRendezvousOwner(filePath)).rejects.toThrow('directory');
   });
 
   test('binds rendezvous discovery to an opaque database and config target', () => {

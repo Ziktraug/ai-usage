@@ -212,6 +212,45 @@ describe('usage engine process lifecycle', () => {
     expect(trace).toEqual(['runtime-start', 'runtime-dispose']);
   });
 
+  test('waits for an in-flight rendezvous publication on a single signal and releases the writer lease', async () => {
+    const trace: string[] = [];
+    const output: string[] = [];
+    const termination = deferred<UsageEngineTerminationSignal>();
+    const forcedTermination = deferred<UsageEngineTerminationSignal>();
+    const publicationStarted = deferred<void>();
+    const publicationFinished = deferred<void>();
+    const dependencies = createDependencies(trace, output, {
+      publishRendezvous: async (input) => {
+        // The file is already visible to clients while publication still validates it.
+        const publication = await createDependencies(trace, output).publishRendezvous(input);
+        publicationStarted.resolve();
+        await publicationFinished.promise;
+        return publication;
+      },
+    });
+    const running = createUsageEngineProcess(dependencies).run({
+      forcedTermination: forcedTermination.promise,
+      mode: { mode: 'serve', port: 0 },
+      paths,
+      termination: termination.promise,
+    });
+    await publicationStarted.promise;
+    termination.resolve('SIGTERM');
+    // Let shutdown observe the publication as still in flight before it completes.
+    await Bun.sleep(5);
+    publicationFinished.resolve();
+
+    await expect(running).resolves.toBe(0);
+    expect(trace).toEqual([
+      'runtime-start',
+      'server:127.0.0.1:0:true',
+      'rendezvous:41052:true',
+      'rendezvous-remove',
+      'server-dispose',
+      'runtime-dispose',
+    ]);
+  });
+
   test('retains the writer lease when rendezvous removal cannot be proven', async () => {
     const trace: string[] = [];
     const output: string[] = [];

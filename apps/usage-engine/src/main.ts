@@ -6,11 +6,8 @@ import { createLocalHistoryStorage } from '@ai-usage/local-machine/local-history
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
-import { type CheckoutObservationDiagnostic, startLocalCheckoutObservation } from './checkout-observation-runtime';
 import { startUsageEngineControlServer, type UsageEngineInternalFailureBoundary } from './control-server';
 import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
-import { localMemoryIdentityDatabasePath, withLocalMemoryIdentityKernel } from './memory-identity-runtime';
-import { createRandomMemoryServiceToken, startLocalMemoryService } from './memory-service-server';
 import {
   createUsageEngineProcess,
   interruptedExitCode,
@@ -22,12 +19,6 @@ import { checkUsageEngine } from './process-check';
 import { resolveUsageEngineProcessPaths } from './process-paths';
 import { createUsageEngineTermination } from './process-signals';
 import { publishUsageEngineRendezvous } from './rendezvous-file';
-import {
-  type DeviceReplicationDiagnostic,
-  deviceReplicationStatusOutput,
-  localOnlyReplicationStatus,
-  startConfiguredDeviceReplication,
-} from './replication-runtime';
 
 export const defineUsageEngineComposition = <Factory>(factory: Factory): Factory => factory;
 
@@ -47,37 +38,14 @@ const reportCleanupFailure = (resource: UsageEngineCleanupResource): void => {
   process.stderr.write(`usage-engine cleanupFailure=${resource}\n`);
 };
 
-const reportReplicationDiagnostic = (diagnostic: DeviceReplicationDiagnostic): void => {
-  if (diagnostic.code === 'idle') {
-    return;
-  }
-  const stream = diagnostic.streamId === undefined ? '' : ` stream=${diagnostic.streamId}`;
-  const problem = diagnostic.problemCode === undefined ? '' : ` problem=${diagnostic.problemCode}`;
-  process.stderr.write(`usage-engine replication=${diagnostic.code}${stream}${problem}\n`);
-};
-
-const reportCheckoutObservationDiagnostic = (diagnostic: CheckoutObservationDiagnostic): void => {
-  if (diagnostic.code === 'observed') {
-    const { summary } = diagnostic;
-    process.stderr.write(
-      `usage-engine checkouts=observed revision=${summary.revision} observed=${summary.observed} created=${summary.created} resolved=${summary.resolved} ambiguous=${summary.ambiguous} invalid=${summary.invalid} missing=${summary.missing} mapped=${summary.mapped}\n`,
-    );
-    return;
-  }
-  if (diagnostic.code === 'failed') {
-    process.stderr.write(`usage-engine checkouts=failed reason=${diagnostic.reason}\n`);
-  }
-};
-
 const createProductionDependencies = (
   env: NodeJS.ProcessEnv,
   logDirectory: string | null,
 ): UsageEngineProcessDependencies => ({
   check: checkUsageEngine,
   createInstanceId: () => engineInstanceIdFrom(env),
-  createRuntime: ({ collectionMode, instanceId, paths }) => {
-    let readReplicationStatus = localOnlyReplicationStatus;
-    const usageRuntime = createLiveUsageEngineRuntime({
+  createRuntime: ({ collectionMode, instanceId, paths }) =>
+    createLiveUsageEngineRuntime({
       acquireWriterLease: async () =>
         await acquireUsageEngineLock({
           databasePath: paths.databasePath,
@@ -90,7 +58,6 @@ const createProductionDependencies = (
       initialSourceDetection: collectionMode === 'foreground' ? 'deferred' : 'automatic',
       instanceId,
       operatorCwd: paths.operatorCwd,
-      readReplicationStatus: async () => readReplicationStatus(),
       storage: createLocalHistoryStorage(paths.homeDirectory),
       reportReviewAttempt: (line) => {
         process.stderr.write(`${line}\n`);
@@ -123,69 +90,7 @@ const createProductionDependencies = (
           surface: 'engine',
         },
       }),
-    });
-    const memoryDatabasePath = localMemoryIdentityDatabasePath(paths.stateDirectory);
-    return withLocalMemoryIdentityKernel(usageRuntime, memoryDatabasePath, {
-      // The Memory store gets its own writer lease keyed to its own path: the
-      // usage lock lives beside the usage database, so two engines with
-      // different usage databases but one state directory would otherwise both
-      // open memory.sqlite read-write.
-      acquireLease: async () =>
-        await acquireUsageEngineLock({
-          databasePath: memoryDatabasePath,
-          instanceId,
-          stateDirectory: paths.stateDirectory,
-        }),
-      ...(env.AI_USAGE_PLATFORM_BASE_URL === undefined
-        ? {}
-        : {
-            startReplication: (kernel) => {
-              const replication = startConfiguredDeviceReplication({
-                allowInsecureLoopback: env.NODE_ENV !== 'production',
-                baseUrl: env.AI_USAGE_PLATFORM_BASE_URL ?? '',
-                kernel,
-                reportDiagnostic: reportReplicationDiagnostic,
-                stateDirectory: paths.stateDirectory,
-                usageDatabasePath: paths.databasePath,
-              });
-              readReplicationStatus = () => deviceReplicationStatusOutput(replication.status());
-              return Promise.resolve(replication);
-            },
-          }),
-      startService: async (kernel) => {
-        // The observation runs in this process beside the Memory writer: it is
-        // the only producer of Device-local Checkouts and Project-source
-        // mappings, fed by the usage runtime's publication events.
-        const checkoutObservation = startLocalCheckoutObservation({
-          databasePath: paths.databasePath,
-          kernel,
-          reportDiagnostic: reportCheckoutObservationDiagnostic,
-          runtime: usageRuntime,
-        });
-        let service: Awaited<ReturnType<typeof startLocalMemoryService>>;
-        try {
-          service = await startLocalMemoryService({
-            checkoutObservation,
-            kernel,
-            stateDirectory: paths.stateDirectory,
-            token: createRandomMemoryServiceToken(),
-          });
-        } catch (error) {
-          await checkoutObservation.dispose().catch(() => undefined);
-          throw error;
-        }
-        return {
-          dispose: async () => {
-            try {
-              await service.dispose();
-            } finally {
-              await checkoutObservation.dispose();
-            }
-          },
-        };
-      },
-    });
-  },
+    }),
   createToken: () => createUsageEngineBearerToken(randomBytes(32).toString('base64url')),
   publishRendezvous: publishUsageEngineRendezvous,
   reportCleanupFailure,

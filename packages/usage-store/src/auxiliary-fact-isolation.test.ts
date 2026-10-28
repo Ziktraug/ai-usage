@@ -53,8 +53,7 @@ import {
  * producer runs, executor observations, Jira issues (ADR 0054), review attempts (ADR 0053) and
  * delegation jobs, evaluations and qualifications (design 2026-10-25). This proves that none of
  * them leaks into what leaves it or what the report serves: the served revision, the merge bundle
- * (export and local read) and the replication outbox, and that writing them never moves the store
- * generation.
+ * (export and local read), and that writing them never moves the store generation.
  */
 
 const temporaryRoots: string[] = [];
@@ -341,7 +340,7 @@ const support = (machineLabel: string): FocusedReportSupport => ({
 });
 
 describe('auxiliary fact tables stay local', () => {
-  test('pull request, checkout, run state, executor, Jira issue, review attempt and delegation rows never reach the served revision, the bundle or the outbox', async () => {
+  test('pull request, checkout, run state, executor, Jira issue, review attempt and delegation rows never reach the served revision or the bundle', async () => {
     const dbPath = await createStore();
     const machine = { id: MACHINE, label: 'Aux Machine' };
     await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
@@ -514,7 +513,6 @@ describe('auxiliary fact tables stay local', () => {
     const db = new Database(dbPath, { readonly: true });
     const served = db.query('SELECT row_json, source_row_json, search_text FROM served_report_rows').all();
     const servedSupport = db.query('SELECT support_json FROM served_report_support').all();
-    const outbox = db.query('SELECT COUNT(*) AS count FROM replication_outbox_events').get() as { count: number };
     const usageRows = db.query('SELECT row_json FROM usage_rows').all();
     db.close(true);
     const exported = await Effect.runPromise(exportLocalMergeBundle({ dbPath, machine }));
@@ -523,7 +521,6 @@ describe('auxiliary fact tables stay local', () => {
     expect(served).toHaveLength(1);
     expect(exported.rows).toHaveLength(1);
     expect(local.rows).toHaveLength(1);
-    expect(outbox.count).toBe(0);
     for (const payload of [served, servedSupport, usageRows, exported, local]) {
       const text = JSON.stringify(payload);
       for (const sentinel of Object.values(SENTINELS)) {

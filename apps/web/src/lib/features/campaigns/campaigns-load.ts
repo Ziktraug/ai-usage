@@ -7,7 +7,6 @@ import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
 import type { RuntimeMode } from '../../../runtime-mode';
 import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
 import type { WebQueryHydrationState } from '../../query/client';
-import type { WebQueryRuntimeOptions } from '../../query/composition';
 import { campaignLabelOverridesQueryOptions, reportBootstrapQueryOptions } from '../../query/options/report';
 import { sessionLookupQueryOptions } from '../../query/options/session';
 import { initialSessionWindowIntent } from '../../query/options/session-window';
@@ -15,7 +14,7 @@ import { createReportClient } from '../../rpc/report-client';
 import { createSessionClientAdapter } from '../../rpc/session-client';
 import { requireAvailableReportBootstrap } from '../report/core/report-bootstrap';
 import { dashboardSearchCodec } from '../shell/navigation';
-import { createAwaitedRouteQueryState } from '../shell/query-load';
+import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';
 import { campaignTimelineRange } from './campaign-timeline-model';
 import { campaignsExplorationOptions, campaignsListOptions, campaignsRequest } from './campaigns-query';
 import { readCampaignSelection } from './campaigns-selection';
@@ -32,7 +31,7 @@ export const deferredCampaignsPageData = (mode: RuntimeMode): CampaignsPageData 
 });
 
 export const loadCampaignsPageData = async (
-  options: WebQueryRuntimeOptions,
+  options: RouteQueryLoadOptions,
   mode: RuntimeMode,
 ): Promise<CampaignsPageData> => ({
   mode,

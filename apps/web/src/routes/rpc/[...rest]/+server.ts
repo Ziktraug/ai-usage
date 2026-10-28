@@ -1,10 +1,10 @@
 import { handleWebRpcRequest } from '#lib/server/rpc/handler.server.ts';
-import { normalizeOwnedRpcSubrequest } from '#lib/server/rpc/subrequest-normalization.server.ts';
 import type { RequestHandler } from './$types';
 
-const handleRpcRequest: RequestHandler = async ({ isSubRequest, request, url }) => {
-  const rpcRequest = normalizeOwnedRpcSubrequest({ isSubRequest, request, url });
-  const response = await handleWebRpcRequest(rpcRequest);
+// Only real HTTP reaches this endpoint: server loads call the router in process (ADR 0076), so an
+// internal subrequest without a Host header fails the trusted-local check like any other request.
+const handleRpcRequest: RequestHandler = async ({ request }) => {
+  const response = await handleWebRpcRequest(request);
   response.headers.set('x-ai-usage-sveltekit', 'active');
   return response;
 };

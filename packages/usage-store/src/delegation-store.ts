@@ -65,7 +65,7 @@ import {
  * - **Transitions are guarded.** A state write names the states it may leave from; a late heartbeat
  *   cannot resurrect a finished, cancelled or lost job.
  * - **Outside the served revision.** The three tables never advance the store generation, never
- *   enter a publication, a snapshot, an export or the replication outbox. They describe this machine.
+ *   enter a publication, a snapshot or an export. They describe this machine.
  */
 export const DELEGATION_TABLES = ['delegation_jobs', 'delegation_evaluations', 'delegation_qualifications'] as const;
 

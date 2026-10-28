@@ -1,9 +1,15 @@
 # ADR 0027: MCP is an edge adapter
 
 - **Status**: Accepted; amended by
-  [ADR 0074](0074-local-only-single-operator-product.md)
+  [ADR 0074](0074-local-only-single-operator-product.md) and [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md)
 - **Date**: 2026-08-29
-- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
+- **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md),
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md)
+
+> Amended 2026-10-27 (ADR 0084): the `memory.*` tools are removed with accepted
+> Memory. The local stdio server serves `work.context` (ADR 0058) and the
+> delegation tools (ADR 0077); the edge rule below is unchanged. The registered
+> server name stays `ai-usage-memory` for existing operator configurations.
 
 > Amended 2026-10-24 (ADR 0074): the connected-MCP clause ("Connected MCP calls
 > the same domain services through an authenticated, authorized composition")

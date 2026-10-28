@@ -26,7 +26,6 @@ import {
   type UsageEngineEvent,
   type UsageEngineInstanceId,
   type UsageEngineMergePreviewOutput,
-  type UsageEngineReplicationStatusOutput,
   type UsageEngineReviewAttemptOutput,
   type UsageEngineReviewAttemptStopOutput,
   type UsageEngineReviewReservationReleaseOutput,
@@ -227,7 +226,6 @@ export interface UsageEngineRuntimeDependencies {
   ) => Promise<Result>;
   readonly publishInitialRevision: () => Promise<NonNullable<UsageEngineStatus['currentPublication']>>;
   readonly quiesceStore: () => Promise<void>;
-  readonly readReplicationStatus?: () => Promise<UsageEngineReplicationStatusOutput>;
   readonly recover: () => Promise<void>;
   /** The review launcher (ADR 0053); absent in compositions that cannot execute anything. */
   readonly reviewAttempts?: UsageEngineReviewAttemptPort;

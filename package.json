@@ -29,7 +29,6 @@
     "test": "bun run test:packages && bun run test:tools",
     "test:e2e": "bun run --cwd apps/web test:e2e",
     "test:e2e-demo": "bun run --cwd apps/web test:e2e-demo",
-    "test:e2e-memory": "bun run --cwd apps/web test:e2e-memory",
     "test:e2e-production": "bun run --cwd apps/web test:e2e-production",
     "test:packages": "turbo run test --concurrency=1",
     "test:tools": "bun test tools",
@@ -44,8 +43,6 @@
   "dependencies": {},
   "devDependencies": {
     "@ai-usage/local-machine": "workspace:*",
-    "@ai-usage/memory-service": "workspace:*",
-    "@ai-usage/platform-core": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-engine-runtime": "workspace:*",

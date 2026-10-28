@@ -3,8 +3,9 @@
 `ai-usage` turns local AI coding-tool history (Claude Code, Codex, OpenCode,
 Cursor) into a usage report: a Bun workspace with a SvelteKit web app, a CLI,
 and a background usage engine. It is local-only and single-operator: there is
-no remote service and no provider credentials. The connected platform was
-removed (plan 120); its dormant outbound replication client goes in phase B.
+no remote service and no provider credentials. The engine owns one SQLite store,
+the usage store; the connected platform, replication and accepted Memory were
+removed (plan 120, ADR 0084).
 
 ## Read the references relevant to the change
 
@@ -54,8 +55,8 @@ and external systems; reuse authorization already granted for the current scope.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)
-- `bun run mcp` / `bun run mcp:register:codex` — local stdio Memory MCP server
-  and its Codex registration
+- `bun run mcp` / `bun run mcp:register:codex` — local stdio MCP server
+  (`work.context`, delegation tools) and its Codex registration
 - `bun x ultracite fix` — format and autofix before committing (Biome)
 
 ## Code standards

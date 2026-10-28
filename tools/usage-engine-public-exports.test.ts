@@ -49,7 +49,6 @@ describe('usage engine public package exports', () => {
     expect(runtimePackage.exports).toEqual({
       '.': './src/runtime.ts',
       './live': './src/live.ts',
-      './replication': './src/replication.ts',
       './recovery': './src/recovery.ts',
       './source-adapters': './src/source-adapters.ts',
       './source-control': './src/source-control.ts',
@@ -64,7 +63,7 @@ describe('usage engine public package exports', () => {
   });
 
   test('resolves every declared TypeScript seam through its package specifier', () => {
-    expect(Number(USAGE_ENGINE_PROTOCOL_VERSION)).toBe(3);
+    expect(Number(USAGE_ENGINE_PROTOCOL_VERSION)).toBe(4);
     expect(parseUsageEngineCommand).toBeFunction();
     expect(parseUsageEngineCommandCancellationResult).toBeFunction();
     expect(parseUsageEngineCommandCompletion).toBeFunction();

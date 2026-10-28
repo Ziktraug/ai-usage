@@ -3,6 +3,7 @@ import { campaignMapFixtureGeneratedAt, campaignMapFixtureRootKey } from '../../
 import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
 import { createHydratedWebQueryClient, createWebQueryClient } from '../../query/client';
 import { initialSessionWindowIntent } from '../../query/options/session-window';
+import { createWebRpcClient } from '../../rpc/client';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { loadCampaignsPageData } from './campaigns-load';
 import {
@@ -72,10 +73,13 @@ describe('Campaign focused query integration', () => {
     let networkCalls = 0;
     const data = await loadCampaignsPageData(
       {
-        fetch: () => {
-          networkCalls += 1;
-          return Promise.reject(new Error('The demo must never contact an RPC or local store'));
-        },
+        rpc: createWebRpcClient({
+          fetch: () => {
+            networkCalls += 1;
+            return Promise.reject(new Error('The demo must never contact an RPC or local store'));
+          },
+          url: 'http://127.0.0.1:4176/rpc',
+        }),
         url: new URL('http://127.0.0.1:4176/campaigns?range=all'),
       },
       'demo',

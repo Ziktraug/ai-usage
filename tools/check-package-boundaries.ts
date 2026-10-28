@@ -72,82 +72,9 @@ const boundaryPolicies: BoundaryPolicy[] = [
     reason: 'report-core must stay pure and independent of workspace runtime packages.',
   },
   {
-    packageName: '@ai-usage/platform-core',
-    forbiddenDependencies: ['@ai-usage/*', 'drizzle-orm', 'pg'],
-    forbiddenImports: ['@ai-usage/*', 'bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
-    reason: 'platform-core must contain only portable identity values and contracts.',
-  },
-  {
-    packageName: '@ai-usage/authorization-contract',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
-    reason: 'authorization-contract contains only the portable Authorizer port and value contracts.',
-  },
-  {
-    packageName: '@ai-usage/authorization',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
-    reason: 'authorization owns the application port and local policy, not persistence or transport.',
-  },
-  {
-    packageName: '@ai-usage/project-registry',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
-    reason: 'project-registry owns pure resolution and mapping contracts, not persistence or transport.',
-  },
-  {
-    packageName: '@ai-usage/replication-protocol',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
-    reason: 'replication-protocol is the IO-free canonical wire contract.',
-  },
-  {
-    packageName: '@ai-usage/replication-outbox',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
-    reason: 'replication-outbox owns portable state transitions, not a database or network adapter.',
-  },
-  {
-    packageName: '@ai-usage/replication-client',
-    forbiddenDependencies: ['@ai-usage/memory-sqlite', '@ai-usage/usage-store', 'drizzle-orm', 'pg'],
-    forbiddenImports: [
-      '@ai-usage/memory-sqlite',
-      '@ai-usage/usage-store',
-      'bun:sqlite',
-      'drizzle-orm',
-      'node:fs',
-      'pg',
-    ],
-    reason: 'replication-client is the outbound HTTPS adapter and must not own either persistence authority.',
-  },
-  {
-    packageName: '@ai-usage/identity',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'pg'],
-    reason: 'identity owns the Device token and credential helpers, not a persistence adapter.',
-  },
-  {
-    packageName: '@ai-usage/memory-sqlite',
-    forbiddenDependencies: ['drizzle-orm', 'pg'],
-    forbiddenImports: ['@ai-usage/usage-store', 'drizzle-orm', 'node:http', 'node:https', 'pg'],
-    reason: 'memory-sqlite is the dedicated local authority and must not reach Usage SQLite or HTTP.',
-  },
-  {
-    packageName: '@ai-usage/memory-service',
-    forbiddenDependencies: ['@ai-usage/memory-sqlite', 'drizzle-orm', 'pg'],
-    forbiddenImports: ['@ai-usage/memory-sqlite', 'bun:sqlite', 'drizzle-orm', 'pg'],
-    reason: 'memory-service owns bounded transport contracts and discovery, never a storage adapter.',
-  },
-  {
-    packageName: '@ai-usage/memory-search',
-    forbiddenDependencies: ['@ai-usage/memory-sqlite', 'drizzle-orm', 'pg'],
-    forbiddenImports: ['@ai-usage/memory-sqlite', 'bun:sqlite', 'drizzle-orm', 'pg'],
-    reason: 'memory-search owns portable chunking and evaluation contracts, never a storage authority.',
-  },
-  {
     packageName: '@ai-usage/mcp-adapter',
-    forbiddenDependencies: ['@ai-usage/memory-sqlite', 'bun:sqlite', 'drizzle-orm', 'pg'],
-    forbiddenImports: ['@ai-usage/memory-sqlite', 'bun:sqlite', 'drizzle-orm', 'pg'],
+    forbiddenDependencies: ['bun:sqlite', 'drizzle-orm', 'pg'],
+    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'pg'],
     reason: 'mcp-adapter owns the bounded edge protocol and must call application services, never storage.',
   },
   {
@@ -216,19 +143,7 @@ const webPerformanceTestingImporter = 'apps/web/src/hooks.server.ts';
 const usageStoreReader = `${usageStorePackage}/reader`;
 const usageStoreWriter = `${usageStorePackage}/writer`;
 const usageStoreTesting = `${usageStorePackage}/testing`;
-const platformCorePackage = '@ai-usage/platform-core';
-const authorizationContractPackage = '@ai-usage/authorization-contract';
-const authorizationPackage = '@ai-usage/authorization';
-const identityPackage = '@ai-usage/identity';
-const authorizationScopeInternal = `${authorizationPackage}/scope-internal`;
-const projectRegistryPackage = '@ai-usage/project-registry';
-const memorySqlitePackage = '@ai-usage/memory-sqlite';
-const memorySearchPackage = '@ai-usage/memory-search';
-const memoryServicePackage = '@ai-usage/memory-service';
 const mcpAdapterPackage = '@ai-usage/mcp-adapter';
-const replicationClientPackage = '@ai-usage/replication-client';
-const replicationOutboxPackage = '@ai-usage/replication-outbox';
-const replicationProtocolPackage = '@ai-usage/replication-protocol';
 const mcpSdkPackage = '@modelcontextprotocol/sdk';
 const engineControlPackage = '@ai-usage/usage-engine-control';
 const engineControlTesting = `${engineControlPackage}/testing`;
@@ -254,8 +169,6 @@ const engineRuntimeAllowedWorkspaceDependencies = new Set([
   '@ai-usage/local-machine',
   '@ai-usage/report-core',
   '@ai-usage/report-data',
-  '@ai-usage/replication-outbox',
-  '@ai-usage/replication-protocol',
   '@ai-usage/usage-engine-control',
   usageMergePackage,
   usageStorePackage,
@@ -281,78 +194,8 @@ const targetDependencyReason = (
     return;
   }
   const dependencyPackage = workspacePackageNameFor(specifier);
-  if (packageName === identityPackage && dependencyPackage !== platformCorePackage) {
-    return 'identity may depend only on portable platform-core workspace contracts.';
-  }
-  if (packageName === authorizationContractPackage && dependencyPackage !== platformCorePackage) {
-    return 'authorization-contract may depend only on portable platform-core contracts.';
-  }
-  if (
-    packageName === authorizationPackage &&
-    dependencyPackage !== authorizationContractPackage &&
-    dependencyPackage !== platformCorePackage
-  ) {
-    return 'authorization may depend only on its portable contract and platform-core.';
-  }
-  if (
-    packageName === projectRegistryPackage &&
-    dependencyPackage !== platformCorePackage &&
-    dependencyPackage !== '@ai-usage/report-core'
-  ) {
-    return 'project-registry may depend only on authorization, platform-core, and pure report-core VCS contracts.';
-  }
-  if (
-    packageName === memorySqlitePackage &&
-    dependencyPackage !== authorizationPackage &&
-    dependencyPackage !== memorySearchPackage &&
-    dependencyPackage !== memoryServicePackage &&
-    dependencyPackage !== platformCorePackage &&
-    dependencyPackage !== projectRegistryPackage &&
-    dependencyPackage !== replicationOutboxPackage &&
-    dependencyPackage !== replicationProtocolPackage &&
-    dependencyPackage !== '@ai-usage/report-core'
-  ) {
-    return 'memory-sqlite may depend only on authorization, Memory, platform, project, replication, and test-only report contracts.';
-  }
-  if (
-    packageName === memoryServicePackage &&
-    dependencyPackage !== authorizationContractPackage &&
-    dependencyPackage !== platformCorePackage &&
-    dependencyPackage !== projectRegistryPackage &&
-    dependencyPackage !== replicationProtocolPackage
-  ) {
-    return 'memory-service may depend only on portable authorization, platform, project, and replication contracts.';
-  }
-  if (packageName === replicationProtocolPackage && dependencyPackage !== platformCorePackage) {
-    return 'replication-protocol may depend only on portable platform-core contracts.';
-  }
-  if (
-    packageName === replicationOutboxPackage &&
-    dependencyPackage !== platformCorePackage &&
-    dependencyPackage !== replicationProtocolPackage
-  ) {
-    return 'replication-outbox may depend only on platform-core and replication-protocol.';
-  }
-  if (
-    packageName === replicationClientPackage &&
-    dependencyPackage !== identityPackage &&
-    dependencyPackage !== platformCorePackage &&
-    dependencyPackage !== replicationOutboxPackage &&
-    dependencyPackage !== replicationProtocolPackage
-  ) {
-    return 'replication-client may depend only on identity, platform-core, and portable replication contracts.';
-  }
-  if (
-    packageName === mcpAdapterPackage &&
-    dependencyPackage !== authorizationContractPackage &&
-    dependencyPackage !== memoryServicePackage &&
-    dependencyPackage !== platformCorePackage &&
-    dependencyPackage !== '@ai-usage/skills'
-  ) {
-    return 'mcp-adapter may depend only on portable authorization, Memory application, and identity contracts.';
-  }
-  if (dependencyPackage === memorySqlitePackage && packageName !== engineAppPackage) {
-    return 'Only apps/usage-engine may own the write-capable local Memory SQLite adapter.';
+  if (packageName === mcpAdapterPackage && dependencyPackage !== '@ai-usage/skills') {
+    return 'mcp-adapter may depend only on the portable skills package.';
   }
   if (packageName === engineControlPackage && dependencyPackage !== '@ai-usage/report-core') {
     return 'usage-engine-control may depend only on pure report-core contracts.';
@@ -389,9 +232,6 @@ const targetImportReason = (
   specifier: string,
   applicationPackages: ReadonlySet<string>,
 ): string | undefined => {
-  if (packageName === replicationOutboxPackage && specifier === 'bun:sqlite' && !isTestOnlySource(relativeFile)) {
-    return 'replication-outbox production code must use its portable SQLite port, not open a database.';
-  }
   if (isPackageOrSubpath(specifier, mcpSdkPackage) && packageName !== mcpAdapterPackage) {
     return 'Only mcp-adapter may import the MCP protocol SDK directly.';
   }
@@ -400,22 +240,6 @@ const targetImportReason = (
     isTestOnlySource(relativeFile)
   ) {
     return;
-  }
-  if (
-    specifier === authorizationScopeInternal &&
-    packageName !== memorySqlitePackage &&
-    !isTestOnlySource(relativeFile)
-  ) {
-    return 'Opaque authorization scope internals may be imported only by persistence adapters or test fixtures.';
-  }
-  if (isPackageOrSubpath(specifier, memorySqlitePackage) && packageName !== engineAppPackage) {
-    return 'Only apps/usage-engine may import the write-capable local Memory SQLite adapter.';
-  }
-  if (
-    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
-    isPackageOrSubpath(specifier, authorizationPackage)
-  ) {
-    return 'Web and CLI production code import only transport contracts, never authorization implementation.';
   }
   if (specifier === usageStorePackage) {
     return 'The mixed usage-store root is retired; import reader, writer, or testing explicitly.';
@@ -839,12 +663,7 @@ const collectApplicationProductionClosureViolations = async (
   root: string,
   packages: ReadonlyMap<string, PackageInfo>,
 ): Promise<PackageBoundaryViolation[]> => {
-  const forbiddenPackages = new Set([
-    '@ai-usage/local-collectors',
-    authorizationPackage,
-    engineRuntimePackage,
-    memorySqlitePackage,
-  ]);
+  const forbiddenPackages = new Set(['@ai-usage/local-collectors', engineRuntimePackage]);
   const violations: PackageBoundaryViolation[] = [];
   const importEdges = await collectProductionWorkspaceImportEdges(root, packages);
   for (const applicationPackage of ['@ai-usage/web', '@ai-usage/cli']) {
@@ -884,7 +703,7 @@ const collectApplicationProductionClosureViolations = async (
           if (current.packageName !== applicationPackage) {
             violations.push({
               file,
-              message: `${applicationPackage} production dependencies must stay collector-, engine-runtime-, authorization-implementation-, and Memory-writer-free. Reached through ${dependencyPath.join(' -> ')}.`,
+              message: `${applicationPackage} production dependencies must stay collector- and engine-runtime-free. Reached through ${dependencyPath.join(' -> ')}.`,
               packageName: applicationPackage,
               specifier: dependencyName,
             });

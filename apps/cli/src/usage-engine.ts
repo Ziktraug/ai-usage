@@ -293,8 +293,8 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
       cwd: options.paths.operatorCwd,
       // Its own process group: a terminal Ctrl-C reaches the whole foreground
       // group, and an engine in it would get that SIGINT and then the one this
-      // CLI forwards, and take its second-signal exit without cleanup (locks,
-      // Memory rendezvous left behind). Detached, it sees only the CLI's.
+      // CLI forwards, and take its second-signal exit without cleanup (writer
+      // locks left behind). Detached, it sees only the CLI's.
       detached: process.platform !== 'win32',
       env: {
         ...process.env,

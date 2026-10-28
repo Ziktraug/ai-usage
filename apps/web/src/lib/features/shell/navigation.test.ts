@@ -45,8 +45,6 @@ describe('Svelte application shell navigation', () => {
     expect(demo.manageActive).toBe(true);
     expect(mobileNavigationFor(url, 'live').overflow.map(({ label }) => label)).toEqual([
       'Campaigns',
-      'Memory',
-      'Projects',
       'Skills',
       'Sync',
       'Sources',
@@ -136,7 +134,7 @@ describe('Svelte application shell navigation', () => {
       shouldPreserveReportScroll(new URL('http://localhost/campaigns/c-1?tab=sessions'), new URL('http://localhost/')),
     ).toBe(true);
     expect(
-      shouldPreserveReportScroll(new URL('http://localhost/sessions/row-1'), new URL('http://localhost/projects')),
+      shouldPreserveReportScroll(new URL('http://localhost/sessions/row-1'), new URL('http://localhost/sync')),
     ).toBe(false);
   });
 

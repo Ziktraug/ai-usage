@@ -11,7 +11,7 @@ import {
   REVIEW_SCOPE_FILE_STATUSES,
   REVIEW_SETTING_SOURCES,
 } from '@ai-usage/report-core/work-attempts';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   array,
   boolean,
@@ -36,6 +36,8 @@ import {
   union,
   variant,
 } from 'valibot';
+import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { jsonWireValueSchema, publicMessageSchema } from './schema-conventions';
 
 /**
@@ -333,20 +335,63 @@ export const parseWorkAttemptsStopOutput = (value: unknown): WorkAttemptsStopOut
   parse(workAttemptsStopOutputSchema, value);
 
 export const workAttemptsContract = {
-  list: oc
-    .route({ method: 'POST', path: '/work/attempts' })
+  list: rpcProcedure({
+    errors: {
+      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+      IncompatibleStore: publicErrorMap.IncompatibleStore,
+      Unavailable: publicErrorMap.Unavailable,
+    },
+    method: 'POST',
+    path: '/work/attempts',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(workAttemptsListInputSchema)
     .output(workAttemptsListOutputSchema),
-  start: oc
-    .route({ method: 'POST', path: '/work/attempts/start' })
+  start: rpcProcedure({
+    errors: {
+      EngineUnavailable: publicErrorMap.EngineUnavailable,
+      Forbidden: publicErrorMap.Forbidden,
+      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+      InvalidInput: publicErrorMap.InvalidInput,
+    },
+    method: 'POST',
+    path: '/work/attempts/start',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(workAttemptsStartInputSchema)
     .output(workAttemptsStartOutputSchema),
-  release: oc
-    .route({ method: 'POST', path: '/work/attempts/release' })
+  release: rpcProcedure({
+    errors: {
+      EngineUnavailable: publicErrorMap.EngineUnavailable,
+      Forbidden: publicErrorMap.Forbidden,
+      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+      InvalidInput: publicErrorMap.InvalidInput,
+    },
+    method: 'POST',
+    path: '/work/attempts/release',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(workAttemptsReleaseInputSchema)
     .output(workAttemptsReleaseOutputSchema),
-  stop: oc
-    .route({ method: 'POST', path: '/work/attempts/stop' })
+  stop: rpcProcedure({
+    errors: {
+      EngineUnavailable: publicErrorMap.EngineUnavailable,
+      Forbidden: publicErrorMap.Forbidden,
+      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+      InvalidInput: publicErrorMap.InvalidInput,
+    },
+    method: 'POST',
+    path: '/work/attempts/stop',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'mutation',
+  })
     .input(workAttemptsStopInputSchema)
     .output(workAttemptsStopOutputSchema),
 } as const;

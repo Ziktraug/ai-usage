@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
+import { webContract } from '@ai-usage/web-contract';
+import { rpcProcedureTable } from '@ai-usage/web-contract/rpc-procedure-table';
 import { QueryClient } from '@tanstack/svelte-query';
 import {
   invalidateWorkThreadQueries,
@@ -14,13 +16,8 @@ import { createWorkThreadCommandAction, createWorkThreadsClient } from '../../rp
 import { createE2ESkillsCapability } from './context.server';
 import { E2E_SKILLS_FIXTURE_HEADER, e2eSkillsFixtureVariantForHeaders } from './e2e-fixture-profile';
 import { createWebRpcHttpHandler, enforceRpcResponseBound } from './handler.server';
-import {
-  enforceRequestPolicy,
-  enforceRpcRequestPolicy,
-  explicitPolicyForPath,
-  rpcOperationPolicies,
-  rpcPathForOperation,
-} from './request-policy-handler';
+import { rpcProcedureRequestPolicies } from './request-policy';
+import { enforceRequestPolicy, enforceRpcRequestPolicy, explicitPolicyForPath } from './request-policy-handler';
 import type { WebRpcRouterDependencies } from './router';
 import type { SkillsCapability } from './skills';
 
@@ -36,10 +33,7 @@ const unavailableServices = <Services>(overrides: object = {}): Services =>
 
 const dependencies = (): WebRpcRouterDependencies => ({
   delegation: unavailableServices<WebRpcRouterDependencies['delegation']>(),
-  memory: unavailableServices<WebRpcRouterDependencies['memory']>(),
-  projects: unavailableServices<WebRpcRouterDependencies['projects']>(),
   report: unavailableServices<WebRpcRouterDependencies['report']>(),
-  replication: unavailableServices<WebRpcRouterDependencies['replication']>(),
   session: unavailableServices<WebRpcRouterDependencies['session']>(),
   skills: {
     preflight: () => ({ allowed: false, tag: 'ForbiddenDemo' }),
@@ -100,10 +94,10 @@ describe('Web RPC HTTP convergence', () => {
       url: 'http://127.0.0.1:3000/rpc',
     });
 
-    for (const policy of rpcOperationPolicies) {
-      const pathname = `/rpc${rpcPathForOperation(policy.operation)}`;
+    for (const policy of rpcProcedureRequestPolicies) {
+      const pathname = `/rpc${policy.path}`;
       try {
-        await procedureAtPath(client, rpcPathForOperation(policy.operation))({});
+        await procedureAtPath(client, policy.path)({});
       } catch {
         // Invalid synthetic inputs and unavailable fake services are expected;
         // this test owns the real transport selection and handler match only.
@@ -111,9 +105,11 @@ describe('Web RPC HTTP convergence', () => {
       expect(observed.at(-1)).toEqual({ method: policy.method, pathname });
     }
 
-    expect(observed).toHaveLength(57);
-    expect(dependencyAcquisitions).toBe(57);
-    expect(rpcOperationPolicies.find(({ operation }) => operation === 'stopWorkAttempt')).toMatchObject({
+    // One request per contract procedure: the count is the contract's, never restated here.
+    const procedureCount = rpcProcedureTable(webContract).length;
+    expect(observed).toHaveLength(procedureCount);
+    expect(dependencyAcquisitions).toBe(procedureCount);
+    expect(rpcProcedureRequestPolicies.find(({ path: rpcPath }) => rpcPath === '/workAttempts/stop')).toMatchObject({
       method: 'POST',
       target: 'workAttempts.stop',
       transport: 'mutation',
@@ -197,7 +193,7 @@ describe('Web RPC HTTP convergence', () => {
     expect(dependencyAcquisitions).toBe(0);
   });
 
-  test('rejects withdrawn account and promotion routes before dependency acquisition', async () => {
+  test('rejects withdrawn account, promotion, Memory, checkout-resolution and replication routes before dependency acquisition', async () => {
     let dependencyAcquisitions = 0;
     const handler = createWebRpcHttpHandler({
       createDependencies: () => {
@@ -221,6 +217,14 @@ describe('Web RPC HTTP convergence', () => {
       '/session-distillation/get',
       '/session-distillation/status',
       '/memory/promote',
+      '/memory/getKnowledge',
+      '/memory/knowledge',
+      '/memory/proposalReviews',
+      '/memory/search',
+      '/memory/applyProposalReviewAction',
+      '/projects/resolutionReviews',
+      '/projects/applyResolutionAction',
+      '/replication/status',
     ]) {
       const response = await trustedHandlerFetch(handler)(
         new Request(`http://127.0.0.1:3000/rpc${path}`, {

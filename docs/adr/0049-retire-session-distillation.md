@@ -1,6 +1,9 @@
 # ADR 0049: Retire Session distillation while preserving Memory and stored evidence
 
-- **Status**: Accepted
+- **Status**: Accepted; amended 2026-10-27 by
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md): the Memory it preserved is removed,
+  the residual deletion lot is deleted with it, and the stored rows stay in the
+  unopened `memory.sqlite` file
 - **Date**: 2026-10-21
 - **Supersedes in part**: ADR 0042 and ADR 0043, as specified below
 - **Preserves**: ADR 0009, ADR 0010, ADR 0012, ADR 0038 and ADR 0044
@@ -34,7 +37,7 @@ accounts do not become accepted guidance, existing evidence is retained, and
 previously promoted knowledge keeps its local-only publication policy across
 acceptance, edits and replication backfill. No migration, table or existing data
 is deleted and the schema version is unchanged. Residual storage/domain modules
-are listed in the [retirement notice](../session-distillation.md); removing them
+are listed in the retirement notice (`docs/session-distillation.md`, removed with them by ADR 0084); removing them
 is a separate lot with its own dependency and compatibility review.
 
 Native harness memory, collectors/readers, native Session detail/analysis,
@@ -63,9 +66,9 @@ the workflow that the product has withdrawn.
 
 ## Evidence
 
-- [Retirement notice and residual lot](../session-distillation.md)
+- Retirement notice and residual lot: `docs/session-distillation.md`, removed by ADR 0084 (git history keeps it)
 - [Browser route rejection tests](../../apps/web/src/lib/server/rpc/handler.server.test.ts)
-- [Authenticated Memory service tests](../../apps/usage-engine/src/memory-service-server.test.ts)
-- [Historical provenance projection](../../packages/memory-service/src/browse.test.ts)
-- [Promotion persistence and publication regressions](../../packages/memory-sqlite/src/analysis-promotion.test.ts)
+- Authenticated Memory service tests: `apps/usage-engine/src/memory-service-server.test.ts`, removed by ADR 0084 (git history keeps it)
+- Historical provenance projection: `packages/memory-service/src/browse.test.ts`, removed by ADR 0084 (git history keeps it)
+- Promotion persistence and publication regressions: `packages/memory-sqlite/src/analysis-promotion.test.ts`, removed by ADR 0084 (git history keeps it)
 - [Local store upgrade procedure](../local-store-upgrade.md)

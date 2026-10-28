@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createMemoryMcpServer, type MemoryMcpReadService } from '@ai-usage/mcp-adapter';
+import { createUsageMcpServer } from '@ai-usage/mcp-adapter';
 import { connectInMemoryMcpClient } from '@ai-usage/mcp-adapter/testing';
 import type { DelegationQualification, FrozenDelegationScope } from '@ai-usage/report-core/delegation-contracts';
 import { parseDelegationEvaluationInput } from '@ai-usage/report-core/delegation-job';
@@ -120,13 +120,6 @@ const selection = {
   routeId: 'route-a',
   selectorVersion: 'calling-model/fixture',
 } as const;
-
-const absentMemory: MemoryMcpReadService = {
-  getMemoryItem: () => Promise.resolve({ error: { code: 'unavailable', operation: 'get-memory-item' }, kind: 'error' }),
-  getProjectContext: () =>
-    Promise.resolve({ error: { code: 'unavailable', operation: 'get-project-context' }, kind: 'error' }),
-  searchMemory: () => Promise.resolve({ error: { code: 'unavailable', operation: 'search-memory' }, kind: 'error' }),
-};
 
 const completion = (command: DelegationEngineCommand['command'], output: unknown) =>
   ({ command, commandId: 'c1', completedAt: END, output, state: 'succeeded' }) as never;
@@ -264,7 +257,7 @@ const serverFor = (dbPath: string, engine: DelegationCommandExecutor, clientName
     now: () => END,
     rendezvousPath: path.join(path.dirname(dbPath), 'rendezvous.json'),
   });
-  const server = createMemoryMcpServer(absentMemory, { delegation: { port, recursionGuard: false } });
+  const server = createUsageMcpServer({ delegation: { port, recursionGuard: false } });
   return connectInMemoryMcpClient(server, { name: clientName });
 };
 

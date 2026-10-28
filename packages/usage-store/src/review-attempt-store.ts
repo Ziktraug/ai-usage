@@ -42,7 +42,7 @@ import {
  * - **Transitions are guarded.** A state write names the states it may leave from; a late
  *   heartbeat cannot resurrect a finished or lost attempt.
  * - **Outside the served revision.** Attempts never advance the store generation, never enter a
- *   publication, a snapshot or the replication outbox. They describe this machine only.
+ *   publication or a snapshot. They describe this machine only.
  */
 export const REVIEW_ATTEMPT_TABLES = ['review_attempts'] as const;
 

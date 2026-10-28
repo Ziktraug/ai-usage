@@ -1,4 +1,6 @@
+import { webContract } from '@ai-usage/web-contract';
 import type { PublicErrorFamily } from '@ai-usage/web-contract/errors';
+import { type RpcProcedureEntry, rpcProcedureTable } from '@ai-usage/web-contract/rpc-procedure-table';
 
 export const publicHttpMethods = ['GET', 'POST'] as const;
 export const demoPolicies = ['forbidden', 'synthetic-only'] as const;
@@ -36,8 +38,8 @@ export const requestBoundaryErrorFamilies = [
 
 export type RequestBoundaryErrorFamily = (typeof requestBoundaryErrorFamilies)[number];
 
-type OperationTransport = 'file' | 'mutation' | 'query';
-type ExplicitTransport = 'command' | 'sse' | 'upload';
+type RpcTransport = 'mutation' | 'query';
+type ExplicitTransport = 'command' | 'file' | 'sse' | 'upload';
 
 interface SharedRequestPolicy {
   readonly applicationErrorFamilies: readonly PublicErrorFamily[];
@@ -51,584 +53,49 @@ interface SharedRequestPolicy {
   readonly trustedLocal: TrustedLocalPolicy;
 }
 
-export interface OperationRequestPolicy extends SharedRequestPolicy {
-  readonly operation: string;
-  readonly source: 'operation';
-  readonly transport: OperationTransport;
+/** The policy of one contract procedure, derived from its `rpcProcedure` declaration. */
+export interface RpcProcedureRequestPolicy extends SharedRequestPolicy {
+  /** The RPC path below `/rpc`, built from the router keys: `/report/revisionManifest`. */
+  readonly path: string;
+  readonly source: 'rpc-procedure';
+  readonly transport: RpcTransport;
 }
 
+/** A hand-written policy for an HTTP endpoint outside oRPC: events, commands and file transfer. */
 export interface ExplicitHttpRequestPolicy extends SharedRequestPolicy {
   readonly source: 'explicit-http';
   readonly transport: ExplicitTransport;
 }
 
-export type RequestPolicy = ExplicitHttpRequestPolicy | OperationRequestPolicy;
+export type RequestPolicy = ExplicitHttpRequestPolicy | RpcProcedureRequestPolicy;
 
-type OperationPolicyInput = Omit<OperationRequestPolicy, 'csrf' | 'demo' | 'id' | 'source' | 'trustedLocal'> & {
-  readonly demo?: DemoPolicy;
-};
-
-const defineOperationPolicy = (input: OperationPolicyInput): OperationRequestPolicy => ({
-  ...input,
-  csrf: input.transport === 'mutation' || input.transport === 'file' ? 'required' : 'not-required',
-  demo: input.demo ?? 'forbidden',
-  id: `operation:${input.operation}`,
-  source: 'operation',
+const rpcProcedurePolicyFor = (procedure: RpcProcedureEntry): RpcProcedureRequestPolicy => ({
+  applicationErrorFamilies: procedure.errorFamilies,
+  // Only a mutation changes state, so only a mutation needs same-origin proof beyond trusted-local.
+  csrf: procedure.transport === 'mutation' ? 'required' : 'not-required',
+  demo: procedure.demo,
+  id: `rpc:${procedure.path.join('.')}`,
+  method: procedure.method,
+  path: `/${procedure.path.join('/')}`,
+  requestSize: procedure.requestSize,
+  responseSize: procedure.responseSize,
+  source: 'rpc-procedure',
+  target: procedure.path.join('.'),
+  transport: procedure.transport,
   trustedLocal: 'required',
 });
 
-const reportReadErrors = ['ForbiddenDemo', 'IncompatibleStore', 'Unavailable'] as const;
-const exactReportErrors = ['ForbiddenDemo', 'InvalidInput', 'RevisionExpired', 'IncompatibleStore'] as const;
-const skillsErrors = ['ForbiddenDemo', 'InvalidInput', 'SkillsConflict', 'Unavailable'] as const;
+/**
+ * One policy per Web contract procedure, derived from the contract (ADR 0076): a procedure is never
+ * restated here, so a new one is enforced the moment it is declared.
+ */
+export const rpcProcedureRequestPolicies: readonly RpcProcedureRequestPolicy[] =
+  rpcProcedureTable(webContract).map(rpcProcedurePolicyFor);
 
-export const operationRequestPolicies = [
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'getMemoryKnowledge',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'memory.getKnowledge',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'listMemoryKnowledge',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'memory.knowledge',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
-    method: 'GET',
-    operation: 'getMemoryProposalReviews',
-    requestSize: 'bounded-url',
-    responseSize: 'bounded-json',
-    target: 'memory.proposalReviews',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'searchMemory',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'memory.search',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'applyMemoryProposalReviewAction',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'memory.applyProposalReviewAction',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
-    method: 'GET',
-    operation: 'getProjectResolutionReviews',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'projects.resolutionReviews',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'applyProjectResolutionAction',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'projects.applyResolutionAction',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
-    method: 'GET',
-    operation: 'getReplicationStatus',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'replication.status',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'GET',
-    operation: 'getReportRevisionManifest',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'report.revisionManifest',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'GET',
-    operation: 'getReportRevisionBootstrap',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'report.revisionBootstrap',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getFocusedReportSupport',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'report.focusedSupport',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getFocusedReportOverview',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'report.focusedOverview',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getFocusedReportBreakdown',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'report.focusedBreakdown',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
-    method: 'GET',
-    operation: 'getCampaignLabelOverrides',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'campaign.labelOverrides',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Conflict'],
-    method: 'POST',
-    operation: 'setCampaignLabelOverride',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'campaign.setLabelOverride',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable', 'Conflict'],
-    method: 'POST',
-    operation: 'saveProjectGroups',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'projectGroup.save',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo'],
-    method: 'GET',
-    operation: 'getReportPerfEnabled',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'runtime.reportPerfEnabled or request context',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'getProviderQuotaHistory',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'quota.history',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getReportSessionPage',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'session.page',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getReportSessionCampaignChildren',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'session.campaignChildren',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getReportSessionNeighbors',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'session.neighbors',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: exactReportErrors,
-    method: 'POST',
-    operation: 'getReportSessionLookup',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'session.lookup',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'getReportSessionDetail',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'session.detail',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'resolveReportSessionVcs',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'session.vcs',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'GET',
-    operation: 'getSkillManagementSnapshot',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.snapshot',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'refreshSkillManagementSnapshot',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.refreshSnapshot',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'GET',
-    operation: 'getKnownSkillProjectPaths',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.knownProjectPaths',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'GET',
-    operation: 'getSkillObservations',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.observations',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'saveSkillManagementConfig',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.saveConfig',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'toggleManagedSkill',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.toggleProjection',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'reconcileManagedSkill',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.reconcileOne',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'reconcileAllManagedSkills',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.reconcileAll',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'GET',
-    operation: 'previewReconcileAllManagedSkills',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.previewReconcileAll (query only while side-effect-free)',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'createManagedSkillTargetDirectory',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.createTargetDirectory',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'saveManagedSkillMarkdown',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.saveManagedMarkdown',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'GET',
-    operation: 'getSkillProjectInventories',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'skills.projectInventories',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'GET',
-    operation: 'getProjectSkillMarkdown',
-    requestSize: 'bounded-url',
-    responseSize: 'bounded-json',
-    target: 'skills.projectMarkdown',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'getManagedSkillMarkdown',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.managedMarkdown',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'GET',
-    operation: 'getSyncFleet',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'sync.fleet',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'POST',
-    operation: 'getWorkAttention',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'work.attention',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable'],
-    method: 'GET',
-    operation: 'getWorkRoutingContext',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'workRouting.context',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    // ADR 0057: the engine observes the executors now and decides; nothing is started.
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
-    method: 'POST',
-    operation: 'qualifyWorkRouting',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workRouting.qualify',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['Unavailable'],
-    method: 'POST',
-    operation: 'listWorkThreads',
-    demo: 'synthetic-only',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workThreads.list',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['Unavailable'],
-    method: 'POST',
-    operation: 'getWorkThreadDetail',
-    demo: 'synthetic-only',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workThreads.detail',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'executeWorkThreadCommand',
-    demo: 'synthetic-only',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workThreads.command',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'POST',
-    operation: 'listWorkAttempts',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workAttempts.list',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
-    method: 'POST',
-    operation: 'startWorkAttempt',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workAttempts.start',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
-    method: 'POST',
-    operation: 'stopWorkAttempt',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workAttempts.stop',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    // ADR 0055: the operator declares a lost attempt's review ended; the engine records it, stops nothing.
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
-    method: 'POST',
-    operation: 'releaseWorkAttemptReservation',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'workAttempts.release',
-    transport: 'mutation',
-  }),
-  // Delegation (ADR 0077): reads from the config and the query-only store; writes are one engine
-  // command each. The Web never starts a delegation: no start operation exists here.
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'GET',
-    operation: 'getDelegationSettings',
-    requestSize: 'none',
-    responseSize: 'bounded-json',
-    target: 'delegation.settings',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: [
-      'ForbiddenDemo',
-      'Forbidden',
-      'InvalidInput',
-      'EngineUnavailable',
-      'Conflict',
-      'Unavailable',
-    ],
-    method: 'POST',
-    operation: 'saveDelegationSettings',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'delegation.saveSettings',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    // A simulation asks the engine to qualify without launching; it writes a qualification row.
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable', 'Unavailable'],
-    method: 'POST',
-    operation: 'simulateDelegation',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'delegation.simulate',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'GET',
-    operation: 'listDelegationJobs',
-    requestSize: 'bounded-url',
-    responseSize: 'bounded-json',
-    target: 'delegation.jobs',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: reportReadErrors,
-    method: 'GET',
-    operation: 'getDelegationJob',
-    requestSize: 'bounded-url',
-    responseSize: 'bounded-json',
-    target: 'delegation.job',
-    transport: 'query',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable', 'Unavailable'],
-    method: 'POST',
-    operation: 'cancelDelegation',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'delegation.cancel',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    // The operator's acceptance; the author is fixed server-side, never part of the request.
-    applicationErrorFamilies: [
-      'ForbiddenDemo',
-      'Forbidden',
-      'InvalidInput',
-      'EngineUnavailable',
-      'Conflict',
-      'Unavailable',
-    ],
-    method: 'POST',
-    operation: 'recordDelegationAcceptance',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'delegation.recordAcceptance',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
-    method: 'POST',
-    operation: 'setMachineLabel',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'sync.setMachineLabel',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
-    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
-    method: 'POST',
-    operation: 'exportManualMergeBundle',
-    requestSize: 'none',
-    responseSize: 'portable-usage-json',
-    target: 'explicit download route with optional bounded oRPC metadata',
-    transport: 'file',
-  }),
-] as const satisfies readonly OperationRequestPolicy[];
-
+/**
+ * The endpoints oRPC does not carry keep hand-written policies (ADR 0076): the source-control event
+ * stream and command, and the manual-merge upload and download with their byte bounds.
+ */
 export const explicitHttpRequestPolicies = [
   {
     applicationErrorFamilies: ['ForbiddenDemo', 'Unavailable', 'IncompatibleStore'],
@@ -669,9 +136,25 @@ export const explicitHttpRequestPolicies = [
     transport: 'upload',
     trustedLocal: 'required',
   },
+  {
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
+    csrf: 'required',
+    demo: 'forbidden',
+    id: 'http:manual-merge-download',
+    method: 'POST',
+    requestSize: 'none',
+    responseSize: 'portable-usage-json',
+    source: 'explicit-http',
+    target: '/api/manual-merge/download',
+    transport: 'file',
+    trustedLocal: 'required',
+  },
 ] as const satisfies readonly ExplicitHttpRequestPolicy[];
 
-export const requestPolicyMatrix = [...operationRequestPolicies, ...explicitHttpRequestPolicies] as const;
+export const requestPolicyMatrix: readonly RequestPolicy[] = [
+  ...rpcProcedureRequestPolicies,
+  ...explicitHttpRequestPolicies,
+];
 
 const localTrustErrors = [
   'MissingHost',

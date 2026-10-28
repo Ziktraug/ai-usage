@@ -19,9 +19,7 @@ export type ShellIconName =
   | 'breakdown'
   | 'campaigns'
   | 'delegation'
-  | 'memory'
   | 'overview'
-  | 'projects'
   | 'sessions'
   | 'skills'
   | 'sources'
@@ -43,8 +41,6 @@ export interface ShellDestination {
 }
 
 export const shellManagementDestinations = [
-  { href: '/memory', icon: 'memory', label: 'Memory' },
-  { href: '/projects', icon: 'projects', label: 'Projects' },
   { href: '/skills', icon: 'skills', label: 'Skills' },
   { href: '/sync', icon: 'sync', label: 'Sync' },
   { href: '/sources', icon: 'sources', label: 'Sources' },

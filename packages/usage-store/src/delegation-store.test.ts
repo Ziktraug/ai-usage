@@ -17,6 +17,7 @@ import {
   readDelegationJob,
   readDelegationJobs,
   readDelegationQualification,
+  USAGE_STORE_SCHEMA_VERSION,
 } from './reader';
 import {
   countDelegationRetryChain,
@@ -158,7 +159,7 @@ describe('delegation store schema', () => {
     const dbPath = await createStore();
     const db = new Database(dbPath, { readonly: true });
     try {
-      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: USAGE_STORE_SCHEMA_VERSION });
       const tables = (
         db
           .query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'delegation_%' ORDER BY name")
@@ -184,7 +185,7 @@ describe('delegation store schema', () => {
     }
   });
 
-  test('adds the tables to an existing v4 store that lacks them, idempotently and without moving the generation', async () => {
+  test('adds the tables to an existing current-version store that lacks them, idempotently and without moving the generation', async () => {
     const dbPath = await createStore();
     const before = new Database(dbPath);
     const generationBefore = before.query("SELECT value FROM usage_store_metadata WHERE key = 'generation'").get();
@@ -194,7 +195,7 @@ describe('delegation store schema', () => {
     await run(initializeUsageStore({ dbPath }));
     const after = new Database(dbPath, { readonly: true });
     try {
-      expect(after.query('PRAGMA user_version').get()).toEqual({ user_version: 4 });
+      expect(after.query('PRAGMA user_version').get()).toEqual({ user_version: USAGE_STORE_SCHEMA_VERSION });
       expect(after.query("SELECT value FROM usage_store_metadata WHERE key = 'generation'").get()).toEqual(
         generationBefore,
       );

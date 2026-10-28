@@ -835,8 +835,8 @@ const usableLocalPath = (value: string): boolean => path.isAbsolute(value) && !v
 /**
  * The checkouts a run observes: every canonical path the served local Project sources decode to,
  * then every linked worktree (the physical path of a source whose published id names another
- * path), as ADR 0044 observes them, then the injected candidates. Resolved so `/a/b/` and
- * `/a/b` are one checkout; a path appears once.
+ * path), the plan ADR 0044 introduced and ADR 0051 keeps, then the injected candidates. Resolved
+ * so `/a/b/` and `/a/b` are one checkout; a path appears once.
  */
 export const candidateCheckoutPaths = (
   sources: readonly ServedLocalProjectSource[],

@@ -95,7 +95,11 @@ export const assertUsageEngineRendezvousTarget = (
   }
 };
 
-export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvous => {
+/** Every rendezvous check except the meaning of the version, which each reader decides for itself. */
+const parseRendezvousDocument = <ProtocolVersion extends number>(
+  value: unknown,
+  parseProtocolVersion: (protocolVersion: unknown) => ProtocolVersion,
+) => {
   if (!(isRecord(value) && hasExactKeys(value, ['instanceId', 'port', 'protocolVersion', 'targetId', 'token']))) {
     throw new Error('Usage engine rendezvous contains unknown or missing fields.');
   }
@@ -104,14 +108,7 @@ export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvou
   ) {
     throw new Error('Usage engine rendezvous port is invalid.');
   }
-  let protocolVersion: UsageEngineProtocolVersion;
-  try {
-    protocolVersion = parseUsageEngineProtocolVersion(value.protocolVersion);
-  } catch (error) {
-    throw new UsageEngineRendezvousError('protocol-mismatch', 'Usage engine protocol version mismatch.', {
-      cause: error,
-    });
-  }
+  const protocolVersion = parseProtocolVersion(value.protocolVersion);
   return Object.freeze({
     instanceId: parseUsageEngineInstanceId(value.instanceId),
     port: value.port,
@@ -120,6 +117,26 @@ export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvou
     token: createUsageEngineBearerToken(value.token),
   });
 };
+
+const parseCurrentRendezvousProtocolVersion = (value: unknown): UsageEngineProtocolVersion => {
+  try {
+    return parseUsageEngineProtocolVersion(value);
+  } catch (error) {
+    throw new UsageEngineRendezvousError('protocol-mismatch', 'Usage engine protocol version mismatch.', {
+      cause: error,
+    });
+  }
+};
+
+const parseAnyRendezvousProtocolVersion = (value: unknown): number => {
+  if (!(typeof value === 'number' && Number.isSafeInteger(value) && value >= 1)) {
+    throw new Error('Usage engine rendezvous protocol version is invalid.');
+  }
+  return value;
+};
+
+export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvous =>
+  parseRendezvousDocument(value, parseCurrentRendezvousProtocolVersion);
 
 export const parseUsageEngineLoopbackOrigin = (value: unknown): UsageEngineLoopbackOrigin => {
   if (typeof value !== 'string') {
@@ -137,7 +154,8 @@ export const parseUsageEngineLoopbackOrigin = (value: unknown): UsageEngineLoopb
 export const usageEngineLoopbackOrigin = (rendezvous: UsageEngineRendezvous): UsageEngineLoopbackOrigin =>
   parseUsageEngineLoopbackOrigin(`http://127.0.0.1:${rendezvous.port}`);
 
-export const loadUsageEngineRendezvous = async (filePath: string): Promise<UsageEngineRendezvous> => {
+/** Reads the rendezvous JSON through the owner-only, no-symlink, single-link, bounded file checks. */
+const readRendezvousDocument = async (filePath: string): Promise<unknown> => {
   const absolutePath = path.resolve(filePath);
   const parentPath = path.dirname(absolutePath);
   const [parent, canonicalParent] = await Promise.all([
@@ -222,18 +240,29 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
     } catch (error) {
       throw new Error('Usage engine rendezvous must contain valid UTF-8 JSON.', { cause: error });
     }
-    let value: unknown;
     try {
-      value = JSON.parse(text) as unknown;
+      return JSON.parse(text) as unknown;
     } catch {
       // No cause: redaction boundary, a JSON parse error quotes the token-bearing rendezvous document.
       throw new Error('Usage engine rendezvous must contain valid JSON.');
     }
-    return parseUsageEngineRendezvous(value);
   } finally {
     await file.close().catch(() => undefined);
   }
 };
+
+/** The live client loader: a rendezvous published under any other protocol fails as `protocol-mismatch`. */
+export const loadUsageEngineRendezvous = async (filePath: string): Promise<UsageEngineRendezvous> =>
+  parseUsageEngineRendezvous(await readRendezvousDocument(filePath));
+
+/**
+ * Stale-lock recovery only: names the engine instance that published a rendezvous a dead writer
+ * left behind. That engine may predate this build, so any positive protocol version is accepted;
+ * every other field and file check still applies, and only the owner is returned so the result
+ * can never be used to connect. Live clients use `loadUsageEngineRendezvous`.
+ */
+export const loadStaleUsageEngineRendezvousOwner = async (filePath: string): Promise<UsageEngineInstanceId> =>
+  parseRendezvousDocument(await readRendezvousDocument(filePath), parseAnyRendezvousProtocolVersion).instanceId;
 
 export {
   errorHasCode,

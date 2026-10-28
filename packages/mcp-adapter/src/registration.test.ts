@@ -2,12 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  type CodexMcpCommandRunner,
-  memoryMcpServerName,
-  registerCodexMemoryMcp,
-  registerJsonMemoryMcp,
-} from './registration';
+import { type CodexMcpCommandRunner, registerCodexMcp, registeredMcpServerName, registerJsonMcp } from './registration';
 
 const roots: string[] = [];
 
@@ -26,7 +21,12 @@ const fixture = async () => {
   return { privateStatePath, registration, root };
 };
 
-describe('Memory MCP registration', () => {
+describe('ai-usage MCP registration', () => {
+  test('keeps the server name existing operator registrations already carry', () => {
+    // Renaming it would leave the old entry orphaned and register a second server beside it.
+    expect(registeredMcpServerName).toBe('ai-usage-memory');
+  });
+
   test('atomically adds one managed JSON entry, preserves other entries, and is idempotent under concurrency', async () => {
     const { privateStatePath, registration, root } = await fixture();
     const configPath = path.join(root, '.mcp.json');
@@ -36,13 +36,13 @@ describe('Memory MCP registration', () => {
     );
 
     const results = await Promise.all([
-      registerJsonMemoryMcp({ configPath, privateStatePath, registration }),
-      registerJsonMemoryMcp({ configPath, privateStatePath, registration }),
+      registerJsonMcp({ configPath, privateStatePath, registration }),
+      registerJsonMcp({ configPath, privateStatePath, registration }),
     ]);
     expect(results.map(({ kind }) => kind).sort()).toEqual(['created', 'unchanged']);
     expect(JSON.parse(await readFile(configPath, 'utf8'))).toEqual({
       mcpServers: {
-        [memoryMcpServerName]: registration,
+        [registeredMcpServerName]: registration,
         existing: { args: [], command: 'existing' },
       },
       unrelated: true,
@@ -52,13 +52,13 @@ describe('Memory MCP registration', () => {
   test('refuses a same-name unmanaged JSON entry without changing the file', async () => {
     const { privateStatePath, registration, root } = await fixture();
     const configPath = path.join(root, 'mcp.json');
-    const original = `${JSON.stringify({ mcpServers: { [memoryMcpServerName]: { args: [], command: 'other' } } })}\n`;
+    const original = `${JSON.stringify({ mcpServers: { [registeredMcpServerName]: { args: [], command: 'other' } } })}\n`;
     await writeFile(configPath, original);
 
-    await expect(registerJsonMemoryMcp({ configPath, privateStatePath, registration })).resolves.toEqual({
+    await expect(registerJsonMcp({ configPath, privateStatePath, registration })).resolves.toEqual({
       kind: 'refused-unmanaged',
       reason: 'existing-server-differs',
-      serverName: memoryMcpServerName,
+      serverName: registeredMcpServerName,
     });
     expect(await readFile(configPath, 'utf8')).toBe(original);
   });
@@ -69,7 +69,7 @@ describe('Memory MCP registration', () => {
     const configPath = path.join(root, '.mcp.json');
     await writeFile(actualPath, '{}\n');
     await symlink(actualPath, configPath);
-    await expect(registerJsonMemoryMcp({ configPath, privateStatePath, registration })).rejects.toThrow(
+    await expect(registerJsonMcp({ configPath, privateStatePath, registration })).rejects.toThrow(
       'regular non-symlink file',
     );
   });
@@ -89,31 +89,31 @@ describe('Memory MCP registration', () => {
         }
         server = {
           enabled: true,
-          name: memoryMcpServerName,
+          name: registeredMcpServerName,
           transport: { args: registration.args, command: registration.command, type: 'stdio' },
         };
         return Promise.resolve({ exitCode: 0, stdout: '' });
       },
     };
 
-    await expect(registerCodexMemoryMcp({ configPath, privateStatePath, registration, runner })).resolves.toMatchObject(
-      { kind: 'created' },
-    );
+    await expect(registerCodexMcp({ configPath, privateStatePath, registration, runner })).resolves.toMatchObject({
+      kind: 'created',
+    });
     expect(calls).toEqual([
       ['mcp', 'list', '--json'],
-      ['mcp', 'add', memoryMcpServerName, '--', registration.command, ...registration.args],
+      ['mcp', 'add', registeredMcpServerName, '--', registration.command, ...registration.args],
       ['mcp', 'list', '--json'],
     ]);
 
     server = {
       enabled: true,
-      name: memoryMcpServerName,
+      name: registeredMcpServerName,
       transport: { args: [], command: 'unmanaged', type: 'stdio' },
     };
     calls.length = 0;
-    await expect(registerCodexMemoryMcp({ configPath, privateStatePath, registration, runner })).resolves.toMatchObject(
-      { kind: 'refused-unmanaged' },
-    );
+    await expect(registerCodexMcp({ configPath, privateStatePath, registration, runner })).resolves.toMatchObject({
+      kind: 'refused-unmanaged',
+    });
     expect(calls).toEqual([['mcp', 'list', '--json']]);
   });
 });

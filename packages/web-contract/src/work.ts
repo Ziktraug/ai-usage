@@ -16,7 +16,7 @@ import {
   WORK_FACT_SOURCES,
   WORK_INTERPRETATION_KINDS,
 } from '@ai-usage/report-core/work-attention';
-import { type ContractRouterClient, oc } from '@orpc/contract';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   array,
   boolean,
@@ -41,6 +41,8 @@ import {
   string,
   variant,
 } from 'valibot';
+import { publicErrorMap } from './errors';
+import { rpcProcedure } from './rpc-procedure';
 import { jsonWireValueSchema, publicMessageSchema } from './schema-conventions';
 
 /**
@@ -369,8 +371,18 @@ export const parseWorkAttentionOutput = (value: unknown): WorkAttentionOutput =>
   parse(workAttentionOutputSchema, value);
 
 export const workContract = {
-  attention: oc
-    .route({ method: 'POST', path: '/work/attention' })
+  attention: rpcProcedure({
+    errors: {
+      ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+      IncompatibleStore: publicErrorMap.IncompatibleStore,
+      Unavailable: publicErrorMap.Unavailable,
+    },
+    method: 'POST',
+    path: '/work/attention',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
     .input(workAttentionInputSchema)
     .output(workAttentionOutputSchema),
 } as const;

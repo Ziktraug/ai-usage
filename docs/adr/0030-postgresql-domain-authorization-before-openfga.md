@@ -81,5 +81,5 @@ its datastore still does not become authority for application business rows.
 ## Evidence
 
 - [Authorizer decision](0029-application-owned-authorizer.md)
-- [Authorization model, RLS, and benchmark](../authorization.md)
+- Authorization model, RLS, and benchmark: `docs/authorization.md`, removed with accepted Memory by ADR 0084 (git history keeps it)
 - [Plan 103](../../plans/103-rebac-authorization-content-boundaries.md)

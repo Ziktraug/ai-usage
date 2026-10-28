@@ -6,8 +6,10 @@ import path from 'node:path';
 import {
   boundDelegationListPayload,
   delegationMcpBounds,
+  delegationMcpToolNames,
   delegationMcpVocabulary,
-  memoryMcpBounds,
+  mcpServerBounds,
+  workMcpToolNames,
 } from '@ai-usage/mcp-adapter';
 import { connectInMemoryMcpClient, type InMemoryMcpClient } from '@ai-usage/mcp-adapter/testing';
 import type {
@@ -42,6 +44,7 @@ import {
   type ConnectDelegationEngineOptions,
   DelegationEngineConnectionError,
 } from '@ai-usage/usage-engine-control/delegation-operations';
+import { USAGE_STORE_SCHEMA_VERSION } from '@ai-usage/usage-store/reader';
 import {
   importClaudeDesktopSessions,
   initializeUsageStore,
@@ -55,7 +58,7 @@ import {
   createLocalWorkContextMcpReadService,
   delegationConfigCwd,
   mcpInstallationRoot,
-  runMemoryMcpProcess,
+  runMcpProcess,
 } from './main';
 
 const temporaryRoots: string[] = [];
@@ -170,24 +173,36 @@ const firstText = (content: unknown): string => {
     : '';
 };
 
-describe('Memory MCP process composition', () => {
-  test('builds the local stdio composition without opening a Memory or usage database', async () => {
+describe('MCP process composition', () => {
+  test('starts with an empty state directory and serves exactly work.context and the delegation tools, opening nothing', async () => {
     const root = await temporaryRoot();
-    let connected = false;
-    await runMemoryMcpProcess({
-      connect: (server) => {
-        connected = server !== null;
-        return Promise.resolve();
+    const stateDirectory = path.join(root, 'state');
+    await mkdir(stateDirectory);
+    let client: InMemoryMcpClient | undefined;
+    await runMcpProcess({
+      connect: async (server) => {
+        client = await connectInMemoryMcpClient(server, { name: 'mcp-main-start-test' });
       },
       cwd: '/workspace',
       environment: {
         AI_USAGE_DATABASE_PATH: path.join(root, 'store', 'usage-store.sqlite'),
-        AI_USAGE_ENGINE_STATE_DIR: '/isolated/state',
-        AI_USAGE_HOME: '/isolated/home',
+        AI_USAGE_ENGINE_STATE_DIR: stateDirectory,
+        AI_USAGE_HOME: path.join(root, 'home'),
       },
     });
-    expect(connected).toBe(true);
-    expect(await readdir(root)).toEqual([]);
+    if (client === undefined) {
+      throw new Error('The composition did not connect its server.');
+    }
+    try {
+      expect((await client.listTools()).map(({ name }) => name)).toEqual([
+        ...workMcpToolNames,
+        ...delegationMcpToolNames,
+      ]);
+    } finally {
+      await client.close();
+    }
+    expect(await readdir(root)).toEqual(['state']);
+    expect(await readdir(stateDirectory)).toEqual([]);
   });
 
   test('reads the Work context read-only and reports a missing store as a typed code, never creating it', async () => {
@@ -278,13 +293,13 @@ describe('delegation composition', () => {
     expect(path.relative(root, path.resolve(import.meta.dir, '..', '..', '..'))).toBe('');
   });
 
-  test('registers the delegation tools with no Memory rendezvous: start answers engine-unavailable while status reads the store', async () => {
+  test('registers the delegation tools: start answers engine-unavailable while status reads the store', async () => {
     const root = await temporaryRoot();
     const dbPath = path.join(root, 'store', 'usage.sqlite');
     await seedDelegationStore(dbPath);
     const connections: ConnectDelegationEngineOptions[] = [];
     let client: InMemoryMcpClient | undefined;
-    await runMemoryMcpProcess({
+    await runMcpProcess({
       connect: async (server) => {
         client = await connectInMemoryMcpClient(server, { name: 'mcp-main-test' });
       },
@@ -311,7 +326,7 @@ describe('delegation composition', () => {
       expect(names).toContain('work.context');
       expect(client.instructions()).toContain('Delegation (AI Usage)');
 
-      // The store answers without any engine and without Memory.
+      // The store answers without any engine.
       const status = await client.callTool('delegation.status', { jobId: JOB_ID });
       expect(status.isError).not.toBe(true);
       expect(status.structuredContent).toMatchObject({
@@ -342,7 +357,7 @@ describe('delegation composition', () => {
       expect(connections).toEqual([
         {
           configCwd: '/install/ai-usage',
-          expectedStoreSchemaVersion: 4,
+          expectedStoreSchemaVersion: USAGE_STORE_SCHEMA_VERSION,
           runtimePaths: { databasePath: dbPath, rendezvousPath: path.join(root, 'state', 'rendezvous.json') },
           signal: expect.any(AbortSignal),
         },
@@ -479,7 +494,7 @@ describe('delegation composition', () => {
       throw new Error(`list failed: ${listed.code}`);
     }
     expect(listed.value.jobs).toHaveLength(20);
-    expect(Buffer.byteLength(JSON.stringify(listed.value), 'utf8')).toBeLessThan(memoryMcpBounds.maxOutputBytes);
+    expect(Buffer.byteLength(JSON.stringify(listed.value), 'utf8')).toBeLessThan(mcpServerBounds.maxOutputBytes);
     // Newest first, as compact summaries: the whole result's finding count and a 300-character digest.
     expect(listed.value.jobs[0]).toEqual({
       checkoutPath: CHECKOUT,
@@ -507,7 +522,7 @@ describe('delegation composition', () => {
 
     // Through the server: the tool answers under its bound, and the full view stays on status.
     let client: InMemoryMcpClient | undefined;
-    await runMemoryMcpProcess({
+    await runMcpProcess({
       connect: async (server) => {
         client = await connectInMemoryMcpClient(server, { name: 'mcp-main-list-test' });
       },
@@ -625,10 +640,10 @@ describe('delegation composition', () => {
     }
     expect(listed.value.jobs).toHaveLength(DELEGATION_READ_BOUNDS.maxListLimit);
     expect(listed.value).toMatchObject({ skipped: 0, truncated: false });
-    expect(Buffer.byteLength(JSON.stringify(listed.value), 'utf8')).toBeGreaterThan(memoryMcpBounds.maxOutputBytes);
+    expect(Buffer.byteLength(JSON.stringify(listed.value), 'utf8')).toBeGreaterThan(mcpServerBounds.maxOutputBytes);
 
     let client: InMemoryMcpClient | undefined;
-    await runMemoryMcpProcess({
+    await runMcpProcess({
       connect: async (server) => {
         client = await connectInMemoryMcpClient(server, { name: 'mcp-main-wide-list-test' });
       },
@@ -648,7 +663,7 @@ describe('delegation composition', () => {
     try {
       const list = await client.callTool('delegation.list', { limit: DELEGATION_READ_BOUNDS.maxListLimit });
       expect(list.isError).not.toBe(true);
-      expect(Buffer.byteLength(firstText(list.content), 'utf8')).toBeLessThanOrEqual(memoryMcpBounds.maxOutputBytes);
+      expect(Buffer.byteLength(firstText(list.content), 'utf8')).toBeLessThanOrEqual(mcpServerBounds.maxOutputBytes);
       const content = list.structuredContent as {
         jobs: { checkoutPath: string; frozenScope: FrozenDelegationScope | null; jobId: string }[];
         omitted: number;
@@ -819,10 +834,10 @@ describe('delegation composition', () => {
     };
     // About 26 KiB: the checkout path is the bulk, the rest a few KiB. At least four such fit the 192 KiB bound.
     const bytes = Buffer.byteLength(JSON.stringify(widestSummary), 'utf8');
-    expect(bytes * 4).toBeLessThan(memoryMcpBounds.maxOutputBytes);
+    expect(bytes * 4).toBeLessThan(mcpServerBounds.maxOutputBytes);
     const payload = boundDelegationListPayload({ jobs: [widestSummary], skipped: 0, truncated: false });
     expect(payload.jobs).toEqual([widestSummary]);
     expect(payload.omitted).toBe(0);
-    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeLessThanOrEqual(memoryMcpBounds.maxOutputBytes);
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeLessThanOrEqual(mcpServerBounds.maxOutputBytes);
   });
 });

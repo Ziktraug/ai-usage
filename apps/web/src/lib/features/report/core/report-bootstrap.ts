@@ -5,7 +5,7 @@ import type { RuntimeMode } from '../../../../runtime-mode';
 import { toWebReportPayload, type WebReportPayload } from '../../../../web-report-payload';
 import { parseDashboardSearchUrl } from '../../../foundation/navigation/svelte/dashboard-url';
 import type { WebQueryHydrationState } from '../../../query/client';
-import { createWebQueryLoadState, type WebQueryRuntime, type WebQueryRuntimeOptions } from '../../../query/composition';
+import type { WebQueryRuntime, WebQueryRuntimeOptions } from '../../../query/composition';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapQueryOptions } from '../../../query/options/report';
 import { reportDestinationQueryOptions } from '../../../query/options/report-destination';
@@ -88,15 +88,14 @@ export const acquireLiveReportQueryState = async (
 /**
  * Assembles the page data the report component tree consumes. Live mode adopts the state the server
  * `load` already acquired; synthetic modes keep their payload client-owned so demo and e2e runs are
- * served from the bundle rather than inlined into every document.
+ * served from the bundle rather than inlined into every document, and acquire nothing.
  */
 export const reportPageDataFor = (
   mode: RuntimeMode,
-  runtimeOptions: WebQueryRuntimeOptions,
   serverQueryState: WebQueryHydrationState | undefined,
 ): ReportPageData => {
   if (mode !== 'live') {
-    return { mode, payload: syntheticPayload, queryState: createWebQueryLoadState(runtimeOptions) };
+    return { mode, payload: syntheticPayload, queryState: deferredLiveReportQueryState() };
   }
   if (serverQueryState === undefined) {
     throw new ReportBootstrapUnavailableError();

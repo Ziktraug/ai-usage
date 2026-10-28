@@ -191,13 +191,13 @@ test('does not restart campaign acquisition after leaving a delayed bootstrap re
     await enterCampaigns(page);
     await page.getByRole('button', { name: 'Retry', exact: true }).click({ timeout: 20_000 });
     await expect.poll(bootstrap.attempts).toBe(2);
-    await page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Projects', exact: true }).click();
-    await expect(page.locator('main[data-route-shell="projects"]')).toBeVisible();
+    await page.locator('[data-app-navigation="desktop"]').getByRole('link', { name: 'Sync', exact: true }).click();
+    await expect(page.locator('main[data-route-shell="sync"]')).toBeVisible();
     bootstrap.release();
     await bootstrap.completed;
     // Leave time for the released request and any erroneous imperative exploration refetch to settle.
     await page.waitForTimeout(350);
-    await expect(page.locator('main[data-route-shell="projects"]')).toBeVisible();
+    await expect(page.locator('main[data-route-shell="sync"]')).toBeVisible();
     await expect(page.locator('main[data-route-shell="campaigns"]')).toHaveCount(0);
     expect(requests.campaigns).toEqual([]);
     expectNoPendingRevision(requests);

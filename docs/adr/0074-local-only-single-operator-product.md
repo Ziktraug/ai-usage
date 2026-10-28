@@ -1,6 +1,7 @@
 # ADR 0074: Local-only, single-operator product; manual transfer bundles are the only cross-machine path
 
-- **Status**: Accepted
+- **Status**: Accepted; phase B executed 2026-10-27 by
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md)
 - **Date**: 2026-10-24
 - **Supersedes**: [ADR 0023](0023-one-product-local-and-shared-compositions.md),
   [ADR 0030](0030-postgresql-domain-authorization-before-openfga.md),

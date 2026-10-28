@@ -142,9 +142,7 @@ const processExists = (pid: number): boolean => {
 
 /** The engine's cross-process coordination files in its state directory: writer leases and rendezvous. */
 const engineCoordinationFiles = async (stateDirectory: string): Promise<string[]> =>
-  (await readdir(stateDirectory))
-    .filter((name) => name.endsWith('.engine.lock') || name === 'rendezvous.json' || name === 'memory-service.json')
-    .sort();
+  (await readdir(stateDirectory)).filter((name) => name.endsWith('.engine.lock') || name === 'rendezvous.json').sort();
 
 const PROC_PID_PATTERN = /^\d+$/;
 
@@ -219,18 +217,6 @@ test(
   'runs stateful machine and snapshot commands in an isolated profile',
   async () => {
     await withCliSandbox(async ({ root, runCli }) => {
-      const replication = await runCli(['replication', 'status', '--json']);
-      expect(replication.exitCode).toBe(0);
-      expect(replication.stderr).toBe('');
-      expect(JSON.parse(replication.stdout)).toEqual({
-        kind: 'replication-status',
-        lastDiagnostic: null,
-        memory: null,
-        mode: 'local-only',
-        runtimeState: 'disabled',
-        usage: null,
-      });
-
       const first = await runCli(['machine']);
       const second = await runCli(['machine']);
       if (first.exitCode !== 0) {
@@ -274,18 +260,6 @@ test(
       let expected: Awaited<ReturnType<typeof runCli>>[] = [];
       try {
         await waitForUsageEngineDaemon(daemon, rendezvousPath);
-        const replication = await runCli(['replication', 'status', '--json']);
-        expect(replication.exitCode).toBe(0);
-        expect(JSON.parse(replication.stdout)).toMatchObject({ mode: 'local-only', runtimeState: 'disabled' });
-        const memorySearch = await runCli(['memory', 'search', 'authorized ranking', '--json']);
-        expect(memorySearch.exitCode).toBe(0);
-        expect(memorySearch.stderr).toBe('');
-        expect(JSON.parse(memorySearch.stdout)).toMatchObject({
-          items: [],
-          nextCursor: null,
-          rankingVersion: expect.stringContaining('memory-search-lexical-v1'),
-          total: 0,
-        });
         const daemonFresh = await runCli([...selection, '--json']);
         if (daemonFresh.exitCode !== 0) {
           const rendezvous = await loadUsageEngineRendezvous(rendezvousPath);
@@ -379,14 +353,14 @@ test.each([
             if (held.enginePid === cli.pid) {
               throw new Error('The provider was spawned by the CLI itself, not by a foreground engine.');
             }
-            // The interruption has to land while the engine owns its writer leases and Memory
-            // listener, or "nothing left behind" proves nothing.
+            // The interruption has to land while the engine owns its writer lease, or "nothing
+            // left behind" proves nothing. A foreground engine publishes no rendezvous.
             const coordination = {
               state: await engineCoordinationFiles(stateDirectory),
               usageLock: await Bun.file(`${databasePath}.engine.lock`).exists(),
             };
             expect(coordination).toEqual({
-              state: ['memory-service.json', 'memory.sqlite.engine.lock'],
+              state: [],
               usageLock: true,
             });
             observed.held = held;

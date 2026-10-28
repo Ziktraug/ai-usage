@@ -1,8 +1,8 @@
 # ADR 0038: Local Memory store writer lease and startup coupling
 
-- **Status**: Accepted; amended by
-  [ADR 0074](0074-local-only-single-operator-product.md); retires with the
-  Memory store in plan 120 phase B
+- **Status**: Retired 2026-10-27 by
+  [ADR 0084](0084-retire-memory-checkout-resolution-and-replication.md) (the engine no longer opens the
+  Memory store); amended by [ADR 0074](0074-local-only-single-operator-product.md)
 - **Date**: 2026-09-07
 - **Amended by**: [ADR 0074](0074-local-only-single-operator-product.md)
 

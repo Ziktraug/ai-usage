@@ -4,6 +4,7 @@ import type { SyncFleet } from '@ai-usage/web-contract/sync';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
+import { createWebRpcClient } from '../../rpc/client';
 import { loadSyncPageData } from './sync-load';
 
 interface SvelteServerModule {
@@ -76,8 +77,10 @@ describe('Sync rendered SSR parity', () => {
     let fleetCalls = 0;
     const data = await loadSyncPageData(
       {
-        fetch: () => Promise.reject(new Error('Injected Sync fixture owns this acquisition.')),
-        url: new URL('http://sync.invalid/sync'),
+        rpc: createWebRpcClient({
+          fetch: () => Promise.reject(new Error('Injected Sync fixture owns this acquisition.')),
+          url: 'http://sync.invalid/rpc',
+        }),
       },
       {
         createClient: () => ({

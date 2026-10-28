@@ -77,7 +77,6 @@ test('initialized and upgraded disposable stores keep Codex questions outside po
   expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generation);
   const db = new Database(dbPath, { readonly: true });
   try {
-    expect(db.query('SELECT COUNT(*) AS count FROM replication_outbox_events').get()).toEqual({ count: 0 });
     for (const payload of [
       db.query('SELECT row_json FROM usage_rows').all(),
       db.query('SELECT row_json, source_row_json, search_text FROM served_report_rows').all(),

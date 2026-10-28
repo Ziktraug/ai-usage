@@ -4,20 +4,21 @@ import { lstat, open, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { projectionLockIdentityForTarget, withSkillProjectionLock } from '@ai-usage/skills/projection-lock';
 
-export const memoryMcpServerName = 'ai-usage-memory' as const;
+/** Keeps its Memory-era value: operator configs already register this name, and a rename would orphan them. */
+export const registeredMcpServerName = 'ai-usage-memory' as const;
 
-export interface MemoryMcpStdioRegistration {
+export interface McpStdioRegistration {
   readonly args: readonly string[];
   readonly command: string;
 }
 
-export type MemoryMcpRegistrationResult =
-  | { readonly kind: 'created'; readonly serverName: typeof memoryMcpServerName }
-  | { readonly kind: 'unchanged'; readonly serverName: typeof memoryMcpServerName }
+export type McpRegistrationResult =
+  | { readonly kind: 'created'; readonly serverName: typeof registeredMcpServerName }
+  | { readonly kind: 'unchanged'; readonly serverName: typeof registeredMcpServerName }
   | {
       readonly kind: 'refused-unmanaged';
       readonly reason: 'existing-server-differs';
-      readonly serverName: typeof memoryMcpServerName;
+      readonly serverName: typeof registeredMcpServerName;
     };
 
 interface FileIdentity {
@@ -40,14 +41,14 @@ export interface CodexMcpCommandRunner {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const validRegistration = (registration: MemoryMcpStdioRegistration): void => {
+const validRegistration = (registration: McpStdioRegistration): void => {
   if (
     registration.command.length === 0 ||
     registration.command.includes('\0') ||
     registration.args.length > 64 ||
     registration.args.some((entry) => entry.length === 0 || entry.includes('\0'))
   ) {
-    throw new Error('Memory MCP stdio registration is invalid.');
+    throw new Error('ai-usage MCP stdio registration is invalid.');
   }
 };
 
@@ -70,7 +71,7 @@ const observeFile = async (filePath: string): Promise<FileIdentity | null> => {
   try {
     const stats = await lstat(filePath);
     if (stats.isSymbolicLink() || !stats.isFile()) {
-      throw new Error('Memory MCP registration target must be a regular non-symlink file.');
+      throw new Error('ai-usage MCP registration target must be a regular non-symlink file.');
     }
     return identityOf(stats);
   } catch (error) {
@@ -87,25 +88,25 @@ const assertUnchanged = async (filePath: string, observed: FileIdentity | null):
     (observed === null && current !== null) ||
     (observed !== null && (current === null || !sameIdentity(observed, current)))
   ) {
-    throw new Error('Memory MCP registration target changed after inspection.');
+    throw new Error('ai-usage MCP registration target changed after inspection.');
   }
 };
 
 const readObservedText = async (filePath: string, observed: FileIdentity): Promise<string> => {
   if (observed.size > 1024 * 1024) {
-    throw new Error('Memory MCP registration target exceeds its byte limit.');
+    throw new Error('ai-usage MCP registration target exceeds its byte limit.');
   }
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are combined bitwise.
   const handle = await open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     const before = identityOf(await handle.stat());
     if (!sameIdentity(observed, before)) {
-      throw new Error('Memory MCP registration target changed before reading.');
+      throw new Error('ai-usage MCP registration target changed before reading.');
     }
     const text = await handle.readFile({ encoding: 'utf8' });
     const after = identityOf(await handle.stat());
     if (!sameIdentity(before, after)) {
-      throw new Error('Memory MCP registration target changed while reading.');
+      throw new Error('ai-usage MCP registration target changed while reading.');
     }
     return text;
   } finally {
@@ -121,11 +122,11 @@ const assertParentIdentity = async (directory: string, canonical: string, observ
     !sameObjectIdentity(observed, identityOf(current)) ||
     (await realpath(directory)) !== canonical
   ) {
-    throw new Error('Memory MCP registration directory changed after inspection.');
+    throw new Error('ai-usage MCP registration directory changed after inspection.');
   }
 };
 
-const registrationMatches = (value: unknown, expected: MemoryMcpStdioRegistration): boolean =>
+const registrationMatches = (value: unknown, expected: McpStdioRegistration): boolean =>
   isRecord(value) &&
   Object.keys(value).length === 2 &&
   value.command === expected.command &&
@@ -133,21 +134,21 @@ const registrationMatches = (value: unknown, expected: MemoryMcpStdioRegistratio
   value.args.length === expected.args.length &&
   value.args.every((entry, index) => entry === expected.args[index]);
 
-export const registerJsonMemoryMcp = async (input: {
+export const registerJsonMcp = async (input: {
   readonly configPath: string;
   readonly privateStatePath: string;
-  readonly registration: MemoryMcpStdioRegistration;
-}): Promise<MemoryMcpRegistrationResult> => {
+  readonly registration: McpStdioRegistration;
+}): Promise<McpRegistrationResult> => {
   validRegistration(input.registration);
   const configPath = path.resolve(input.configPath);
   if (!['.mcp.json', 'mcp.json'].includes(path.basename(configPath))) {
-    throw new Error('Memory MCP JSON registration target has an unsupported filename.');
+    throw new Error('ai-usage MCP JSON registration target has an unsupported filename.');
   }
   const directory = path.dirname(configPath);
   const canonicalDirectory = await realpath(directory);
   const parentStats = await lstat(directory);
   if (parentStats.isSymbolicLink() || !parentStats.isDirectory() || canonicalDirectory !== directory) {
-    throw new Error('Memory MCP registration directory is unsafe.');
+    throw new Error('ai-usage MCP registration directory is unsafe.');
   }
   const parentIdentity = identityOf(parentStats);
   const lockIdentity = await projectionLockIdentityForTarget(directory);
@@ -158,28 +159,28 @@ export const registerJsonMemoryMcp = async (input: {
     if (observed !== null) {
       const parsed = JSON.parse(await readObservedText(configPath, observed)) as unknown;
       if (!isRecord(parsed)) {
-        throw new Error('Memory MCP JSON registration target must contain an object.');
+        throw new Error('ai-usage MCP JSON registration target must contain an object.');
       }
       document = parsed;
     }
     const existingServers = document.mcpServers;
     if (existingServers !== undefined && !isRecord(existingServers)) {
-      throw new Error('Memory MCP JSON registration target has an invalid mcpServers value.');
+      throw new Error('ai-usage MCP JSON registration target has an invalid mcpServers value.');
     }
     const servers = existingServers ?? {};
-    const existing = servers[memoryMcpServerName];
+    const existing = servers[registeredMcpServerName];
     if (existing !== undefined) {
       return registrationMatches(existing, input.registration)
-        ? { kind: 'unchanged', serverName: memoryMcpServerName }
+        ? { kind: 'unchanged', serverName: registeredMcpServerName }
         : {
             kind: 'refused-unmanaged',
             reason: 'existing-server-differs',
-            serverName: memoryMcpServerName,
+            serverName: registeredMcpServerName,
           };
     }
     const updated = {
       ...document,
-      mcpServers: { ...servers, [memoryMcpServerName]: input.registration },
+      mcpServers: { ...servers, [registeredMcpServerName]: input.registration },
     };
     const temporaryPath = path.join(directory, `.${path.basename(configPath)}.${randomUUID()}.tmp`);
     const handle = await open(temporaryPath, 'wx', observed?.mode ?? 0o600);
@@ -197,7 +198,7 @@ export const registerJsonMemoryMcp = async (input: {
       await rm(temporaryPath, { force: true });
       throw error;
     }
-    return { kind: 'created', serverName: memoryMcpServerName };
+    return { kind: 'created', serverName: registeredMcpServerName };
   });
 };
 
@@ -209,10 +210,10 @@ const parseCodexServer = (stdout: string): unknown => {
   if (!Array.isArray(parsed)) {
     throw new Error('Codex MCP list output is invalid.');
   }
-  return parsed.find((entry) => isRecord(entry) && entry.name === memoryMcpServerName);
+  return parsed.find((entry) => isRecord(entry) && entry.name === registeredMcpServerName);
 };
 
-const codexServerMatches = (value: unknown, expected: MemoryMcpStdioRegistration): boolean => {
+const codexServerMatches = (value: unknown, expected: McpStdioRegistration): boolean => {
   if (!(isRecord(value) && value.enabled === true && isRecord(value.transport))) {
     return false;
   }
@@ -233,12 +234,12 @@ const listCodexServer = async (runner: CodexMcpCommandRunner): Promise<unknown> 
   return parseCodexServer(result.stdout);
 };
 
-export const registerCodexMemoryMcp = async (input: {
+export const registerCodexMcp = async (input: {
   readonly configPath: string;
   readonly privateStatePath: string;
-  readonly registration: MemoryMcpStdioRegistration;
+  readonly registration: McpStdioRegistration;
   readonly runner: CodexMcpCommandRunner;
-}): Promise<MemoryMcpRegistrationResult> => {
+}): Promise<McpRegistrationResult> => {
   validRegistration(input.registration);
   const configPath = path.resolve(input.configPath);
   if (path.basename(configPath) !== 'config.toml' || path.basename(path.dirname(configPath)) !== '.codex') {
@@ -258,11 +259,11 @@ export const registerCodexMemoryMcp = async (input: {
     const existing = await listCodexServer(input.runner);
     if (existing !== undefined) {
       return codexServerMatches(existing, input.registration)
-        ? { kind: 'unchanged', serverName: memoryMcpServerName }
+        ? { kind: 'unchanged', serverName: registeredMcpServerName }
         : {
             kind: 'refused-unmanaged',
             reason: 'existing-server-differs',
-            serverName: memoryMcpServerName,
+            serverName: registeredMcpServerName,
           };
     }
     await assertParentIdentity(directory, canonicalDirectory, parentIdentity);
@@ -270,7 +271,7 @@ export const registerCodexMemoryMcp = async (input: {
     const added = await input.runner.run([
       'mcp',
       'add',
-      memoryMcpServerName,
+      registeredMcpServerName,
       '--',
       input.registration.command,
       ...input.registration.args,
@@ -282,7 +283,7 @@ export const registerCodexMemoryMcp = async (input: {
     if (!codexServerMatches(verified, input.registration)) {
       throw new Error('Codex MCP configuration could not be verified after update.');
     }
-    return { kind: 'created', serverName: memoryMcpServerName };
+    return { kind: 'created', serverName: registeredMcpServerName };
   });
 };
 

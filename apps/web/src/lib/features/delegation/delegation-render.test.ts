@@ -4,6 +4,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { conflictingAtoms } from '../../foundation/presentation/atomic-class-conflicts';
+import { createWebRpcClient } from '../../rpc/client';
 import { deferredDelegationPageData, loadDelegationPageData } from './delegation-load';
 import { DELEGATION_DESCRIPTION } from './delegation-model';
 import { SYNTHETIC_DELEGATION_QUALIFICATION, SYNTHETIC_DELEGATION_SETTINGS } from './delegation-synthetic';
@@ -60,7 +61,10 @@ describe('Delegation page', () => {
   test('server-renders the hydrated settings under the Delegation heading, on the section the URL names', async () => {
     const data = await loadDelegationPageData(
       {
-        fetch: () => Promise.reject(new Error('Injected Delegation fixture owns this acquisition.')),
+        rpc: createWebRpcClient({
+          fetch: () => Promise.reject(new Error('Injected Delegation fixture owns this acquisition.')),
+          url: 'http://delegation.invalid/rpc',
+        }),
         url: new URL('http://delegation.invalid/delegation?section=rules'),
       },
       { createClient: () => ({ settings: () => Promise.resolve({ data: settings, ok: true as const }) }) },

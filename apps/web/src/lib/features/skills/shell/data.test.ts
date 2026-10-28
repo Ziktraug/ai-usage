@@ -11,6 +11,7 @@ import type {
 import { createRouterClient } from '@orpc/server';
 import { createWebQueryClient } from '../../../query/client';
 import { managedSkillMarkdownKey, projectSkillMarkdownKey } from '../../../query/options/skills';
+import { createWebRpcClient } from '../../../rpc/client';
 import { createSkillsRouter, type SkillsCapability, type SkillsCapabilityResult } from '../../../server/rpc/skills';
 import { deferredSkillsShellRoute, loadSkillsShellRoute, prefetchSkillsShellQueries } from './data';
 import {
@@ -95,11 +96,13 @@ describe('Svelte Skills SSR data adapter', () => {
     const result = await loadSkillsShellRoute({
       mode: 'demo',
       options: {
-        fetch: () => {
-          requests += 1;
-          return Promise.reject(new Error('demo acquisition tripwire'));
-        },
-        url: new URL('http://127.0.0.1:4178/skills/global'),
+        rpc: createWebRpcClient({
+          fetch: () => {
+            requests += 1;
+            return Promise.reject(new Error('demo acquisition tripwire'));
+          },
+          url: 'http://127.0.0.1:4178/rpc',
+        }),
       },
       pathname: '/skills/global',
     });

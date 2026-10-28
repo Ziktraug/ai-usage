@@ -43,8 +43,8 @@ import type {
  *   latest *successful* one, so a failure stays visible beside the last known state.
  * - **Retention is per identity.** The newest `WORK_FACT_RETENTION_PER_KEY` rows are kept, plus
  *   the newest successful row when a failure streak would otherwise push it out.
- * - **Outside the served revision.** Nothing here touches the store generation, the publication
- *   or the replication outbox; these facts are local to the observing machine.
+ * - **Outside the served revision.** Nothing here touches the store generation or the publication;
+ *   these facts are local to the observing machine.
  */
 
 export const WORK_FACT_SOURCE_IDS = ['checkouts.status', 'github.pull-requests', 'jira.issues'] as const;

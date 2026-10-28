@@ -2,15 +2,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  createClientMemoryMcpReadService,
-  createMemoryMcpServer,
+  createUsageMcpServer,
   type DelegationMcpPort,
   type DelegationMcpResult,
   type WorkContextMcpReadService,
 } from '@ai-usage/mcp-adapter';
-import { connectMemoryMcpStdio } from '@ai-usage/mcp-adapter/stdio';
-import { createMemoryServiceClient } from '@ai-usage/memory-service/client';
-import { loadMemoryServiceRendezvous, memoryServiceRendezvousPath } from '@ai-usage/memory-service/node';
+import { connectMcpStdio } from '@ai-usage/mcp-adapter/stdio';
 import { parseDelegationEvaluationInput, summarizeDelegationJobView } from '@ai-usage/report-core/delegation-job';
 import { parseDelegationQualification } from '@ai-usage/report-core/delegation-qualification';
 import {
@@ -33,8 +30,8 @@ import {
 import { resolveUsageRuntimePaths } from '@ai-usage/usage-engine-control/node';
 import { USAGE_STORE_SCHEMA_VERSION, usageStorePath } from '@ai-usage/usage-store/reader';
 
-export interface MemoryMcpProcessDependencies {
-  readonly connect: typeof connectMemoryMcpStdio;
+export interface McpProcessDependencies {
+  readonly connect: typeof connectMcpStdio;
   /** The engine connection the delegation port uses; the default finds the running daemon. */
   readonly connectDelegationEngine?: typeof connectDelegationEngine;
   readonly cwd: string;
@@ -43,8 +40,8 @@ export interface MemoryMcpProcessDependencies {
   readonly installationRoot?: string;
 }
 
-const defaultDependencies: MemoryMcpProcessDependencies = {
-  connect: connectMemoryMcpStdio,
+const defaultDependencies: McpProcessDependencies = {
+  connect: connectMcpStdio,
   cwd: process.cwd(),
   environment: process.env,
 };
@@ -221,20 +218,18 @@ export const createLocalDelegationMcpPort = (options: LocalDelegationMcpPortOpti
   };
 };
 
-export const runMemoryMcpProcess = async (
-  dependencies: MemoryMcpProcessDependencies = defaultDependencies,
-): Promise<void> => {
+/**
+ * The local MCP process: `work.context` and the delegation tools over stdio. Every tool opens what
+ * it needs per call (the read-only store, or the engine's control plane), so starting the server
+ * opens no store and contacts no engine.
+ */
+export const runMcpProcess = async (dependencies: McpProcessDependencies = defaultDependencies): Promise<void> => {
   const runtimePaths = resolveUsageRuntimePaths({
     cwd: dependencies.cwd,
     databasePathForHome: usageStorePath,
     env: dependencies.environment,
   });
-  const rendezvousPath = memoryServiceRendezvousPath(runtimePaths.stateDirectory);
-  const client = createMemoryServiceClient({
-    resolveRendezvous: async () => await loadMemoryServiceRendezvous(rendezvousPath),
-  });
-  // The delegation tools are always registered: they need the engine and the store, not Memory.
-  const server = createMemoryMcpServer(createClientMemoryMcpReadService(client), {
+  const server = createUsageMcpServer({
     delegation: {
       port: createLocalDelegationMcpPort({
         configCwd: delegationConfigCwd(
@@ -257,9 +252,9 @@ export const runMemoryMcpProcess = async (
 
 if (import.meta.main) {
   try {
-    await runMemoryMcpProcess();
+    await runMcpProcess();
   } catch {
-    process.stderr.write('ai-usage Memory MCP failed to start.\n');
+    process.stderr.write('ai-usage MCP failed to start.\n');
     process.exitCode = 1;
   }
 }
