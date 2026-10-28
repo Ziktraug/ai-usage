@@ -1029,12 +1029,12 @@ test('refuses a frame whose blocks would emit more than it declares without deco
 /**
  * Archives decode through one decoder: `DecompressionStream('zstd')`, pulled
  * chunk by chunk in `local-history.ts`, re-qualified on Bun 1.4.3 on
- * 2026-10-24 (40 of 40 parallel suite runs clean). Bun's own one-shot zstd
- * decoders corrupted the heap on Bun 1.3.13 (intermittent mimalloc segfaults,
- * measured 2026-10-19) and take no output bound, and `node:zlib`'s one-shot
- * decoder holds the whole output at once, so no other zstd decoder is reached
- * from these packages. Compressors are not implicated and stay available to
- * fixtures.
+ * 2026-10-24 and on 1.4.4 on 2026-10-28 (40 of 40 suite runs clean each
+ * time). Bun's own one-shot zstd decoders corrupted the heap on Bun 1.3.13
+ * (intermittent mimalloc segfaults, measured 2026-10-19) and take no output
+ * bound, and `node:zlib`'s one-shot decoder holds the whole output at once, so
+ * no other zstd decoder is reached from these packages. Compressors are not
+ * implicated and stay available to fixtures.
  */
 test('no local-machine or local-collectors source reaches a zstd decoder other than the streaming reader', () => {
   const sourceRoots = [import.meta.dir, path.resolve(import.meta.dir, '../../local-collectors/src')];
