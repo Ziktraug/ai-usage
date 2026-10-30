@@ -49,6 +49,7 @@
     onMore,
     onCommand,
     loadingMore = false,
+    moreUnavailable = false,
     continuation = false,
   }: {
     dataset: WorkThreadListDataset;
@@ -61,8 +62,29 @@
     onMore: () => void;
     onCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
     loadingMore?: boolean;
+    moreUnavailable?: boolean;
     continuation?: boolean;
   } = $props();
+  let moreSentinel = $state<HTMLDivElement>();
+  $effect(() => {
+    // Keep the explicit continuation at the bounded reader window: replacing the rows while
+    // scrolling would lose the operator's place. Errors require the visible retry action.
+    if (!(moreSentinel && dataset.nextCursor) || loadingMore || moreUnavailable || continuation) {
+      return;
+    }
+    let requested = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!requested && entries.some((entry) => entry.isIntersecting)) {
+          requested = true;
+          onMore();
+        }
+      },
+      { rootMargin: '0px 0px 300px 0px' },
+    );
+    observer.observe(moreSentinel);
+    return () => observer.disconnect();
+  });
   const timeline = $derived(
     threadTimeline(
       dataset.generatedAt,
@@ -393,14 +415,14 @@
     {/each}
   </section>
   {#if dataset.nextCursor}
-    <div class="wt-more">
+    <div class="wt-more" bind:this={moreSentinel}>
       {#if continuation}
         <p class="wt-meta">
           {rows.length}
           tasks loaded. Continue in a new page; browser Back keeps this view.
         </p>
       {/if}
-      <button class="wt-button" disabled={loadingMore} onclick={onMore} type="button">
+      <button class="wt-button" disabled={loadingMore || moreUnavailable} onclick={onMore} type="button">
         {#if loadingMore}
           Loading…
         {:else if continuation}
@@ -411,6 +433,7 @@
       </button>
     </div>
   {/if}
+  <p class="wt-sr" role="status">{rows.length} tasks loaded.</p>
 </div>
 <div class="wt-legend">
   <div>

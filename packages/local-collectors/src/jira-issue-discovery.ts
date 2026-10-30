@@ -67,7 +67,10 @@ export const parseJiraIssueSearch = (
 };
 
 /** One bounded personal search. A missing CLI is unavailable, never a successful empty result. */
-export const discoverJiraIssues = (options: DiscoverJiraIssuesOptions = {}): Effect.Effect<JiraIssueDiscoveryBatch> => {
+const searchJiraIssues = (
+  jql: string,
+  options: DiscoverJiraIssuesOptions = {},
+): Effect.Effect<JiraIssueDiscoveryBatch> => {
   const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(50, Math.floor(options.limit ?? 50))) : 50;
   const failed = (outcome: JiraIssueDiscoveryOutcome, outcomeMessage: string): JiraIssueDiscoveryBatch => ({
     keys: [],
@@ -76,7 +79,7 @@ export const discoverJiraIssues = (options: DiscoverJiraIssuesOptions = {}): Eff
     truncated: false,
   });
   return (options.run ?? runBoundedProcess)({
-    args: ['jira', 'workitem', 'search', '--jql', JIRA_DISCOVERY_JQL, '--json', '--limit', String(limit)],
+    args: ['jira', 'workitem', 'search', '--jql', jql, '--json', '--limit', String(limit)],
     command: 'acli',
     env: { CI: '1', NO_COLOR: '1', PAGER: 'cat' },
     maximumOutputBytes: options.maxOutputBytes ?? JIRA_ISSUE_DEFAULTS.maxOutputBytes,
@@ -123,5 +126,47 @@ export const discoverJiraIssues = (options: DiscoverJiraIssuesOptions = {}): Eff
         ),
       ),
     ),
+  );
+};
+
+/** Personal assignment discovery is independent of changes to already followed tickets. */
+export const discoverJiraIssues = (options: DiscoverJiraIssuesOptions = {}) =>
+  searchJiraIssues(JIRA_DISCOVERY_JQL, options);
+
+/** Keep chunks below the search ceiling so a complete chunk never looks truncated. */
+export const JIRA_CHANGE_SEARCH_KEYS = 40;
+export const discoverChangedJiraIssues = (
+  options: DiscoverJiraIssuesOptions & {
+    readonly keys: readonly string[];
+    readonly since: string | null;
+    readonly now: Date;
+  },
+): Effect.Effect<JiraIssueDiscoveryBatch> => {
+  const invalid: JiraIssueDiscoveryBatch = {
+    keys: [],
+    outcome: 'invalid',
+    outcomeMessage: 'Jira change search scope or response is invalid',
+    truncated: false,
+  };
+  if (
+    options.keys.length > JIRA_CHANGE_SEARCH_KEYS ||
+    options.keys.some((key) => !JIRA_ISSUE_KEY_PATTERN.test(key) || Number(key.split('-').at(-1)) <= 0) ||
+    !Number.isFinite(options.now.getTime()) ||
+    (options.since !== null && !Number.isFinite(Date.parse(options.since)))
+  ) {
+    return Effect.succeed(invalid);
+  }
+  if (options.keys.length === 0) {
+    return Effect.succeed({ keys: [], outcome: 'observed', outcomeMessage: null, truncated: false });
+  }
+  // Relative minutes avoid Jira account/server timezone ambiguity. Overlap covers rounding and indexing delay;
+  // the periodic full read is the recovery path for changes indexed beyond that overlap.
+  const minutes =
+    options.since === null
+      ? null
+      : Math.max(2, Math.ceil((options.now.getTime() - Date.parse(options.since)) / 60_000) + 2);
+  const jql = `key IN (${options.keys.join(',')})${minutes === null ? '' : ` AND updated >= "-${minutes}m"`} ORDER BY updated ASC`;
+  return searchJiraIssues(jql, { ...options, limit: 50 }).pipe(
+    Effect.map((result) => (result.keys.some((key) => !options.keys.includes(key)) ? invalid : result)),
   );
 };

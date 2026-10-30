@@ -445,7 +445,11 @@ const runSourceJobBody = (
       yield* scheduler.ensurePublicationQueued('source-wake');
     }
     if (completed.enabled && completed.detected) {
-      yield* scheduler.scheduleCadence(job.sourceId);
+      if (completion._tag === 'success' && completion.result.continueSoon && runtime.autonomousCollection.open) {
+        yield* scheduler.scheduleCadenceAt(job.sourceId, (yield* Clock.currentTimeMillis) + 1000);
+      } else {
+        yield* scheduler.scheduleCadence(job.sourceId);
+      }
     } else {
       yield* FiberMap.remove(runtime.timers, job.sourceId);
     }

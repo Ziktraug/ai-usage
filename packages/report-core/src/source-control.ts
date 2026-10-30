@@ -177,9 +177,8 @@ export const collectionSourceDefinitions = [
     label: 'GitHub pull requests',
   },
   {
-    // Spawns one read-only `acli` process per Jira key a Desktop session linked explicitly
-    // (ADR 0054); the same cadence and placement as the pull request producer.
-    cadenceMs: tenMinutesMs,
+    // Incremental Jira changes; pending detail batches continue without waiting for the next poll.
+    cadenceMs: 2 * oneMinuteMs,
     defaultEnabled: true,
     group: 'enrichments',
     id: 'jira.issues',
@@ -370,6 +369,8 @@ export interface SourceDetectionResult {
 
 export interface SourceRunResult {
   readonly changed: boolean;
+  /** Successful bounded work has a durable backlog. Autonomous collection continues after one second. */
+  readonly continueSoon?: boolean;
   readonly inputCount: number;
   readonly outputCount: number;
   readonly servedProjectionChanged?: boolean;

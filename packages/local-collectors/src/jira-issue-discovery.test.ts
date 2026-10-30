@@ -8,7 +8,12 @@ import {
   runBoundedProcess,
 } from '@ai-usage/local-machine/bounded-process';
 import { Effect } from 'effect';
-import { discoverJiraIssues, JIRA_DISCOVERY_JQL, parseJiraIssueSearch } from './jira-issue-discovery';
+import {
+  discoverChangedJiraIssues,
+  discoverJiraIssues,
+  JIRA_DISCOVERY_JQL,
+  parseJiraIssueSearch,
+} from './jira-issue-discovery';
 
 const roots: string[] = [];
 afterAll(() => {
@@ -35,6 +40,43 @@ const fakeAcli = (response: { readonly stdout?: string; readonly exitCode?: numb
 };
 
 describe('personal Jira discovery with assumed CLI fixtures', () => {
+  test('searches changed followed keys including done and reassigned tickets, with overlap', async () => {
+    const fake = fakeAcli({ stdout: '[{"key":"DEMO-12"}]' });
+    const result = await Effect.runPromise(
+      discoverChangedJiraIssues({
+        keys: ['DEMO-12', 'DEMO-13'],
+        since: '2026-10-28T10:00:00.000Z',
+        now: new Date('2026-10-28T10:02:01.000Z'),
+        run: fake.run,
+      }),
+    );
+    expect(result.keys).toEqual(['DEMO-12']);
+    expect(fake.calls[0]?.args).toContain('key IN (DEMO-12,DEMO-13) AND updated >= "-5m" ORDER BY updated ASC');
+  });
+  test('rejects unscoped changes and invalid keys without executing a command', async () => {
+    const fake = fakeAcli({ stdout: '[{"key":"OTHER-1"}]' });
+    expect(
+      (
+        await Effect.runPromise(
+          discoverChangedJiraIssues({ keys: ['DEMO-12'], since: null, now: new Date(), run: fake.run }),
+        )
+      ).outcome,
+    ).toBe('invalid');
+    fake.calls.length = 0;
+    expect(
+      (
+        await Effect.runPromise(
+          discoverChangedJiraIssues({
+            keys: ['DEMO-12) OR project=OTHER'],
+            since: null,
+            now: new Date(),
+            run: fake.run,
+          }),
+        )
+      ).outcome,
+    ).toBe('invalid');
+    expect(fake.calls).toHaveLength(0);
+  });
   test('makes one bounded personal query and deduplicates issue keys', async () => {
     const fake = fakeAcli({
       stdout: JSON.stringify({
