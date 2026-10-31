@@ -1,4 +1,5 @@
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import {
   type CheckoutStatusObservation,
@@ -74,6 +75,39 @@ export interface QueryCheckoutStatusObservationBatchInput {
   readonly batch: readonly Pick<CheckoutStatusObservation, 'machineId' | 'checkoutPath'>[];
   readonly dbPath: string;
 }
+
+export interface JiraSyncState {
+  readonly checkedThrough: string;
+  readonly fullScanAt: string;
+  readonly knownKeys: readonly string[];
+  readonly pendingKeys: readonly string[];
+}
+const validJiraSyncState = (state: unknown): state is JiraSyncState =>
+  isRecord(state) &&
+  typeof state.checkedThrough === 'string' &&
+  normalizeIsoTimestamp(state.checkedThrough) !== null &&
+  typeof state.fullScanAt === 'string' &&
+  normalizeIsoTimestamp(state.fullScanAt) !== null &&
+  Array.isArray(state.pendingKeys) &&
+  state.pendingKeys.length <= MAX_WORK_FACT_QUERY_LIMIT &&
+  state.pendingKeys.every(
+    (key) =>
+      typeof key === 'string' &&
+      key.length <= WORK_ATTENTION_BOUNDS.maxShortText &&
+      JIRA_ISSUE_KEY_PATTERN.test(key) &&
+      Number(key.split('-').at(-1)) > 0,
+  ) &&
+  new Set(state.pendingKeys).size === state.pendingKeys.length &&
+  Array.isArray(state.knownKeys) &&
+  state.knownKeys.length <= MAX_WORK_FACT_QUERY_LIMIT &&
+  state.knownKeys.every(
+    (key) =>
+      typeof key === 'string' &&
+      key.length <= WORK_ATTENTION_BOUNDS.maxShortText &&
+      JIRA_ISSUE_KEY_PATTERN.test(key) &&
+      Number(key.split('-').at(-1)) > 0,
+  ) &&
+  new Set(state.knownKeys).size === state.knownKeys.length;
 
 export const workFactSchemaSql = `
   CREATE TABLE IF NOT EXISTS pull_request_observations (
@@ -151,6 +185,11 @@ export const workFactSchemaSql = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_issue_observations_identity
     ON jira_issue_observations(machine_id, issue_key, observed_at DESC);
 
+  CREATE TABLE IF NOT EXISTS jira_sync_state (
+    machine_id TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
+  ) WITHOUT ROWID;
+
   CREATE TABLE IF NOT EXISTS work_fact_run_state (
     source_id TEXT PRIMARY KEY,
     machine_id TEXT NOT NULL,
@@ -168,6 +207,7 @@ export const WORK_FACT_TABLES = [
   'checkout_status_observations',
   'jira_issue_observations',
   'work_fact_run_state',
+  'jira_sync_state',
 ] as const;
 
 interface SqliteStatement {
@@ -526,6 +566,56 @@ const groupLatest = <Record extends { rank_all: number }, Observation extends { 
 
 export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => {
   const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
+
+  const queryJiraSyncState = (input: {
+    readonly dbPath: string;
+    readonly machineId: string;
+  }): Effect.Effect<JiraSyncState | null, UsageStoreError> =>
+    withUsageStoreReader(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const row = db.query('SELECT state_json FROM jira_sync_state WHERE machine_id = ?').get(input.machineId) as {
+            state_json: string;
+          } | null;
+          if (row === null) {
+            return null;
+          }
+          const state: unknown = JSON.parse(row.state_json);
+          if (!validJiraSyncState(state)) {
+            throw new Error('Invalid Jira synchronization checkpoint');
+          }
+          return state;
+        },
+        catch: (cause) => usageStoreReadError('queryJiraSyncState', input.dbPath, cause),
+      }),
+    );
+
+  const recordJiraSyncState = (input: {
+    readonly dbPath: string;
+    readonly machineId: string;
+    readonly state: JiraSyncState;
+  }): Effect.Effect<void, UsageStoreError> => {
+    if (!(typeof input.machineId === 'string' && validMachineId(input.machineId) && validJiraSyncState(input.state))) {
+      return Effect.fail(
+        usageStoreError(
+          'recordJiraSyncState',
+          input.dbPath,
+          'Invalid Jira synchronization checkpoint',
+          'invalid-input',
+        ),
+      );
+    }
+    return withUsageStoreWriter(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          db.query(
+            'INSERT INTO jira_sync_state (machine_id, state_json) VALUES (?, ?) ON CONFLICT(machine_id) DO UPDATE SET state_json = excluded.state_json',
+          ).run(input.machineId, JSON.stringify(input.state));
+        },
+        catch: (cause) => usageStoreError('recordJiraSyncState', input.dbPath, cause, 'storage-failure'),
+      }),
+    );
+  };
 
   const retainPullRequest = (
     db: SqliteDatabase,
@@ -1254,6 +1344,8 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     );
 
   return {
+    queryJiraSyncState,
+    recordJiraSyncState,
     importCheckoutStatusObservations,
     importJiraIssueObservations,
     importPullRequestObservations,

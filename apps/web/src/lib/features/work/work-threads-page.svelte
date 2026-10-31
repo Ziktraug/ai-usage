@@ -26,6 +26,7 @@
   import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import { createWorkThreadsClient, type WorkThreadsClient } from '../../rpc/work-threads-client';
   import { useShellNavigationOwner } from '../shell/navigation-owner-context';
+  import WorkJiraSync from './work-jira-sync.svelte';
   import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
   import WorkThreadDetail from './work-thread-detail.svelte';
   import WorkThreadList from './work-thread-list.svelte';
@@ -95,6 +96,21 @@
       .map((result) => (result.data && !result.data.ok ? result.data.error.message : result.error?.message))
       .find(Boolean) ?? null,
   );
+  let loadingMore = $state(false);
+  const listFetching = $derived(listQueries.some((result) => result.isFetching));
+  const moreUnavailable = $derived(listError !== null || answered.length !== cursors.length);
+  const loadMore = async (): Promise<void> => {
+    if (loadingMore || listFetching || moreUnavailable || !dataset?.nextCursor) {
+      return;
+    }
+    loadingMore = true;
+    try {
+      const more = threadMoreUrl(currentUrl, dataset.nextCursor);
+      await navigate(more.url, !more.continuation);
+    } finally {
+      loadingMore = false;
+    }
+  };
   const detailQuery = createQuery(() =>
     workThreadDetailQueryOptions(clients.threads, taskId ?? '', { browser, enabled: isWorkThreadId(taskId) }),
   );
@@ -247,6 +263,9 @@
     tabindex="-1"
     class:wt-focus={Boolean(taskId)}
   >
+    {#if data.mode !== 'demo'}
+      <WorkJiraSync {timeZone} />
+    {/if}
     {#if taskId}
       {#if data.mode !== 'live'}
         <p class="wt-meta">Synthetic demo</p>
@@ -319,15 +338,11 @@
           continuation={cursors.length >= THREAD_PAGE_WINDOW}
           {dataset}
           {href}
-          loadingMore={listQueries.some((result) => result.isFetching)}
+          loadingMore={loadingMore || listFetching}
+          {moreUnavailable}
           onCommand={command}
           onFilter={updateFilter}
-          onMore={() => {
-            if (dataset.nextCursor) {
-              const more = threadMoreUrl(currentUrl, dataset.nextCursor);
-              navigate(more.url, !more.continuation);
-            }
-          }}
+          onMore={loadMore}
           onOpen={open}
           {query}
           {rows}

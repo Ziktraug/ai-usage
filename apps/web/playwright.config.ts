@@ -25,6 +25,9 @@ export default defineConfig({
     'work-codex-native.spec.ts',
     'work-production.spec.ts',
     'work-threads-production.spec.ts',
+    // Runs on its own dev server (playwright.work-pagination.config.ts): its tasks would push
+    // other specs' seeded tasks off the first page of the shared synthetic store.
+    'work-pagination.spec.ts',
   ],
   use: {
     baseURL: 'http://127.0.0.1:4174',

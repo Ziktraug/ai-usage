@@ -563,6 +563,43 @@ describe('source control plane', () => {
     expect(boundaryEvents(capture.events(), 'source.run')[0]?.annotations.warningCodes).toEqual([expectedCode]);
   });
 
+  test('continues a successful backlog after one second, then restores ordinary cadence', async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const events = yield* Ref.make<string[]>([]);
+          const { store } = yield* makePolicyStore();
+          const publication = yield* makePublication(events);
+          const runs = yield* Ref.make(0);
+          const source = fakeSource('jira.issues', () =>
+            Ref.updateAndGet(runs, (count) => count + 1).pipe(
+              Effect.map((count) => ({ ...successResult(), continueSoon: count === 1 })),
+            ),
+          );
+          const control = yield* createSourceControl({
+            policyStore: store,
+            publication: publication.port,
+            sources: new Map([['jira.issues', source]]),
+          });
+          const first = yield* waitFor(control, (view) => sourceView(view, 'jira.issues').nextDueAt !== undefined);
+          expect(
+            Date.parse(sourceView(first, 'jira.issues').nextDueAt!) -
+              Date.parse(sourceView(first, 'jira.issues').lastFinishedAt!),
+          ).toBe(1000);
+          yield* TestClock.adjust(Duration.seconds(1));
+          const second = yield* waitFor(
+            control,
+            (view) => Effect.runSync(Ref.get(runs)) === 2 && sourceView(view, 'jira.issues').nextDueAt !== undefined,
+          );
+          expect(
+            Date.parse(sourceView(second, 'jira.issues').nextDueAt!) -
+              Date.parse(sourceView(second, 'jira.issues').lastFinishedAt!),
+          ).toBe(Duration.toMillis(source.cadence));
+        }),
+      ).pipe(Effect.provide(testEnvLayer)),
+    );
+  });
+
   test('uses completion-relative cadence and resets it after a manual run', async () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
