@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { cx } from '@ai-usage/design-system/css';
   import { ghostButton } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { createQuery } from '@tanstack/svelte-query';
@@ -6,6 +7,7 @@
   import { browser } from '$app/env';
   import { page } from '$app/state';
   import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
+  import { graphTheme } from '../../foundation/presentation/graph-theme';
   import { reportBootstrapQueryOptions } from '../../query/options/report';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createReportClient } from '../../rpc/report-client';
@@ -48,7 +50,7 @@
   const sessionHref = (rowId: string) => sessionRouteUrl(new URL(page.url.href), { kind: 'session', rowId }).href;
 </script>
 <svelte:head><title>Observatory · AI Usage</title></svelte:head>
-<main class={pageClass}>
+<main class={cx(pageClass, graphTheme)}>
   <div class={shell}>
     <WorkspaceHeader description="Follow observed tokens across projects, models and sessions." heading="Observatory" />
     <div class="content">
@@ -162,14 +164,14 @@
   .controls select {
     max-width: 100%;
     padding: 8px;
-    color: var(--colors-ink);
-    background: var(--colors-surface);
-    border: 1px solid var(--colors-line);
-    border-radius: var(--radii-sm);
+    color: var(--graph-ink);
+    background: var(--graph-surface);
+    border: 1px solid var(--graph-line);
+    border-radius: var(--graph-radius-sm);
   }
   .muted {
     font-size: 13px;
-    color: var(--colors-muted);
+    color: var(--graph-muted);
     overflow-wrap: anywhere;
   }
 </style>

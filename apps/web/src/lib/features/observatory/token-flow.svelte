@@ -102,9 +102,9 @@
     max-width: 100%;
     padding: 12px;
     overflow-x: auto;
-    color: var(--colors-accent);
-    border: 1px solid var(--colors-line);
-    border-radius: var(--radii-md);
+    color: var(--graph-accent);
+    border: 1px solid var(--graph-line);
+    border-radius: var(--graph-radius-md);
   }
   .svg {
     display: block;
@@ -113,12 +113,12 @@
   }
   .label {
     font-size: 12px;
-    fill: var(--colors-ink);
+    fill: var(--graph-ink);
   }
   .muted {
     font-size: 13px;
     line-height: 1.6;
-    color: var(--colors-muted);
+    color: var(--graph-muted);
   }
   .table {
     width: 100%;
@@ -130,6 +130,6 @@
     padding: 10px;
     text-align: start;
     white-space: nowrap;
-    border-bottom: 1px solid var(--colors-line);
+    border-bottom: 1px solid var(--graph-line);
   }
 </style>
