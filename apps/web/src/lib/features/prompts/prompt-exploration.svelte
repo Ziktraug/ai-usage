@@ -7,6 +7,7 @@
     followingPrompts,
     motifBreakdown,
   } from './prompt-exploration';
+  import PromptSemantics from './prompt-semantics.svelte';
 
   let {
     entries,
@@ -279,3 +280,5 @@
     <p class={muted}>No repeated formulation meets the thresholds in the loaded sample.</p>
   {/if}
 </section>
+
+<PromptSemantics entries={corpus.entries} {onOpen} {revision} />
