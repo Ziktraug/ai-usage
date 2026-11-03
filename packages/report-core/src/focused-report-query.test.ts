@@ -9,11 +9,11 @@ import {
   focusedTimelineDimensionDefinitions,
   focusedTimelineDimensions,
   parseFocusedOverviewRequest,
-  parseFocusedReportQueryResult,
   projectFocusedBreakdown,
   projectFocusedOverview,
   projectFocusedSupport,
 } from './focused-report-query';
+import { parseFocusedReportQueryResult } from './focused-report-result';
 import { localTimeRowFields } from './local-time-row.test-fixture';
 import { apiPriceMeasurement } from './provenance';
 import {

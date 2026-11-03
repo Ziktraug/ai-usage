@@ -6,9 +6,9 @@ import {
   type FocusedRevisionRequest,
   parseFocusedBreakdownRequest,
   parseFocusedOverviewRequest,
-  parseFocusedReportQueryResult,
   parseFocusedRevisionRequest,
 } from '@ai-usage/report-core/focused-report-query';
+import { parseFocusedReportQueryResult } from '@ai-usage/report-core/focused-report-result';
 import {
   parseSessionDetailAnchorResult,
   parseSessionDetailRequest,

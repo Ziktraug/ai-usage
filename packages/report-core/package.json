@@ -23,6 +23,7 @@
     "./delegation-result": "./src/delegation-result.ts",
     "./delegation-vocabulary": "./src/delegation-vocabulary.ts",
     "./focused-report-query": "./src/focused-report-query.ts",
+    "./focused-report-result": "./src/focused-report-result.ts",
     "./harness-metadata": "./src/harness-metadata.ts",
     "./pricing": "./src/pricing.ts",
     "./portable-usage": "./src/portable-usage.ts",

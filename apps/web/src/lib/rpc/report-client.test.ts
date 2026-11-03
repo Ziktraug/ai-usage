@@ -219,6 +219,26 @@ describe('report client adapter', () => {
     ).rejects.toThrow();
   });
 
+  test('preserves transport cancellation while loading focused validators', async () => {
+    const controller = new AbortController();
+    const cancelled = new DOMException('Request cancelled', 'AbortError');
+    let receivedSignal: AbortSignal | undefined;
+    const client = createReportClient({
+      report: {
+        focusedSupport: (_input: unknown, options?: { signal?: AbortSignal }) => {
+          receivedSignal = options?.signal;
+          return new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(cancelled), { once: true });
+          });
+        },
+      },
+    } as unknown as ReportContractClient);
+    const response = client.getFocusedReportSupport({ revision: 'revision-a' }, { signal: controller.signal });
+    controller.abort();
+    expect(receivedSignal).toBe(controller.signal);
+    await expect(response).rejects.toBe(cancelled);
+  });
+
   test('imports only the public contract boundary and no server module', async () => {
     const source = await Bun.file(new URL('./report-client.ts', import.meta.url)).text();
 

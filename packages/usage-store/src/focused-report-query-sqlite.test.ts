@@ -7,11 +7,11 @@ import { harnessProviderAnalyticsKey } from '@ai-usage/report-core/analytics';
 import {
   type FocusedOverviewRequest,
   type FocusedReportSupport,
-  parseFocusedReportQueryResult,
   projectFocusedBreakdown,
   projectFocusedOverview,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
+import { parseFocusedReportQueryResult } from '@ai-usage/report-core/focused-report-result';
 import { projectObservatoryBreakdown } from '@ai-usage/report-core/observatory-projection';
 import {
   MAX_BREAKDOWN_REFRESH_BYTES,

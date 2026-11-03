@@ -261,6 +261,20 @@ describe('report app client bundle', () => {
     }
   });
 
+  test('loads focused response validators outside the initial report closure', () => {
+    const initialAssets = new Set(initialAssetPaths(readClientManifest()));
+    const manifest = JSON.parse(
+      readFileSync(path.join(APP_DIRECTORY, '.svelte-kit/build/private/client-modules.json'), 'utf8'),
+    ) as { chunks: { fileName: string; moduleIds: string[] }[] };
+    for (const moduleName of ['observatory.ts', 'constellation.ts', 'focused-report-result.ts']) {
+      const chunks = manifest.chunks.filter((chunk) =>
+        chunk.moduleIds.includes(`../../packages/report-core/src/${moduleName}`),
+      );
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(chunks.filter((chunk) => initialAssets.has(chunk.fileName)).map((chunk) => chunk.fileName)).toEqual([]);
+    }
+  });
+
   test('keeps the report first load within its gzip budget', () => {
     const totalBytes = gzipClosureBytes(initialAssetPaths(readClientManifest()));
 
