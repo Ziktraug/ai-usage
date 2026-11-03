@@ -51,7 +51,12 @@ test('constellation rotates in 3D, filters projects and opens a selected native 
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption({ index: 1 });
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
   await expect(constellation).toBeVisible();
-  await page.getByRole('combobox', { name: 'Inspect a session', exact: true }).selectOption({ index: 1 });
+  await page
+    .getByRole('combobox', { name: 'Inspect a session', exact: true })
+    .selectOption({ label: 'world-state · Define the data model' });
+  await expect(
+    page.getByRole('link', { name: 'Open declared parent Build forecast model', exact: true }),
+  ).toBeVisible();
   const href = await page.getByRole('link', { name: 'Open selected session', exact: true }).getAttribute('href');
   expect(new URL(href!).pathname.startsWith('/sessions/')).toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
