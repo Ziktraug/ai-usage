@@ -260,7 +260,7 @@ export const frozenRequestPolicyBehaviour = {
       trustedLocal: 'required',
     },
     '/session/prompts': {
-      applicationErrorFamilies: ['Forbidden', 'ForbiddenDemo', 'InvalidInput', 'Unavailable'],
+      applicationErrorFamilies: ['Forbidden', 'ForbiddenDemo', 'InvalidInput', 'RevisionExpired', 'Unavailable'],
       csrf: 'not-required',
       demo: 'forbidden',
       method: 'POST',
