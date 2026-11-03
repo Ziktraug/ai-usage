@@ -124,7 +124,7 @@
           max={duration}
           min="0"
           oninput={() => (playing = false)}
-          step="1000"
+          step="1"
           type="range"
           bind:value={offset}
         ></label

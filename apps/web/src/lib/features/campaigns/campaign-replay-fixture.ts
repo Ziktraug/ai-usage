@@ -80,3 +80,37 @@ export const campaignReplayFixture = (revision: string): SessionDetailResponse =
     })),
   },
 });
+
+/** Short observed spans with a native event exactly at a non-whole-second endpoint. */
+export const fractionalCampaignReplayFixture = (revision: string, durationMs: number): SessionDetailResponse => {
+  const response = campaignReplayFixture(revision);
+  if (response.status !== 'available') {
+    throw new Error('Expected an available replay fixture');
+  }
+  const endedAt = new Date(Date.parse(response.detail.startedAt) + durationMs).toISOString();
+  return {
+    ...response,
+    detail: {
+      ...response.detail,
+      endedAt,
+      observedAt: endedAt,
+      elapsedDurationMs: durationMs,
+      children: [],
+      interactions: [],
+      turns: response.detail.turns.slice(0, 1).map((turn) => ({
+        ...turn,
+        endAt: endedAt,
+        promptIds: ['opening'],
+      })),
+      prompts: [
+        {
+          id: 'opening',
+          timestamp: response.detail.startedAt,
+          text: 'Opening fractional replay event',
+          truncated: false,
+        },
+        { id: 'endpoint', timestamp: endedAt, text: 'Final fractional replay event', truncated: false },
+      ],
+    },
+  };
+};

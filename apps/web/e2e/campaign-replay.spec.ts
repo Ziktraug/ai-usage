@@ -52,3 +52,24 @@ test('replay changes selected native history without carrying the previous event
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
+
+for (const duration of [500, 1500]) {
+  test(`End seeks the exact ${duration} ms endpoint and reveals its final native event`, async ({ page }) => {
+    await page.goto('/campaigns?range=all');
+    await waitForHydratedNavigation(page);
+    await page.addScriptTag({
+      type: 'module',
+      url: '/src/lib/features/campaigns/campaign-replay-endpoint.e2e-fixture.ts',
+    });
+    await page.getByLabel('Fixture duration', { exact: true }).selectOption(String(duration));
+    const replay = page.getByRole('region', { name: 'Campaign replay', exact: true });
+    await expect(replay.getByText('Opening fractional replay event', { exact: true })).toBeVisible();
+    await expect(replay.getByText('Final fractional replay event', { exact: true })).toHaveCount(0);
+    const slider = page.getByRole('slider', { name: 'Replay elapsed time', exact: true });
+    await slider.focus();
+    await page.keyboard.press('End');
+    await expect(slider).toHaveValue(String(duration));
+    await expect(replay.getByText('Recorded end reached', { exact: true })).toBeVisible();
+    await expect(replay.getByText('Final fractional replay event', { exact: true })).toBeVisible();
+  });
+}
