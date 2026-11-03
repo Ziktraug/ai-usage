@@ -36,6 +36,7 @@
     "@ai-usage/usage-store": "workspace:*",
     "@ai-usage/web-contract": "workspace:*",
     "@ark-ui/svelte": "5.24.3",
+    "@huggingface/transformers": "3.8.1",
     "@orpc/client": "1.16.0",
     "@orpc/contract": "1.16.0",
     "@orpc/server": "1.16.0",

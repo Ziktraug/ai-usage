@@ -115,6 +115,7 @@ was deleted.
 | [0083](0083-pull-request-status-history-milestones.md) | A task's timeline shows its pull request milestones, dated by GitHub | 2026-10-27 | Accepted; amends 0051, 0063 |
 | [0084](0084-retire-memory-checkout-resolution-and-replication.md) | Retire accepted Memory, Checkout resolution and replication; the engine opens one store | 2026-10-27 | Accepted; executes 0074 phase B; retires 0024, 0026, 0028, 0029, 0038, 0044; amends 0027, 0042, 0043, 0049, 0075 |
 | [0085](0085-superseded-unscoped-quota-heads.md) | A superseded unscoped quota head is omitted at the latest read | 2026-10-27 | Accepted; amends 0045; extends 0057, 0062 |
+| [0087](0087-local-prompt-explorations.md) | Bounded prompt explorations and optional browser-local inference | 2026-11-03 | Accepted; extends 0009, 0010, 0012, 0040, 0084 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the
