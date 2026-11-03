@@ -3,6 +3,7 @@ import {
   compareAnalyticsKeys,
   processedTokensForAnalytics,
 } from '@ai-usage/report-core/analytics';
+import { buildConstellation } from '@ai-usage/report-core/constellation-projection';
 import {
   buildFocusedDateDomain,
   buildFocusedExecutiveGroups,
@@ -34,7 +35,7 @@ import {
   projectFocusedOverviewFromPresentationRows,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
-import { buildTokenFlow, type TokenFlowContribution } from '@ai-usage/report-core/observatory';
+import type { TokenFlowContribution } from '@ai-usage/report-core/observatory';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import { type ApiPriceMeasurement, apiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import type {
@@ -43,6 +44,7 @@ import type {
   SessionQuerySort,
 } from '@ai-usage/report-core/session-query';
 import { isSessionOrigin, sessionOriginLabel } from '@ai-usage/report-core/session-query';
+import { buildTokenFlow } from '@ai-usage/report-core/token-flow-projection';
 import { isOriginProvenanceKind } from '@ai-usage/report-core/types';
 import type { SqliteQueryBinding } from './served-revision';
 import {
@@ -1305,6 +1307,29 @@ const readTokenFlow = (database: SessionQuerySqliteDatabase, filter: SqlFilter, 
   return buildTokenFlow(links, counts.sessions, counts.partial);
 };
 
+const readConstellation = (
+  database: SessionQuerySqliteDatabase,
+  filter: SqlFilter,
+  trace?: SessionQuerySqliteTrace,
+) => {
+  const count = executeGet<{ count: number }>(
+    database,
+    `SELECT COUNT(*) AS count FROM session_rows WHERE ${filter.where}`,
+    filter.params,
+    trace,
+  )!;
+  const rows = executeAll<{ row_json: string }>(
+    database,
+    `SELECT row_json FROM session_rows WHERE ${filter.where} ORDER BY token_total DESC, row_id ASC LIMIT 900`,
+    filter.params,
+    trace,
+  );
+  return buildConstellation(
+    rows.map((row) => JSON.parse(row.row_json) as SessionPresentationRow),
+    count.count,
+  );
+};
+
 const runBreakdown = (
   database: SessionQuerySqliteDatabase,
   input: FocusedBreakdownRequest,
@@ -1322,7 +1347,9 @@ const runBreakdown = (
       ...(support.warnings === undefined ? {} : { warnings: support.warnings }),
     },
     groups: { ...groups, projects: readProjectGroups(database, filter, trace) },
-    ...(request.includeObservatory ? { tokenFlow: readTokenFlow(database, filter, trace) } : {}),
+    ...(request.includeObservatory
+      ? { tokenFlow: readTokenFlow(database, filter, trace), constellation: readConstellation(database, filter, trace) }
+      : {}),
     requestFingerprint: focusedBreakdownFingerprint(request),
     revision: request.query.revision,
   };

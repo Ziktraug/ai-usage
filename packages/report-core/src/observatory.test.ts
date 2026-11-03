@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
-import { buildTokenFlow, parseTokenFlow, type TokenFlowContribution } from './observatory';
+import { parseTokenFlow, type TokenFlowContribution } from './observatory';
+import { buildTokenFlow } from './token-flow-projection';
 
 const contribution = (project: string, model: string, tokens: number): TokenFlowContribution => ({
   projectKey: project,

@@ -24,3 +24,12 @@ or expired revision reports an error rather than falling back to newer data.
 The route is loaded separately from the report's initial bundle. It uses the
 existing design tokens and query cache policies. The synthetic mode uses only
 repository fixtures; tests do not open native histories or daily databases.
+
+The constellation shows at most 900 matching canonical sessions, sorted by
+recorded tokens. Its count distinguishes displayed nodes from the full selection;
+limiting the map never limits the Sankey totals. Project proximity is illustrative.
+Parent edges require the exact declared native parent identity in the same
+machine and harness. Missing, ambiguous and cyclic edges stay unresolved. The
+2D and perspective 3D views share positions, support zoom and manual rotation,
+and provide an equivalent session selector and native detail links. No automatic
+motion or claim about currently active agents is made.

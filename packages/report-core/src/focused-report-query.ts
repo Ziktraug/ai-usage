@@ -10,8 +10,9 @@ import {
   type LineMeasurementAccumulator,
   processedTokensForAnalytics,
 } from './analytics';
+import { type Constellation, parseConstellation } from './constellation';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
-import { buildTokenFlow, parseTokenFlow, type TokenFlow } from './observatory';
+import { parseTokenFlow, type TokenFlow } from './observatory';
 import { parseProjectGroupConfigs } from './project-group';
 import {
   type ApiPriceMeasurement,
@@ -359,6 +360,7 @@ export interface FocusedProjectGroup extends LineMeasurementAccumulator {
 }
 
 export interface FocusedBreakdownResult {
+  constellation?: Constellation;
   context: {
     cursorCommitAttribution: CursorCommitAttributionRow[];
     projectGroupConfigs?: NonNullable<FocusedReportSupport['projectGroupConfigs']>;
@@ -1534,30 +1536,14 @@ export const projectFocusedBreakdown = (
   input: FocusedBreakdownRequest,
 ): FocusedBreakdownResult => {
   const request = parseFocusedBreakdownRequest(input);
+  if (request.includeObservatory) {
+    throw new Error('Use projectObservatoryBreakdown for an Observatory projection');
+  }
   const visible = rows
     .map(enrichSessionPresentationRow)
     .filter((row) => matchesFocusedReportQuery(row, request.query, support.timeZone));
   const totalCost = visible.reduce((sum, row) => sum + usageRowApiPriceMeasurement(row).knownCost, 0);
   return {
-    ...(request.includeObservatory
-      ? {
-          tokenFlow: buildTokenFlow(
-            visible.flatMap((row) =>
-              usageRowModelContributions(row).map((segment) => ({
-                projectKey: row.projectKey,
-                projectLabel: row.projectLabel,
-                model: segment.key,
-                input: segment.tokIn,
-                cacheRead: segment.tokCr,
-                cacheWrite: segment.tokCw,
-                output: segment.tokOut,
-              })),
-            ),
-            visible.length,
-            visible.filter((row) => row.partial || row.usageUnavailable).length,
-          ),
-        }
-      : {}),
     context: {
       cursorCommitAttribution: support.datasets?.cursorCommitAttribution ?? [],
       ...(support.projectGroupConfigs === undefined ? {} : { projectGroupConfigs: support.projectGroupConfigs }),
@@ -2765,12 +2751,19 @@ export function parseFocusedReportQueryResult(
     const parsed = parseFocusedBreakdownRequest(request);
     const record = assertResultEnvelope(
       value,
-      ['context', 'groups', 'requestFingerprint', 'revision', ...(parsed.includeObservatory ? ['tokenFlow'] : [])],
+      [
+        'context',
+        'groups',
+        'requestFingerprint',
+        'revision',
+        ...(parsed.includeObservatory ? ['tokenFlow', 'constellation'] : []),
+      ],
       parsed.query.revision,
       focusedBreakdownFingerprint(parsed),
     );
     if (parsed.includeObservatory) {
       parseTokenFlow(record.tokenFlow);
+      parseConstellation(record.constellation);
     }
     assertBreakdownGroups(record.groups);
     assertBreakdownContext(record.context);

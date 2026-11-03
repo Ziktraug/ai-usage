@@ -1,4 +1,5 @@
-import { type FocusedBreakdownRequest, projectFocusedBreakdown } from '@ai-usage/report-core/focused-report-query';
+import type { FocusedBreakdownRequest } from '@ai-usage/report-core/focused-report-query';
+import { projectObservatoryBreakdown } from '@ai-usage/report-core/observatory-projection';
 import { queryOptions } from '@tanstack/svelte-query';
 import { campaignMapFixtureGeneratedAt, campaignMapFixtureRows } from '../../../campaign-map-fixture';
 import { demoReportPayload } from '../../../report-data';
@@ -26,7 +27,7 @@ export const observatoryQueryOptions = (
     queryKey: reportBreakdownKey(request),
     queryFn: async ({ signal }) => {
       if (mode !== 'live') {
-        return projectFocusedBreakdown(
+        return projectObservatoryBreakdown(
           campaignMapFixtureRows,
           { ...demoReportPayload, generatedAt: observatoryFixtureDate },
           request,
