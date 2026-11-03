@@ -34,8 +34,10 @@ This package imports no other `@ai-usage/*` package.
 - `./codex-work-observation`: bounded local native request, acknowledgement,
   exact-answer and provenance contracts; never portable usage-row content.
 - `./datasets`: typed report datasets.
-- `./focused-report-query`: strict bounded support, Overview, and Breakdown
-  contracts.
+- `./focused-report-query`: bounded support, Overview, and Breakdown request
+  contracts, fingerprints, types, and pure projections.
+- `./focused-report-result`: strict response and captured-support validation,
+  separate from projections so clients can load validators with network requests.
 - `./harness-metadata`: harness keys, labels, and metadata.
 - `./merge-bundle`: portable merge-bundle contracts.
 - `./model-identity`: model-family/provider identity.

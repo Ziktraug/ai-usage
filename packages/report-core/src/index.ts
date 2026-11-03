@@ -5,6 +5,7 @@ export * from './canonical-instant';
 export * from './csv';
 export * from './datasets';
 export * from './focused-report-query';
+export * from './focused-report-result';
 export * from './harness-metadata';
 export * from './merge-bundle';
 export * from './merge-proof';

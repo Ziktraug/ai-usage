@@ -1,8 +1,5 @@
-import {
-  type FocusedReportSupport,
-  type FocusedSupportResult,
-  parseFocusedReportSupport,
-} from '@ai-usage/report-core/focused-report-query';
+import type { FocusedReportSupport, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
+import { parseFocusedReportSupport } from '@ai-usage/report-core/focused-report-result';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';

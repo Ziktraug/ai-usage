@@ -1,9 +1,6 @@
 import { createHash } from 'node:crypto';
-import {
-  type FocusedMachineFreshness,
-  type FocusedReportSupport,
-  parseFocusedReportSupport,
-} from '@ai-usage/report-core/focused-report-query';
+import type { FocusedMachineFreshness, FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import { parseFocusedReportSupport } from '@ai-usage/report-core/focused-report-result';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { AiUsageConfig, ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
