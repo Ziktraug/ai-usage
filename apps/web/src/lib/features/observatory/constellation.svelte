@@ -199,31 +199,31 @@
   .controls select {
     max-width: 100%;
     padding: 8px;
-    color: var(--colors-ink);
-    background: var(--colors-surface);
-    border: 1px solid var(--colors-line);
+    color: var(--graph-ink);
+    background: var(--graph-surface);
+    border: 1px solid var(--graph-line);
   }
   .graphic {
     width: 100%;
     min-height: 280px;
     max-height: 600px;
-    color: var(--colors-accent);
+    color: var(--graph-accent);
     touch-action: pan-y;
-    background: var(--colors-surface-muted);
-    border: 1px solid var(--colors-line);
-    border-radius: var(--radii-md);
+    background: var(--graph-soft);
+    border: 1px solid var(--graph-line);
+    border-radius: var(--graph-radius-md);
   }
   .label {
     font-size: 12px;
-    fill: var(--colors-ink);
-    stroke: var(--colors-surface);
+    fill: var(--graph-ink);
+    stroke: var(--graph-surface);
     stroke-width: 3px;
     paint-order: stroke;
   }
   .muted {
     font-size: 13px;
     line-height: 1.6;
-    color: var(--colors-muted);
+    color: var(--graph-muted);
   }
   .inspector {
     display: flex;
@@ -231,6 +231,6 @@
     gap: 12px;
     align-items: center;
     padding-top: 12px;
-    border-top: 1px solid var(--colors-line);
+    border-top: 1px solid var(--graph-line);
   }
 </style>

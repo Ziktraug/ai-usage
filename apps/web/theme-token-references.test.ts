@@ -61,6 +61,17 @@ const APP_LOCAL_CUSTOM_PROPERTIES: ReadonlySet<string> = new Set([
   '--wt-tint',
   '--wt-warn',
   '--wt-warn-soft',
+  // Graph aliases set from semantic tokens by the extracted graphTheme style.
+  '--graph-ink',
+  '--graph-soft',
+  '--graph-surface',
+  '--graph-muted',
+  '--graph-accent',
+  '--graph-line',
+  '--graph-track',
+  '--graph-radius-sm',
+  '--graph-radius-md',
+  '--graph-mono',
   // Work timeline geometry: the day count and week offset the list sets on the board, and the
   // column widths and row background the stylesheet derives from them.
   '--wt-day-w',
