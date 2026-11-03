@@ -34,3 +34,13 @@ test('prompt result opens the existing rounds reader', async ({ page }) => {
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('dialog').getByRole('button', { name: firstRoundPattern })).toBeVisible();
 });
+
+test('Claude selection and exact project label share canonical filter semantics', async ({ page }) => {
+  await page.goto('/prompts');
+  await page.getByRole('combobox', { name: 'Harness', exact: true }).selectOption({ label: 'Claude Code' });
+  await page.getByRole('textbox', { name: 'Project label (exact)', exact: true }).fill('Sample app');
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page.getByText('Add a regression test before fixing the parser.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Harness', exact: true })).toHaveValue('Claude');
+  await expect(page.getByText('Review the data parser and explain the edge cases.', { exact: true })).toHaveCount(0);
+});

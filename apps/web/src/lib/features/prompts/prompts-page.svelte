@@ -153,13 +153,17 @@
         ></label
       >
       <label class={labelClass}
-        >Project<input class={inputClass} name="project" value={page.url.searchParams.get('project') ?? ''}></label
+        >Project label (exact)<input
+          class={inputClass}
+          name="project"
+          value={page.url.searchParams.get('project') ?? ''}
+        ></label
       >
       <label class={labelClass}
         >Harness<select class={inputClass} name="harness" value={page.url.searchParams.get('harness') ?? ''}>
           <option value="">All harnesses</option>
           <option>Codex</option>
-          <option>Claude Code</option>
+          <option value="Claude">Claude Code</option>
           <option>OpenCode</option>
         </select></label
       >
@@ -238,6 +242,7 @@
               Read session rounds
             </button>
           </div>
+          <SessionEvidence revision={data.revision} rowId={entry.rowId} synthetic={data.mode !== 'live'} />
         </li>
       {/each}
     </ol>

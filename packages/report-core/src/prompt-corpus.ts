@@ -17,6 +17,8 @@ export interface PromptCorpusEntry {
 export interface PromptCorpusRequest {
   cursor: string | null;
   includeUndeclared: boolean;
+  /** Exact displayed project label, distinct from query.filters.fields.project identity keys. */
+  projectLabel?: string;
   query: SessionQueryRequest;
   search: string;
 }
@@ -60,7 +62,7 @@ const flag = (value: unknown): boolean => {
   return value;
 };
 export const parsePromptCorpusRequest = (input: unknown): PromptCorpusRequest => {
-  const value = object(input, ['query', 'cursor', 'search', 'includeUndeclared']);
+  const value = object(input, ['query', 'cursor', 'search', 'includeUndeclared', 'projectLabel']);
   const query = parseSessionQueryRequest(value.query);
   if (query.cursor !== null) {
     throw new PromptCorpusValidationError('Use the corpus continuation, not a session cursor');
@@ -70,6 +72,7 @@ export const parsePromptCorpusRequest = (input: unknown): PromptCorpusRequest =>
   }
   return {
     query,
+    ...(value.projectLabel === undefined ? {} : { projectLabel: text(value.projectLabel, 512).trim() }),
     cursor: value.cursor === null ? null : text(value.cursor, 4096),
     search: text(value.search, PROMPT_CORPUS_LIMITS.search).trim(),
     includeUndeclared: flag(value.includeUndeclared),
@@ -138,7 +141,12 @@ export interface PromptCorpusPosition {
   sessionCursor: string | null;
 }
 const corpusIdentity = (request: PromptCorpusRequest): string =>
-  JSON.stringify([sessionQueryFingerprint(request.query), request.search, request.includeUndeclared]);
+  JSON.stringify([
+    sessionQueryFingerprint(request.query),
+    request.search,
+    request.includeUndeclared,
+    request.projectLabel ?? '',
+  ]);
 export const promptCorpusCursor = (request: PromptCorpusRequest, position: PromptCorpusPosition): string =>
   `pc1.${encodeURIComponent(JSON.stringify({ ...position, identity: corpusIdentity(request) }))}`;
 export const promptCorpusPosition = (request: PromptCorpusRequest): PromptCorpusPosition => {

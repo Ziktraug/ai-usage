@@ -16,7 +16,7 @@ export const syntheticPromptCorpus = (request: PromptCorpusRequest): Promise<Pro
   }).items;
   const entries = [
     { text: 'Review the data parser and explain the edge cases.', project: 'Sample app', harness: 'Codex' },
-    { text: 'Add a regression test before fixing the parser.', project: 'Sample app', harness: 'Claude Code' },
+    { text: 'Add a regression test before fixing the parser.', project: 'Sample app', harness: 'Claude' },
     { text: 'Compare the two approaches and keep the failures visible.', project: 'Sample library', harness: 'Codex' },
   ]
     .map((entry, ordinal) => ({
@@ -32,8 +32,7 @@ export const syntheticPromptCorpus = (request: PromptCorpusRequest): Promise<Pro
     .filter(
       (entry) =>
         entry.text.toLowerCase().includes(request.search.toLowerCase()) &&
-        (!request.query.filters.fields.project ||
-          entry.project.toLowerCase().includes(request.query.filters.fields.project.toLowerCase())) &&
+        (!request.projectLabel || entry.project === request.projectLabel) &&
         (!request.query.filters.harness.length || request.query.filters.harness.includes(entry.harness)) &&
         (!request.query.range.from || entry.at >= request.query.range.from) &&
         (!request.query.range.to || entry.at < request.query.range.to),

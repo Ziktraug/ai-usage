@@ -13,13 +13,14 @@ export const promptRequestForUrl = (url: URL, revision: string): PromptCorpusReq
     return new Date(time + (end ? 86_400_000 : 0)).toISOString();
   };
   return parsePromptCorpusRequest({
+    projectLabel: params.get('project') ?? '',
     cursor: null,
     includeUndeclared: params.get('includeUndeclared') === '1',
     search: params.get('q') ?? '',
     query: {
       cursor: null,
       filters: {
-        fields: params.get('project') ? { project: params.get('project') } : {},
+        fields: {},
         harness: params.get('harness') ? [params.get('harness')] : [],
         machine: [],
         origin: [],

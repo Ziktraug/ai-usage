@@ -9,10 +9,11 @@ import {
   promptCorpusPosition,
 } from '@ai-usage/report-core/prompt-corpus';
 import type { SessionDetailRequest, SessionDetailResponse } from '@ai-usage/report-core/session-detail';
-import type {
-  SessionPageResult,
-  SessionQueryRequest,
-  SessionQueryServerResult,
+import {
+  projectSessionPage,
+  type SessionPageResult,
+  type SessionQueryRequest,
+  type SessionQueryServerResult,
 } from '@ai-usage/report-core/session-query';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
 import { getLocalSessionDetailForServer } from './session-detail.server';
@@ -38,7 +39,12 @@ export const readPromptCorpusForServer = async (
   signal?.throwIfAborted();
   // The selected period applies to interventions, not the session's birth date.
   const page = await dependencies.readPage(
-    { ...request.query, cursor: position.sessionCursor, range: { from: null, to: null } },
+    {
+      ...request.query,
+      filters: { fields: {}, harness: [], machine: [], query: '', origin: [] },
+      cursor: position.sessionCursor,
+      range: { from: null, to: null },
+    },
     signal,
   );
   if (!page.ok) {
@@ -67,6 +73,15 @@ export const readPromptCorpusForServer = async (
       continue;
     }
     result.scannedSessions++;
+    // Session pages are campaign representatives. Membership is not eligibility:
+    // apply the canonical comparator to this individual row before opening history.
+    if (request.projectLabel && row.projectLabel !== request.projectLabel) {
+      continue;
+    }
+    const eligible = projectSessionPage([row], { ...request.query, cursor: null, range: { from: null, to: null } });
+    if (eligible.items.length === 0) {
+      continue;
+    }
     if (row.origin !== 'human' && !(request.includeUndeclared && row.origin === undefined)) {
       continue;
     }
