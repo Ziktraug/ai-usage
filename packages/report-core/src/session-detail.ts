@@ -7,6 +7,7 @@ import {
   SessionDetailValidationError,
   sessionDetailRequestFingerprint,
 } from './session-detail-request';
+import type { SessionEvidence } from './session-evidence';
 import { parseSessionVcsContext, type SessionVcsContext } from './session-vcs';
 
 export {
@@ -63,6 +64,7 @@ export interface SessionProjectionFacts {
 
 export interface LocalSessionAnalysis {
   detail: SessionDetail;
+  evidence?: SessionEvidence;
   projection: SessionProjectionFacts;
 }
 

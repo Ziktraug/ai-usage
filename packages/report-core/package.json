@@ -46,6 +46,7 @@
     "./skill-observation": "./src/skill-observation.ts",
     "./skill-observation-evidence": "./src/skill-observation-evidence.ts",
     "./skill-observation-summary": "./src/skill-observation-summary.ts",
+    "./session-evidence": "./src/session-evidence.ts",
     "./session-detail": "./src/session-detail.ts",
     "./session-detail-request": "./src/session-detail-request.ts",
     "./session-lineage": "./src/session-lineage.ts",

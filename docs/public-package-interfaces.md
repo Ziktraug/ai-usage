@@ -353,3 +353,19 @@ prompt offset; an empty page with a continuation is not a claim of no matches.
 Source files may advance between reads. Undeclared origin is opt-in provenance,
 not an inferred human classification. The UI and exports label partial histories
 and excerpts, and the existing Session rounds reader owns detail navigation.
+
+Native result traces are an explicit second read: `session.evidence` accepts the
+same revision and opaque report-row identity as `session.detail` and reuses its
+local-machine authorization. Claude and Codex readers capture supported response,
+command, patch request, tool-call and tool-output records only when requested.
+Their existing canonical parsers supply turn ownership; tool outputs link through
+recorded call identities, and replayed Codex parent records are counted as omitted.
+Unattributed output remains visible without a guessed turn. OpenCode currently
+returns explicit unsupported coverage for result traces.
+
+Evidence is limited to 200 records, 8,000 characters per record and 256,000 text
+characters overall, in addition to existing native history read budgets. Omission,
+truncation and unavailable provenance remain visible. Evidence does not establish
+that a command succeeded, a patch was applied or a pull request was merged. Each
+session retains its own provenance; descendant output is never attributed to its
+parent by proximity. No durable index, collector or additional database is created.

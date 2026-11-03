@@ -32,6 +32,7 @@ describe('Session contract', () => {
     expect(Object.keys(sessionContract).sort()).toEqual([
       'campaignChildren',
       'detail',
+      'evidence',
       'lookup',
       'neighbors',
       'page',

@@ -102,9 +102,13 @@ const requireOrpcError = (error: unknown): ORPCError<string, unknown> => {
 };
 
 describe('Session RPC server adapter', () => {
-  test('routes all five procedures through their narrow deep ports with canonical inputs', async () => {
+  test('routes session reads through their narrow deep ports with canonical inputs', async () => {
     const calls: Array<{ kind: string; request: unknown; signal: AbortSignal | undefined }> = [];
     const dependencies: SessionRpcDependencies = {
+      getEvidence: (request, signal) => {
+        calls.push({ kind: 'evidence', request, signal });
+        return Promise.resolve(detailUnavailable);
+      },
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -148,13 +152,25 @@ describe('Session RPC server adapter', () => {
       vcsUnavailable,
     );
 
-    expect(calls.map(({ kind }) => kind)).toEqual(['sessions', 'campaign-children', 'neighbors', 'detail', 'vcs']);
+    expect(
+      await call(router.evidence, { revision: query.revision, rowId: 'row-1' }, { signal: controller.signal }),
+    ).toEqual(detailUnavailable);
+    expect(calls.map(({ kind }) => kind)).toEqual([
+      'sessions',
+      'campaign-children',
+      'neighbors',
+      'detail',
+      'vcs',
+      'evidence',
+    ]);
     expect(calls.every(({ signal }) => signal === controller.signal)).toBe(true);
     expect(calls[0]?.request).toEqual(query);
   });
 
   test('preserves exact-query protocol error envelopes and rejects stale identities', async () => {
     const incompatibleRouter = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -196,6 +212,8 @@ describe('Session RPC server adapter', () => {
     };
     let invocation = 0;
     const protocolErrorRouter = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -220,6 +238,8 @@ describe('Session RPC server adapter', () => {
   test('sanitizes private deep-port failures and invalid local-read output', async () => {
     const privatePath = '/private/home/history.jsonl';
     const router = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -258,6 +278,8 @@ describe('Session RPC server adapter', () => {
       signalStarted = resolve;
     });
     const router = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -296,6 +318,8 @@ describe('Session RPC server adapter', () => {
       firstStarted = resolve;
     });
     const router = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -331,6 +355,8 @@ describe('Session RPC server adapter', () => {
 
   test('preserves unavailable trust semantics from detail and VCS owners', async () => {
     const router = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
@@ -364,6 +390,8 @@ describe('Session RPC server adapter', () => {
     };
     const kinds: string[] = [];
     const router = createSessionRpcRouter({
+      getEvidence: () =>
+        Promise.resolve({ status: 'unavailable', reason: 'unsupported', message: 'Synthetic evidence unavailable' }),
       getPrompts: async () => ({
         entries: [],
         nextCursor: null,
