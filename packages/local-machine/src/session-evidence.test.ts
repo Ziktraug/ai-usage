@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
+import { parseClaudeSessionFacts } from './claude-session-facts';
 import { createCodexSessionParser } from './internal/codex-history';
-import { createCodexEvidenceCapture, createEvidenceAccumulator } from './session-evidence';
+import { createClaudeEvidenceCapture, createCodexEvidenceCapture, createEvidenceAccumulator } from './session-evidence';
 
 const at = '2026-11-01T10:00:00.000Z';
 test('Codex traces reuse canonical turn ownership and link outputs only by call identity', () => {
@@ -123,4 +124,105 @@ test('a later conflicting call identity removes earlier output attribution', () 
     capture.finish(detail, parser.evidenceTurnIndexes()).records.find((record) => record.kind === 'tool-result')
       ?.turnIndex,
   ).toBeNull();
+});
+
+const codexCaptureFromRecords = (records: readonly (Record<string, unknown> | string)[]) => {
+  const parser = createCodexSessionParser(true);
+  const capture = createCodexEvidenceCapture();
+  for (const record of records) {
+    const line = typeof record === 'string' ? record : JSON.stringify({ timestamp: at, ...record });
+    parser.visit(line);
+    capture.visit(line, parser.evidenceContext);
+  }
+  const detail = parser.detail();
+  if (!detail) {
+    throw new Error('Expected canonical Codex detail');
+  }
+  return capture.finish(detail, parser.evidenceTurnIndexes());
+};
+const codexOpening = [
+  { type: 'session_meta', payload: { id: 'budget-session', timestamp: at } },
+  { type: 'event_msg', payload: { type: 'task_started', turn_id: 't0' } },
+  { type: 'turn_context', payload: { turn_id: 't0', model: 'gpt-5' } },
+  { type: 'event_msg', payload: { type: 'user_message', message: 'First request' } },
+];
+test('Codex invalidates a retained output when a tracked call conflicts after the identity budget fills', () => {
+  const call = (id: string) => ({
+    type: 'response_item',
+    payload: { type: 'function_call', name: 'exec_command', call_id: id, arguments: '{}' },
+  });
+  const result = codexCaptureFromRecords([
+    ...codexOpening,
+    call('c0'),
+    { type: 'response_item', payload: { type: 'function_call_output', call_id: 'c0', output: 'retained output' } },
+    ...Array.from({ length: 199 }, (_, index) => call(`c${index + 1}`)),
+    { type: 'event_msg', payload: { type: 'task_complete', turn_id: 't0' } },
+    { type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { type: 'turn_context', payload: { turn_id: 't1', model: 'gpt-5' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'Second request' } },
+    call('c0'),
+  ]);
+  const output = result.records.find((record) => record.kind === 'tool-result');
+  expect(result.records).toHaveLength(200);
+  expect(result.coverage.omittedRecords).toBe(2);
+  expect(output?.text).toBe('retained output');
+  expect(output?.turnIndex).toBeNull();
+  expect(output?.promptIds).toEqual([]);
+  expect(result.coverage.unattributedRecords).toBe(1);
+});
+test('Claude invalidates a retained output when a tracked call conflicts after the identity budget fills', () => {
+  const capture = createClaudeEvidenceCapture();
+  const call = (id: string, uuid: string, parentUuid = 'p0') => ({
+    type: 'assistant',
+    uuid,
+    parentUuid,
+    timestamp: at,
+    message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'true' } }] },
+  });
+  const records = [
+    { type: 'user', uuid: 'p0', timestamp: at, message: { content: 'First request' } },
+    call('c0', 'a0'),
+    {
+      type: 'user',
+      uuid: 'o0',
+      parentUuid: 'a0',
+      timestamp: at,
+      message: { content: [{ type: 'tool_result', tool_use_id: 'c0', content: 'retained output' }] },
+    },
+    ...Array.from({ length: 199 }, (_, index) => call(`c${index + 1}`, `a${index + 1}`)),
+    { type: 'user', uuid: 'p1', timestamp: at, message: { content: 'Second request' } },
+    call('c0', 'reused', 'p1'),
+  ];
+  const facts = parseClaudeSessionFacts({
+    sourceSessionId: 'budget-session',
+    repository: null,
+    records,
+    onEvidenceRecord: capture.visit,
+  });
+  if (!facts) {
+    throw new Error('Expected canonical Claude detail');
+  }
+  const result = capture.finish(facts.detailFacts);
+  const output = result.records.find((record) => record.kind === 'tool-result');
+  expect(result.records).toHaveLength(200);
+  expect(result.coverage.omittedRecords).toBe(2);
+  expect(output?.text).toBe('retained output');
+  expect(output?.turnIndex).toBeNull();
+  expect(output?.promptIds).toEqual([]);
+  expect(result.coverage.unattributedRecords).toBe(1);
+});
+test('Codex reports a malformed nonempty native line as omitted evidence without charging blank lines', () => {
+  const result = codexCaptureFromRecords([
+    ...codexOpening,
+    {
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Valid response' }] },
+    },
+    '',
+    '  ',
+    '{"type":"response_item","payload":',
+  ]);
+  expect(result.records.map((record) => record.text)).toEqual(['Valid response']);
+  expect(result.coverage.partial).toBe(true);
+  expect(result.coverage.omittedRecords).toBe(1);
 });
