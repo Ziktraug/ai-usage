@@ -11,7 +11,7 @@ const STANDALONE_CAMPAIGN_PATTERN = /^Review release notes /;
 const INCOMPLETE_CAMPAIGN_PATTERN = /^Explore dashboard layout /;
 const UNKNOWN_RPC_PROBE_PATH = '/rpc/demo-boundary-probe';
 
-test('mobile demo opens Campaigns through Manage without exposing business destinations or making business requests', async ({
+test('mobile demo opens Campaigns and Prompts through Manage without exposing business destinations or making business requests', async ({
   page,
 }) => {
   const businessRequests: string[] = [];
@@ -20,7 +20,7 @@ test('mobile demo opens Campaigns through Manage without exposing business desti
     if (
       browserRequest.resourceType() === 'fetch' &&
       browserRequest.method() === 'GET' &&
-      new URL(browserRequest.url()).pathname === '/campaigns/__data.json'
+      ['/campaigns/__data.json', '/prompts/__data.json'].includes(new URL(browserRequest.url()).pathname)
     ) {
       return;
     }
@@ -38,7 +38,7 @@ test('mobile demo opens Campaigns through Manage without exposing business desti
   await manage.focus();
   await page.keyboard.press('Enter');
   const destinations = page.getByRole('navigation', { name: 'Manage destinations', exact: true });
-  await expect(destinations.getByRole('link')).toHaveText(['Campaigns']);
+  await expect(destinations.getByRole('link')).toHaveText(['Campaigns', 'Prompts']);
   const campaigns = destinations.getByRole('link', { name: 'Campaigns', exact: true });
   await expect(campaigns).toHaveAttribute('href', `/campaigns${new URL(page.url()).search}`);
   await campaigns.click();
@@ -49,10 +49,15 @@ test('mobile demo opens Campaigns through Manage without exposing business desti
   await expect(manage).toHaveAttribute('aria-expanded', 'false');
   await manage.click();
   await expect(campaigns).toHaveAttribute('aria-current', 'page');
-  await expect(destinations.getByRole('link')).toHaveText(['Campaigns']);
+  await expect(destinations.getByRole('link')).toHaveText(['Campaigns', 'Prompts']);
   await page.keyboard.press('Escape');
   await expect(manage).toBeFocused();
   await expect(destinations).toHaveCount(0);
+  await manage.click();
+  await destinations.getByRole('link', { name: 'Prompts', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Prompts', exact: true })).toBeVisible();
+  await expect(page.getByText('Synthetic example corpus. No local histories are read.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Review the data parser and explain the edge cases.', { exact: true })).toBeVisible();
   expect(businessRequests).toEqual([]);
 });
 
