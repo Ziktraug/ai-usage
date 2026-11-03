@@ -1,39 +1,20 @@
 <script lang="ts">
-  import { css } from '@ai-usage/design-system/css';
   import { flowTokens, type TokenFlow } from '@ai-usage/report-core/observatory';
   import { fmtCompact } from '../../foundation/presentation/format';
   import { layoutTokenFlow } from './token-flow-layout';
 
   let { flow }: { flow: TokenFlow } = $props();
   const layout = $derived(layoutTokenFlow(flow));
-  const panel = css({ minW: 0, display: 'grid', gap: '16px' });
-  const scroll = css({
-    overflowX: 'auto',
-    maxW: 'full',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    p: '12px',
-    color: 'accent',
-  });
-  const svg = css({ minW: '900px', w: 'full', display: 'block' });
-  const label = css({ fill: 'ink', fontSize: '12px' });
-  const muted = css({ color: 'muted', fontSize: '13px', lineHeight: 1.6 });
-  const table = css({
-    w: 'full',
-    fontSize: '12px',
-    borderCollapse: 'collapse',
-    '& th, & td': { textAlign: 'start', p: '10px', borderBottom: '1px solid token(colors.line)', whiteSpace: 'nowrap' },
-  });
 </script>
-<section aria-label="Token flow" class={panel}>
+<section aria-label="Token flow" class="panel">
   <h2>Where the tokens went</h2>
-  <p class={muted}>
+  <p class="muted">
     {fmtCompact(flow.total)}
     observed tokens across {flow.sessions} sessions. Width encodes tokens on one scale. Project → model → token
     category.
   </p>
   {#if flow.partialSessions}
-    <p class={muted} role="status">
+    <p class="muted" role="status">
       {flow.partialSessions}
       sessions have incomplete usage. These totals describe recorded usage, not complete consumption.
     </p>
@@ -41,16 +22,16 @@
   {#if flow.total > 0}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard scrollable overflow region) -->
     <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need to scroll this overflow region -->
-    <section aria-label="Scrollable token flow diagram" class={scroll} tabindex="0">
+    <section aria-label="Scrollable token flow diagram" class="scroll" tabindex="0">
       <svg
         aria-label="Token flow from projects through models to fresh input, cache and output"
-        class={svg}
+        class="svg"
         role="img"
         viewBox={`0 0 1040 ${layout.height}`}
       >
         <title>Observed tokens by project, model and category</title>
         {#each ['Project', 'Model', 'Token category'] as title, index}
-          <text class={label} x={20 + index * 390} y="18">{title}</text>
+          <text class="label" x={20 + index * 390} y="18">{title}</text>
         {/each}
         {#each layout.ribbons as ribbon (ribbon.key)}
           <path d={ribbon.path} fill="currentColor" opacity="0.2">
@@ -59,14 +40,14 @@
         {/each}
         {#each layout.nodes as node (node.key)}
           <rect fill="currentColor" height={node.height} width="8" x={node.x} y={node.y} />
-          <text class={label} x={node.x + 13} y={node.y + 13}>
+          <text class="label" x={node.x + 13} y={node.y + 13}>
             {node.label.length > 29 ? `${node.label.slice(0, 28)}…` : node.label}
             <title>{node.label}: {node.tokens.toLocaleString('en-US')} tokens</title>
           </text>
         {/each}
       </svg>
     </section>
-    <p class={muted}>
+    <p class="muted">
       Eight largest projects and twelve largest models are named. Remaining groups stay in the totals. Cache categories
       are disjoint; token volume is not a billed amount.
     </p>
@@ -74,8 +55,8 @@
       <summary>Exact flow values</summary>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard scrollable overflow region) -->
       <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users need to scroll this overflow region -->
-      <section aria-label="Scrollable exact token values" class={scroll} tabindex="0">
-        <table class={table}>
+      <section aria-label="Scrollable exact token values" class="scroll" tabindex="0">
+        <table class="table">
           <caption>
             Observed tokens for each project and model
           </caption>
@@ -110,3 +91,45 @@
     <p>No recorded tokens match these filters.</p>
   {/if}
 </section>
+
+<style>
+  .panel {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+  }
+  .scroll {
+    max-width: 100%;
+    padding: 12px;
+    overflow-x: auto;
+    color: var(--colors-accent);
+    border: 1px solid var(--colors-line);
+    border-radius: var(--radii-md);
+  }
+  .svg {
+    display: block;
+    width: 100%;
+    min-width: 900px;
+  }
+  .label {
+    font-size: 12px;
+    fill: var(--colors-ink);
+  }
+  .muted {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--colors-muted);
+  }
+  .table {
+    width: 100%;
+    font-size: 12px;
+    border-collapse: collapse;
+  }
+  .table th,
+  .table td {
+    padding: 10px;
+    text-align: start;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--colors-line);
+  }
+</style>

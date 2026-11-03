@@ -12,6 +12,7 @@ import {
   projectFocusedOverview,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
+import { projectObservatoryBreakdown } from '@ai-usage/report-core/observatory-projection';
 import {
   MAX_BREAKDOWN_REFRESH_BYTES,
   MAX_OVERVIEW_REFRESH_BYTES,
@@ -1420,7 +1421,7 @@ test('observatory joint distribution uses all matching canonical rows and keeps 
   try {
     const request = { query: overviewRequest.query, includeObservatory: true as const };
     const result = executeFocusedReportQuery(database, 'breakdown', request);
-    expect(result).toEqual(projectFocusedBreakdown(rows, support, request));
+    expect(result).toEqual(projectObservatoryBreakdown(rows, support, request));
     expect(result).toEqual(parseFocusedReportQueryResult('breakdown', result, request));
     expect(result).not.toHaveProperty('rows');
     expect(() => parseFocusedReportQueryResult('breakdown', result, { query: request.query })).toThrow();

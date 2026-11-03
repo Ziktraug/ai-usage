@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { buildTokenFlow } from '@ai-usage/report-core/observatory';
+import { buildTokenFlow } from '@ai-usage/report-core/token-flow-projection';
 import { layoutTokenFlow } from './token-flow-layout';
 
 test('both Sankey stages conserve every token and all columns share the same scale', () => {

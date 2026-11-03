@@ -35,6 +35,30 @@ test('observatory supports a narrow viewport and keyboard scrolling without page
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
+test('constellation rotates in 3D, filters projects and opens a selected native session', async ({ page }) => {
+  await page.goto('/observatory?range=all');
+  await waitForHydratedNavigation(page);
+  const constellation = page.getByRole('region', { name: 'Session constellation', exact: true });
+  await expect(constellation).toBeVisible();
+  const points = constellation.locator('[data-constellation-node]');
+  expect(await points.count()).toBeGreaterThan(5);
+  await page.getByRole('combobox', { name: 'Projection', exact: true }).selectOption('3d');
+  const id = await points.first().getAttribute('data-constellation-node');
+  const point = constellation.locator(`[data-constellation-node="${id}"]`);
+  const before = await point.getAttribute('cx');
+  await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
+  await expect(point).not.toHaveAttribute('cx', before!);
+  await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await expect(constellation).toBeVisible();
+  await page.getByRole('combobox', { name: 'Inspect a session', exact: true }).selectOption({ index: 1 });
+  const href = await page.getByRole('link', { name: 'Open selected session', exact: true }).getAttribute('href');
+  expect(new URL(href!).pathname.startsWith('/sessions/')).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
 for (const range of ['today', '2026-06-01..2026-06-30']) {
   test(`observatory preserves the ${range} period through search and reload`, async ({ page }) => {
     await page.goto(`/observatory?range=${range}`);
