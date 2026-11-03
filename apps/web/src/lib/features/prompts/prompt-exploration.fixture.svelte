@@ -1,7 +1,13 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
+  import { QueryClientProvider } from '@tanstack/svelte-query';
+  import { onDestroy } from 'svelte';
+  import { createWebQueryClient } from '../../query/client';
   import type { ExplorationPrompt } from './prompt-exploration';
   import PromptExploration from './prompt-exploration.svelte';
+
+  const queryClient = createWebQueryClient();
+  onDestroy(() => queryClient.clear());
 
   const entries: ExplorationPrompt[] = [
     {
@@ -59,5 +65,14 @@
 <main class={page}>
   <h1>Synthetic prompt exploration fixture</h1>
   <p role="status">Opened session: {opened || 'none'}</p>
-  <PromptExploration complete={false} {entries} {onOpen} revision="synthetic-prompts-v1" />
+  <QueryClientProvider client={queryClient}>
+    <PromptExploration
+      complete={false}
+      corpusScope="Synthetic fixture; four prompts across three sessions"
+      {entries}
+      {onOpen}
+      revision="synthetic-prompts-v1"
+      synthetic={true}
+    />
+  </QueryClientProvider>
 </main>

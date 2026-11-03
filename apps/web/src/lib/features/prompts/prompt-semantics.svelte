@@ -2,6 +2,7 @@
   import { css } from '@ai-usage/design-system/css';
   import { onDestroy } from 'svelte';
   import { type ExplorationPrompt, entryBreakdown } from './prompt-exploration';
+  import PromptPractices from './prompt-practices.svelte';
   import {
     groupSemanticFamilies,
     SEMANTIC_MODEL,
@@ -15,11 +16,15 @@
     revision,
     onOpen,
     onFamilies = () => undefined,
+    synthetic = false,
+    corpusScope = '',
   }: {
     entries: readonly ExplorationPrompt[];
     revision: string;
     onOpen: (entry: ExplorationPrompt) => void;
     onFamilies?: (families: readonly SemanticFamily[]) => void;
+    synthetic?: boolean;
+    corpusScope?: string;
   } = $props();
   const corpus = $derived(semanticFormulations(entries));
   const identity = $derived(
@@ -147,6 +152,7 @@
       {
         method: SEMANTIC_MODEL,
         revision,
+        corpusScope,
         formulations: corpus.formulations.map((item) => ({
           id: item.id,
           sources: item.entries.map((entry) => ({ id: entry.id, rowId: entry.rowId })),
@@ -241,7 +247,7 @@
     {message || 'No model has been prepared. Lexical exploration remains available.'}
   </p>
   {#if family}
-    <label
+    <label class="family-selection"
       >Candidate family
       <select aria-label="Candidate family" class={select} bind:value={selected}>
         {#each families as option (option.reference.id)}
@@ -386,3 +392,17 @@
     </div>
   {/if}
 </section>
+
+{#if families.length}
+  <PromptPractices {corpusScope} {entries} families={visibleFamilies} {onOpen} {revision} {synthetic} />
+{/if}
+
+<style>
+  .family-selection {
+    min-width: 0;
+  }
+  .family-selection select {
+    width: 100%;
+    min-width: 0;
+  }
+</style>

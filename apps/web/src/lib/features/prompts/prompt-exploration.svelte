@@ -14,11 +14,15 @@
     complete,
     revision,
     onOpen,
+    synthetic = false,
+    corpusScope = '',
   }: {
     entries: readonly ExplorationPrompt[];
     complete: boolean;
     revision: string;
     onOpen: (entry: ExplorationPrompt) => void;
+    synthetic?: boolean;
+    corpusScope?: string;
   } = $props();
   let selected = $state('');
   let notes = $state<Record<string, string>>({});
@@ -26,7 +30,7 @@
   const weeklyMaximum = $derived(Math.max(1, ...corpus.weeks.map((week) => week.prompts)));
   const motif = $derived(corpus.motifs.find((candidate) => candidate.id === selected) ?? corpus.motifs[0]);
   const breakdown = $derived(motif ? motifBreakdown(motif, corpus.entries) : null);
-  const draft = $derived(motif ? explorationDraft(motif, revision, notes[motif.id] ?? '') : '');
+  const draft = $derived(motif ? explorationDraft(motif, revision, notes[motif.id] ?? '', corpusScope) : '');
   const exportDraft = () => {
     const url = URL.createObjectURL(new Blob([draft], { type: 'text/markdown;charset=utf-8' }));
     const anchor = document.createElement('a');
@@ -96,7 +100,7 @@
     {corpus.analyzed}
     prompts · {corpus.sessions} distinct sessions.
     {complete
-      ? 'All pages in the selected scope are loaded.'
+      ? 'All pages in the selected corpusScope are loaded.'
       : 'Only loaded pages are included; load more prompts to extend the sample.'}
     {corpus.excluded}
     command or context-only prompts excluded; {corpus.clipped} partial or clipped prompts.
@@ -281,4 +285,4 @@
   {/if}
 </section>
 
-<PromptSemantics entries={corpus.entries} {onOpen} {revision} />
+<PromptSemantics {corpusScope} entries={corpus.entries} {onOpen} {revision} {synthetic} />

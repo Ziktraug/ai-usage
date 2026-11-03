@@ -266,9 +266,11 @@
     {/if}
     <PromptExploration
       complete={pages.length > 0 && !corpus.hasNextPage && !corpus.isError && partial === 0 && unavailable === 0}
+      corpusScope={JSON.stringify(request)}
       {entries}
       {onOpen}
       revision={data.revision}
+      synthetic={data.mode !== 'live'}
     />
     {#if lookup.isError}
       <p role="alert">The selected session could not be read.</p>
