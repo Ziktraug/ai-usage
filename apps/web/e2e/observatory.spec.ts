@@ -34,3 +34,18 @@ test('observatory supports a narrow viewport and keyboard scrolling without page
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
+
+for (const range of ['today', '2026-06-01..2026-06-30']) {
+  test(`observatory preserves the ${range} period through search and reload`, async ({ page }) => {
+    await page.goto(`/observatory?range=${range}`);
+    await waitForHydratedNavigation(page);
+    await expect(page.getByRole('combobox', { name: 'Period', exact: true })).toHaveValue(range);
+    await page.getByRole('searchbox', { name: 'Search sessions' }).fill('forecast');
+    await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+    await expect(page).toHaveURL(forecastQuery);
+    expect(new URL(page.url()).searchParams.get('range')).toBe(range);
+    await page.reload();
+    await expect(page.getByRole('combobox', { name: 'Period', exact: true })).toHaveValue(range);
+    await expect(page.getByRole('searchbox', { name: 'Search sessions' })).toHaveValue('forecast');
+  });
+}

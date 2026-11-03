@@ -69,6 +69,12 @@
         {/each}
         <label
           >Period<select name="range" value={page.url.searchParams.get('range') ?? '30d'}>
+            <option value="today">Today</option>
+            {#if page.url.searchParams.get('range')?.includes('..')}
+              <option value={page.url.searchParams.get('range')!}>
+                Custom period: {page.url.searchParams.get('range')}
+              </option>
+            {/if}
             <option value="7d">7 days</option>
             <option value="30d">30 days</option>
             <option value="90d">90 days</option>
