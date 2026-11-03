@@ -341,3 +341,15 @@ router branch (ADR 0084). Browser imports remain contract-first.
 - `tools/check-package-boundaries.ts` checks direct ownership plus the full
   production dependency closure of Web and CLI, including synthetic side-door
   regressions.
+
+### Prompt corpus
+
+`@ai-usage/report-core/prompt-corpus` defines bounded prompt-page requests,
+entries, coverage counters and continuations. The Web `session.prompts` query
+reads native histories only after the existing exact-row local authority check.
+It does not collect or write an index. Periods refer to prompt timestamps, not
+session start dates. Continuations bind the search and retain an intra-session
+prompt offset; an empty page with a continuation is not a claim of no matches.
+Source files may advance between reads. Undeclared origin is opt-in provenance,
+not an inferred human classification. The UI and exports label partial histories
+and excerpts, and the existing Session rounds reader owns detail navigation.

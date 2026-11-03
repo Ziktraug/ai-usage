@@ -64,7 +64,8 @@
     "./work-thread": "./src/work-thread.ts",
     "./work-thread-seeds": "./src/work-thread-seeds.ts",
     "./work-thread-situation": "./src/work-thread-situation.ts",
-    "./work-thread-view": "./src/work-thread-view.ts"
+    "./work-thread-view": "./src/work-thread-view.ts",
+    "./prompt-corpus": "./src/prompt-corpus.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

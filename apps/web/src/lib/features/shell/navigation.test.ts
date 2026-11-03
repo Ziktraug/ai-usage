@@ -40,11 +40,12 @@ describe('Svelte application shell navigation', () => {
   test('hides business management destinations in demo while retaining Campaigns access', () => {
     const url = new URL('http://localhost/campaigns?range=all&machine=%5B%22demo%22%5D');
     const demo = mobileNavigationFor(url, 'demo');
-    expect(demo.overflow.map(({ label }) => label)).toEqual(['Campaigns']);
+    expect(demo.overflow.map(({ label }) => label)).toEqual(['Campaigns', 'Prompts']);
     expect(demo.overflow[0]?.href).toBe(`/campaigns${url.search}`);
     expect(demo.manageActive).toBe(true);
     expect(mobileNavigationFor(url, 'live').overflow.map(({ label }) => label)).toEqual([
       'Campaigns',
+      'Prompts',
       'Skills',
       'Sync',
       'Sources',

@@ -105,6 +105,15 @@ describe('Session RPC server adapter', () => {
   test('routes all five procedures through their narrow deep ports with canonical inputs', async () => {
     const calls: Array<{ kind: string; request: unknown; signal: AbortSignal | undefined }> = [];
     const dependencies: SessionRpcDependencies = {
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: (request, signal) => {
         calls.push({ kind: 'detail', request, signal });
         return Promise.resolve(detailUnavailable);
@@ -146,6 +155,15 @@ describe('Session RPC server adapter', () => {
 
   test('preserves exact-query protocol error envelopes and rejects stale identities', async () => {
     const incompatibleRouter = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
       runRevisionQuery: async () => ({ ...pageEnvelope(), revision: 'stale-revision' }),
@@ -178,6 +196,15 @@ describe('Session RPC server adapter', () => {
     };
     let invocation = 0;
     const protocolErrorRouter = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
       runRevisionQuery: () => {
@@ -193,6 +220,15 @@ describe('Session RPC server adapter', () => {
   test('sanitizes private deep-port failures and invalid local-read output', async () => {
     const privatePath = '/private/home/history.jsonl';
     const router = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: () => Promise.reject(new Error(privatePath)),
       resolveVcs: async () => ({ repositoryUrl: `file://${privatePath}`, status: 'available' }),
       runRevisionQuery: () => Promise.reject(new Error(privatePath)),
@@ -222,6 +258,15 @@ describe('Session RPC server adapter', () => {
       signalStarted = resolve;
     });
     const router = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
       runRevisionQuery: async (_kind, _request, signal) => {
@@ -251,6 +296,15 @@ describe('Session RPC server adapter', () => {
       firstStarted = resolve;
     });
     const router = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
       runRevisionQuery: async (_kind, _request, signal) => {
@@ -277,6 +331,15 @@ describe('Session RPC server adapter', () => {
 
   test('preserves unavailable trust semantics from detail and VCS owners', async () => {
     const router = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
       runRevisionQuery: async () => pageEnvelope(),
@@ -301,6 +364,15 @@ describe('Session RPC server adapter', () => {
     };
     const kinds: string[] = [];
     const router = createSessionRpcRouter({
+      getPrompts: async () => ({
+        entries: [],
+        nextCursor: null,
+        revision: 'revision-1',
+        scannedSessions: 0,
+        unavailableSessions: 0,
+        partialSessions: 0,
+        truncatedPrompts: 0,
+      }),
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
       runRevisionQuery: (kind) => {
