@@ -97,7 +97,13 @@ export const createCodexEvidenceCapture = () => {
   let ordinal = 0;
   const visit = (line: string, contextFor: (turnId: string | null) => CodexContext | null): void => {
     const event = safeJSON(line);
-    if (!isRecord(event) || event.type !== 'response_item' || !isRecord(event.payload)) {
+    if (!isRecord(event)) {
+      if (line.trim()) {
+        accumulator.omit();
+      }
+      return;
+    }
+    if (event.type !== 'response_item' || !isRecord(event.payload)) {
       return;
     }
     const payload = event.payload;
@@ -140,7 +146,7 @@ export const createCodexEvidenceCapture = () => {
     } else {
       kind = toolKind(name);
       text = argumentText(payload.arguments ?? payload.input);
-      if (callId && calls.size < SESSION_EVIDENCE_LIMITS.records) {
+      if (callId && (calls.has(callId) || calls.size < SESSION_EVIDENCE_LIMITS.records)) {
         const previous = calls.get(callId);
         calls.set(callId, { turnId: previous ? null : turnId, name: previous ? null : name });
       }
@@ -244,7 +250,7 @@ export const createClaudeEvidenceCapture = () => {
       if (seen.size < SESSION_EVIDENCE_LIMITS.records) {
         seen.set(id, signature);
       }
-      if (block.type === 'tool_use' && callId && calls.size < SESSION_EVIDENCE_LIMITS.records) {
+      if (block.type === 'tool_use' && callId && (calls.has(callId) || calls.size < SESSION_EVIDENCE_LIMITS.records)) {
         calls.set(callId, calls.has(callId) ? null : owner);
       }
       accumulator.add({
