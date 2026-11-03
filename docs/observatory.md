@@ -33,3 +33,17 @@ machine and harness. Missing, ambiguous and cyclic edges stay unresolved. The
 2D and perspective 3D views share positions, support zoom and manual rotation,
 and provide an equivalent session selector and native detail links. No automatic
 motion or claim about currently active agents is made.
+
+Campaigns also offers an optional replay of its served campaign map. Playback is
+paused initially, including for reduced-motion preferences. The cursor measures
+elapsed wall time; recorded session spans include idle gaps. At most 120 loaded
+members are displayed, with omitted counts retained. Only declared map parents
+are shown. Missing endpoints never become an invented interval.
+
+Selecting a member reads native detail through the existing exact-revision
+Session Query policy. The canonical rounds derivation and observed prompt and
+interaction timestamps feed the latest 80 events at or before the cursor.
+Coverage, truncation, report/native consistency and unavailable history remain
+visible. Other members' native histories are not scanned automatically. Opening
+the selected session uses the existing detail drawer; no token, cost or success
+metric is interpolated during playback.

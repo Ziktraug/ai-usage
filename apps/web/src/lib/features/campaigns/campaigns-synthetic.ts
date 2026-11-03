@@ -1,4 +1,5 @@
 import {
+  enrichSessionPresentationRow,
   projectSessionCampaignChildren,
   projectSessionLookup,
   projectSessionNeighbors,
@@ -6,18 +7,27 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { campaignMapFixtureRows } from '../../../campaign-map-fixture';
 import type { SessionClientAdapter } from '../../rpc/session-client';
+import { campaignReplayFixture } from './campaign-replay-fixture';
 
 export const createSyntheticCampaignClient = (): SessionClientAdapter => ({
   campaignChildren: (request) => {
     const data = projectSessionCampaignChildren(campaignMapFixtureRows, request);
     return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision: data.revision });
   },
-  detail: () =>
-    Promise.resolve({
-      message: 'Session analysis is unavailable for synthetic campaigns.',
-      reason: 'unsupported',
-      status: 'unavailable',
-    }),
+  detail: (request) => {
+    const row = campaignMapFixtureRows.find(
+      (candidate) => enrichSessionPresentationRow(candidate).rowId === request.rowId,
+    );
+    return Promise.resolve(
+      row?.source?.sourceSessionId === 'forecast-root'
+        ? campaignReplayFixture(request.revision)
+        : {
+            message: 'Session analysis is unavailable for this synthetic session.',
+            reason: 'unsupported',
+            status: 'unavailable',
+          },
+    );
+  },
   lookup: (request) => {
     const data = projectSessionLookup(campaignMapFixtureRows, request);
     return Promise.resolve({ data, ok: true, requestFingerprint: data.requestFingerprint, revision: data.revision });
