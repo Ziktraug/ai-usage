@@ -84,6 +84,7 @@
     return { report, session };
   });
   let navigationError = $state<string | null>(null);
+  let replayOpen = $state(false);
   let previousKey = $state<QueryKey>();
   let inspected = $state<{ revision: string; generatedAt: string } | null>(null);
   let topDepth = $state(1);
@@ -1137,6 +1138,22 @@
     {/if}
     {#if items.length === 0 && !isRefreshing}
       <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
+    {/if}
+    {#if timelineMap && mapRevision}
+      <button class={ghostButton} onclick={() => (replayOpen = !replayOpen)} type="button">
+        {replayOpen ? 'Hide campaign replay' : 'Show campaign replay'}
+      </button>
+      {#if replayOpen}
+        {#key JSON.stringify([timelineMap.campaignKey, mapRevision])}
+          {#await import('./campaign-replay.svelte')}
+            <p role="status">Loading campaign replay…</p>
+          {:then module}
+            <module.default client={clients.session} map={timelineMap} onOpen={openSession} revision={mapRevision} />
+          {:catch}
+            <p role="alert">The replay could not load. Close and reopen it to retry.</p>
+          {/await}
+        {/key}
+      {/if}
     {/if}
     <SessionDetailQuerySlot
       client={clients.session}
