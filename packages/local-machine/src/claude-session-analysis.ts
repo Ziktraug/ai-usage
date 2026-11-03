@@ -12,6 +12,7 @@ import {
 import { readLocalGitRepository } from './local-git';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 import { resolvePaths } from './platform-paths';
+import { createClaudeEvidenceCapture } from './session-evidence';
 import { safeJSON } from './text';
 
 const SAFE_CLAUDE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,511}$/;
@@ -86,6 +87,7 @@ const findClaudeTranscript = (
 
 export const readClaudeSessionAnalysis = (
   sourceSessionId: string,
+  captureEvidence = false,
 ): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     if (!SAFE_CLAUDE_SESSION_ID.test(sourceSessionId)) {
@@ -97,7 +99,8 @@ export const readClaudeSessionAnalysis = (
       return null;
     }
     const records: unknown[] = [];
-    yield* storage.readLines(
+    let invalidRecords = 0;
+    const nativeRead = yield* storage.readLines(
       transcript,
       (line) => {
         if (!line) {
@@ -106,6 +109,8 @@ export const readClaudeSessionAnalysis = (
         const parsed = safeJSON(line);
         if (parsed) {
           records.push(parsed);
+        } else {
+          invalidRecords++;
         }
       },
       { maxBytes: HISTORY_JSONL_MAX_BYTES, maxLineBytes: HISTORY_LINE_MAX_BYTES },
@@ -120,10 +125,24 @@ export const readClaudeSessionAnalysis = (
       return null;
     }
     const repository = readLocalGitRepository(initial.source.sourcePath);
-    const facts = repository
-      ? parseClaudeSessionFacts({ ...input, repository, sourcePathRepository: readLocalGitRepository })
-      : initial;
-    return facts ? { detail: facts.detailFacts, projection: facts.projection } : null;
+    const evidence = captureEvidence ? createClaudeEvidenceCapture() : null;
+    evidence?.omit(nativeRead.oversizedLines + invalidRecords);
+    const facts =
+      repository || evidence
+        ? parseClaudeSessionFacts({
+            ...input,
+            repository,
+            sourcePathRepository: readLocalGitRepository,
+            ...(evidence ? { onEvidenceRecord: evidence.visit } : {}),
+          })
+        : initial;
+    return facts
+      ? {
+          detail: facts.detailFacts,
+          projection: facts.projection,
+          ...(evidence ? { evidence: evidence.finish(facts.detailFacts) } : {}),
+        }
+      : null;
   });
 
 const MAX_CLAUDE_AGENT_META_FILES = 512;

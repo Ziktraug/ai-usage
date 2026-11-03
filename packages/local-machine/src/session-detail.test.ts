@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
-import type { LocalHistoryStorage } from './local-history';
+import { createLocalHistoryStorage, type LocalHistoryStorage } from './local-history';
 import { readLocalSessionAnalysis } from './session-detail';
 import { seedHarnessHome } from './testing/harness-home';
 import { TestMemoryStorage } from './testing/memory-storage';
@@ -116,4 +116,37 @@ describe('local session analysis', () => {
     expect(controller.signal.reason).toBe(reason);
     expect(finalized).toBe(true);
   });
+});
+
+test('evidence is opt-in and reads native Claude and Codex traces without writes', async () => {
+  for (const harnessKey of ['claude', 'codex'] as const) {
+    const homePath = await mkdtemp(path.join(tmpdir(), `native-evidence-${harnessKey}-`));
+    roots.push(homePath);
+    const fixture = await seedHarnessHome(homePath, { harnesses: [harnessKey] });
+    const sourceSessionId = harnessKey === 'codex' ? fixture.ids.codexRoot : fixture.ids.claude;
+    const request = { harnessKey, homePath, sourceSessionId };
+    const before = await snapshotHome(homePath);
+    expect((await readLocalSessionAnalysis(request))?.evidence).toBeUndefined();
+    const analysis = await readLocalSessionAnalysis(request, { captureEvidence: true });
+    expect(analysis?.evidence?.sourceSessionId).toBe(sourceSessionId);
+    expect(analysis?.evidence?.records.length).toBeGreaterThan(0);
+    const storage = createLocalHistoryStorage(homePath);
+    const withDroppedLine: LocalHistoryStorage = {
+      ...storage,
+      readLines: (...args) =>
+        storage
+          .readLines(...args)
+          .pipe(Effect.map((result) => ({ ...result, oversizedLines: result.oversizedLines + 1 }))),
+    };
+    const incomplete = await readLocalSessionAnalysis(request, { captureEvidence: true, storage: withDroppedLine });
+    expect(incomplete?.evidence?.coverage.partial).toBe(true);
+    expect(incomplete?.evidence?.coverage.omittedRecords).toBeGreaterThan(0);
+    const turns = new Set(analysis?.detail.turns.map((turn) => turn.index));
+    for (const record of analysis?.evidence?.records ?? []) {
+      if (record.turnIndex !== null) {
+        expect(turns.has(record.turnIndex)).toBe(true);
+      }
+    }
+    expect(await snapshotHome(homePath)).toEqual(before);
+  }
 });

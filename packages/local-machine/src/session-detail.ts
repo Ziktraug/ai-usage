@@ -16,6 +16,7 @@ export interface LocalSessionAnalysisRequest {
 }
 
 export interface LocalSessionAnalysisOptions {
+  readonly captureEvidence?: boolean;
   readonly signal?: AbortSignal;
   readonly storage?: LocalHistoryStorageService;
 }
@@ -23,7 +24,7 @@ export interface LocalSessionAnalysisOptions {
 const sessionAnalysisReaders = {
   claude: readClaudeSessionAnalysis,
   codex: readCodexSessionAnalysis,
-  opencode: readOpenCodeSessionAnalysis,
+  opencode: (sourceSessionId: string, _captureEvidence = false) => readOpenCodeSessionAnalysis(sourceSessionId),
 } satisfies Record<SessionDetailHarnessKey, typeof readCodexSessionAnalysis>;
 
 export const readLocalSessionAnalysis = (
@@ -32,7 +33,7 @@ export const readLocalSessionAnalysis = (
 ): Promise<LocalSessionAnalysis | null> => {
   const storage = options.storage ?? createLocalHistoryStorage(request.homePath);
   return Effect.runPromise(
-    sessionAnalysisReaders[request.harnessKey](request.sourceSessionId).pipe(
+    sessionAnalysisReaders[request.harnessKey](request.sourceSessionId, options.captureEvidence ?? false).pipe(
       Effect.provideService(LocalHistoryStorage, storage),
     ),
     options.signal === undefined ? undefined : { signal: options.signal },
