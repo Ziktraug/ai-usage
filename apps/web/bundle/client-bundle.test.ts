@@ -268,7 +268,7 @@ describe('report app client bundle', () => {
     ) as { chunks: { fileName: string; moduleIds: string[] }[] };
     for (const moduleName of ['observatory.ts', 'constellation.ts', 'focused-report-result.ts']) {
       const chunks = manifest.chunks.filter((chunk) =>
-        chunk.moduleIds.includes(`../../packages/report-core/src/${moduleName}`),
+        chunk.moduleIds.some((moduleId) => moduleId.endsWith(`/packages/report-core/src/${moduleName}`)),
       );
       expect(chunks.length).toBeGreaterThan(0);
       expect(chunks.filter((chunk) => initialAssets.has(chunk.fileName)).map((chunk) => chunk.fileName)).toEqual([]);
