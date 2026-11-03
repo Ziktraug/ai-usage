@@ -50,7 +50,8 @@ test('constellation rotates in 3D, filters projects and opens a selected native 
   await expect(point).not.toHaveAttribute('cx', before!);
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption({ index: 1 });
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
-  await expect(constellation).toBeVisible();
+  await expect(page).toHaveURL((url) => url.searchParams.get('filters') === '{"project":"world state"}');
+  await expect(points).toHaveCount(5);
   await page
     .getByRole('combobox', { name: 'Inspect a session', exact: true })
     .selectOption({ label: 'world-state · Define the data model' });
