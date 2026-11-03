@@ -521,6 +521,13 @@
       icon="overview"
       label="Observatory"
     />
+    <NavigationLink
+      active={page.url.pathname === '/prompts'}
+      class={linkClass(page.url.pathname === '/prompts')}
+      href="/prompts"
+      icon="sessions"
+      label="Prompts"
+    />
   </nav>
   {#if showManagement}
     <nav aria-label="Manage destinations" class={cx(navigationGroup, navigationGroupDivider)}>

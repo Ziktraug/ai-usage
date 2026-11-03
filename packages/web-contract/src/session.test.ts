@@ -28,13 +28,14 @@ const queryRequest = {
 } as const;
 
 describe('Session contract', () => {
-  test('defines five POST query procedures with their exact closed public error families', () => {
+  test('defines bounded POST query procedures with their exact closed public error families', () => {
     expect(Object.keys(sessionContract).sort()).toEqual([
       'campaignChildren',
       'detail',
       'lookup',
       'neighbors',
       'page',
+      'prompts',
       'vcs',
     ]);
     expect(sessionContract.page['~orpc'].route).toEqual({ method: 'POST', path: '/session/page' });

@@ -1,3 +1,8 @@
+import {
+  type PromptCorpusRequest,
+  PromptCorpusRevisionExpiredError,
+  parsePromptCorpusPage,
+} from '@ai-usage/report-core/prompt-corpus';
 import { parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenServerResult,
@@ -29,6 +34,7 @@ interface SessionRevisionQueryInputByKind {
 
 export interface SessionRpcDependencies {
   readonly getDetail: (request: SessionDetailRequest, signal: AbortSignal | undefined) => Promise<unknown>;
+  readonly getPrompts: (request: PromptCorpusRequest, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly resolveVcs: (request: SessionVcsResolveRequest, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly runRevisionQuery: <Kind extends SessionRevisionQueryKind>(
     kind: Kind,
@@ -92,6 +98,23 @@ export const createSessionRpcRouter = (dependencies: SessionRpcDependencies) => 
   const session = implement(sessionContract);
 
   return {
+    prompts: session.prompts.handler(async ({ errors, input, signal }) => {
+      throwIfAborted(signal);
+      try {
+        const value = await dependencies.getPrompts(input, signal);
+        throwIfAborted(signal);
+        return parsePromptCorpusPage(value);
+      } catch (error) {
+        rethrowCancellation(error, signal);
+        if (error instanceof PromptCorpusRevisionExpiredError) {
+          throw errors.RevisionExpired({ data: { reason: 'revision-expired' }, message: error.message });
+        }
+        throw errors.Unavailable({
+          data: { reason: 'prompt-corpus-unavailable' },
+          message: 'The prompt corpus could not be read safely.',
+        });
+      }
+    }),
     campaignChildren: session.campaignChildren.handler(
       async ({ errors, input, signal }) =>
         await runExactQuery(

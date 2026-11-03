@@ -37,15 +37,16 @@ describe('Svelte application shell navigation', () => {
     expect(navigation.primary.filter(({ active }) => active).map(({ label }) => label)).toEqual(['Work']);
   });
 
-  test('hides business management destinations in demo while retaining Campaigns and Observatory access', () => {
+  test('hides business management destinations in demo while retaining exploration access', () => {
     const url = new URL('http://localhost/campaigns?range=all&machine=%5B%22demo%22%5D');
     const demo = mobileNavigationFor(url, 'demo');
-    expect(demo.overflow.map(({ label }) => label)).toEqual(['Campaigns', 'Observatory']);
+    expect(demo.overflow.map(({ label }) => label)).toEqual(['Campaigns', 'Observatory', 'Prompts']);
     expect(demo.overflow[0]?.href).toBe(`/campaigns${url.search}`);
     expect(demo.manageActive).toBe(true);
     expect(mobileNavigationFor(url, 'live').overflow.map(({ label }) => label)).toEqual([
       'Campaigns',
       'Observatory',
+      'Prompts',
       'Skills',
       'Sync',
       'Sources',

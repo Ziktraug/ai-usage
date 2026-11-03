@@ -1,3 +1,4 @@
+import { parsePromptCorpusPage, parsePromptCorpusRequest } from '@ai-usage/report-core/prompt-corpus';
 import { parseSessionDetailRequest, parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
@@ -116,6 +117,16 @@ export const sessionVcsResolveResponseSchema = parserSchema(
 );
 
 export const sessionContract = {
+  prompts: rpcProcedure({
+    errors: { ...localSessionErrors, RevisionExpired: publicErrorMap.RevisionExpired },
+    method: 'POST',
+    path: '/session/prompts',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
+    .input(parserSchema(parsePromptCorpusRequest, 'Expected a bounded prompt scan.'))
+    .output(parserSchema(parsePromptCorpusPage, 'Expected a bounded prompt corpus.')),
   campaignChildren: rpcProcedure({
     errors: exactSessionErrors,
     method: 'POST',
@@ -179,6 +190,8 @@ export const sessionContract = {
 } as const;
 
 export type SessionContractClient = ContractRouterClient<typeof sessionContract>;
+
+export type { PromptCorpusEntry, PromptCorpusPage, PromptCorpusRequest } from '@ai-usage/report-core/prompt-corpus';
 export type { SessionDetailRequest, SessionDetailResponse } from '@ai-usage/report-core/session-detail';
 export type {
   SessionCampaignChildrenRequest,

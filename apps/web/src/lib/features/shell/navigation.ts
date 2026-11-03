@@ -110,6 +110,7 @@ export const mobileNavigationFor = (url: URL, runtimeMode: RuntimeMode) => {
       label: 'Observatory',
       active: url.pathname === '/observatory',
     },
+    { href: '/prompts', icon: 'sessions', label: 'Prompts', active: url.pathname === '/prompts' },
     ...(runtimeMode === 'demo'
       ? []
       : shellManagementDestinations.map((destination) => ({

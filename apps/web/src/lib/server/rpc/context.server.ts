@@ -257,6 +257,11 @@ const createReportDependencies = (request: Request): WebRpcRouterDependencies['r
 });
 
 const createSessionDependencies = (): WebRpcRouterDependencies['session'] => ({
+  getPrompts: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/prompt-corpus.server');
+      return await server.readPromptCorpusForServer(input, undefined, signal);
+    }),
   getDetail: async (input, signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/session-detail.server');
