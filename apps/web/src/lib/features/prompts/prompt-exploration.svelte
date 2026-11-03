@@ -100,7 +100,7 @@
     {corpus.analyzed}
     prompts · {corpus.sessions} distinct sessions.
     {complete
-      ? 'All pages in the selected corpusScope are loaded.'
+      ? 'All pages in the selected scope are loaded.'
       : 'Only loaded pages are included; load more prompts to extend the sample.'}
     {corpus.excluded}
     command or context-only prompts excluded; {corpus.clipped} partial or clipped prompts.
