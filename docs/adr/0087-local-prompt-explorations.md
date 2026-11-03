@@ -42,6 +42,13 @@ Accepted Memory and generated Session accounts remain retired (ADR 0084).
   corpus provenance. Changing the loaded corpus invalidates the analysis. The
   engine remains the sole usage-store writer; no new store, service or Memory
   lifecycle is introduced.
+- Seven editorial practice groupings reuse the included semantic families and
+  explicit vocabulary. Their dossier and comparison stay descriptive: adjacent
+  prompt ordinals establish follow-ups, while recorded results retain native
+  canonical turn attribution. Each comparison column requests its own bounded
+  evidence through the Session authority; changing its session resets the request.
+  Filter scope, source IDs, exclusions and notes are exportable. The convergence
+  of all fourteen studies is documented in [Prompt explorations](../prompt-explorations.md).
 
 ## Consequences
 

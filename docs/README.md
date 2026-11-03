@@ -28,6 +28,8 @@ disagree with living reference, the living reference wins.
   feature overview.
 - [`session-analysis-sources.md`](session-analysis-sources.md) — what each
   harness can truthfully provide, per metric.
+- [`prompt-explorations.md`](prompt-explorations.md) — bounded prompt, semantic
+  and editorial practice exploration, including the One Shot A–N destinations.
 - [`provider-quota-data-sources.md`](provider-quota-data-sources.md) — quota
   windows and supported sources per provider (research, re-verified
   2026-08-08).

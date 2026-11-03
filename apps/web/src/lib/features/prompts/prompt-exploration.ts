@@ -196,10 +196,11 @@ export const entryBreakdown = (matches: readonly ExplorationPrompt[], entries: r
 export const motifBreakdown = (motif: PromptMotif, entries: readonly ExplorationPrompt[]) =>
   entryBreakdown(motif.entries, entries);
 
-export const explorationDraft = (motif: PromptMotif, revision: string, notes: string): string =>
+export const explorationDraft = (motif: PromptMotif, revision: string, notes: string, corpusScope = ''): string =>
   [
     '# Prompt observation',
     `Report revision: ${revision}`,
+    `Corpus filters: ${corpusScope || 'Not specified'}`,
     `Formulation: ${motif.text}`,
     `Observed in ${motif.sessions} distinct loaded sessions. This is a bounded sample, not a success measure.`,
     '\n## Sources',
