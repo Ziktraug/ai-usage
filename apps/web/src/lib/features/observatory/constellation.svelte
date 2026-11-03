@@ -15,6 +15,7 @@
   const projected = $derived(projectConstellation(points, mode, yaw, pitch, zoom));
   const byId = $derived(new Map(projected.map((point) => [point.node.id, point])));
   const selected = $derived(map.nodes.find((node) => node.id === selectedId) ?? map.nodes[0]);
+  const selectedParent = $derived(map.nodes.find((node) => node.id === selected?.parentId));
   const projects = $derived([
     ...new Map(
       projected.map((point) => [
@@ -160,6 +161,19 @@
         · {fmtCompact(selected.tokens)} tokens{selected.partial ? ' · incomplete usage' : ''}</span
       ><a class={ghostButton} href={sessionHref(selected.id)}>Open selected session</a>
     </div>
+    {#if selectedParent}
+      <p class="muted">
+        Declared parent:
+        <a aria-label={`Open declared parent ${selectedParent.title}`} href={sessionHref(selectedParent.id)}
+          >{selectedParent.title}</a
+        >
+      </p>
+    {:else}
+      <p class="muted">
+        No resolved declared parent in this view. The parent may be undeclared, outside this selection or unresolved;
+        proximity supplies no relationship.
+      </p>
+    {/if}
   {/if}
 </section>
 
