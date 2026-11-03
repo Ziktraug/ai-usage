@@ -29,3 +29,21 @@ export const promptCorpusQueryOptions = (
     },
   });
 };
+
+export const PROMPT_CORPUS_CLIENT_PAGE_LIMIT = 40;
+
+/** The Query owner controls continuation and the document's retained corpus budget. */
+export const continuePromptCorpus = async (query: {
+  data: { pages: readonly PromptCorpusPage[] } | undefined;
+  fetchNextPage: () => Promise<unknown>;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+}): Promise<void> => {
+  if (
+    query.hasNextPage &&
+    !query.isFetchingNextPage &&
+    (query.data?.pages.length ?? 0) < PROMPT_CORPUS_CLIENT_PAGE_LIMIT
+  ) {
+    await query.fetchNextPage();
+  }
+};

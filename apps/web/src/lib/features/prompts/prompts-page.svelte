@@ -8,7 +8,11 @@
   import { browser } from '$app/env';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { promptCorpusQueryOptions } from '../../query/options/prompts';
+  import {
+    continuePromptCorpus,
+    PROMPT_CORPUS_CLIENT_PAGE_LIMIT,
+    promptCorpusQueryOptions,
+  } from '../../query/options/prompts';
   import { optionalSessionLookupQueryOptions } from '../../query/options/session';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createSessionClientAdapter } from '../../rpc/session-client';
@@ -240,14 +244,14 @@
     {#if corpus.hasNextPage}
       <button
         class={ghostButton}
-        disabled={corpus.isFetchingNextPage || pages.length >= 40}
-        onclick={() => corpus.fetchNextPage()}
+        disabled={corpus.isFetchingNextPage || pages.length >= PROMPT_CORPUS_CLIENT_PAGE_LIMIT}
+        onclick={() => continuePromptCorpus(corpus)}
         type="button"
       >
         {corpus.isFetchingNextPage ? 'Searching…' : 'Continue searching histories'}
       </button>
     {/if}
-    {#if pages.length >= 40}
+    {#if pages.length >= PROMPT_CORPUS_CLIENT_PAGE_LIMIT}
       <p class={muted}>
         This view reached its 40-page memory budget. Narrow the project, harness or period before starting another
         search.
