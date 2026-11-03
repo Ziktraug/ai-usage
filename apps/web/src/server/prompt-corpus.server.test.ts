@@ -151,3 +151,57 @@ test('expired revisions remain distinct from unavailable native history', async 
     ),
   ).rejects.toThrow('revision has expired');
 });
+
+test('project text matches the displayed label rather than the normalized internal project key', async () => {
+  const { promptRequestForUrl } = await import('../lib/features/prompts/prompts-model');
+  const input = promptRequestForUrl(new URL('http://localhost/prompts?project=world-state'), 'r1');
+  const result = await readPromptCorpusForServer(input, {
+    readPage: page,
+    readDetail: (r) => Promise.resolve(sessionDetailFixtureResponse(r.revision, r.rowId)),
+  });
+  expect(result.entries.length).toBeGreaterThan(0);
+  expect(result.entries.every((entry) => entry.project === 'world-state')).toBe(true);
+});
+test('matching a child project never makes its nonmatching root prompts eligible', async () => {
+  let reads = 0;
+  const fixtures = campaignMapFixtureRows.map((row) => ({ ...row, project: row.subagent ? 'child' : 'root' }));
+  const input = {
+    query: { ...query, pageSize: 12, filters: { ...query.filters, fields: { project: 'child' } } },
+    cursor: null,
+    search: '',
+    includeUndeclared: false,
+  };
+  const result = await readPromptCorpusForServer(input, {
+    readPage: (q) => {
+      const data = projectSessionPage(fixtures, q);
+      return Promise.resolve({ ok: true, data, revision: q.revision, requestFingerprint: data.requestFingerprint });
+    },
+    readDetail: (r) => {
+      reads++;
+      return Promise.resolve(sessionDetailFixtureResponse(r.revision, r.rowId));
+    },
+  });
+  expect(result.entries).toEqual([]);
+  expect(reads).toBe(0);
+});
+
+test('internal project keys stay canonical and exact label changes invalidate continuation', async () => {
+  const input = {
+    query: { ...query, filters: { ...query.filters, fields: { project: 'world state' } } },
+    cursor: null,
+    search: '',
+    includeUndeclared: false,
+  };
+  const result = await readPromptCorpusForServer(input, {
+    readPage: page,
+    readDetail: (r) => Promise.resolve(sessionDetailFixtureResponse(r.revision, r.rowId)),
+  });
+  expect(result.entries.length).toBeGreaterThan(0);
+  expect(result.nextCursor).not.toBeNull();
+  await expect(
+    readPromptCorpusForServer(
+      { ...input, projectLabel: 'World-State', cursor: result.nextCursor },
+      { readPage: page, readDetail: (r) => Promise.resolve(sessionDetailFixtureResponse(r.revision, r.rowId)) },
+    ),
+  ).rejects.toThrow('another search');
+});
