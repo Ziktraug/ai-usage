@@ -1414,3 +1414,19 @@ describe('focused report SQLite queries', () => {
     );
   });
 });
+
+test('observatory joint distribution uses all matching canonical rows and keeps its own request identity', async () => {
+  const { database } = await fixture();
+  try {
+    const request = { query: overviewRequest.query, includeObservatory: true as const };
+    const result = executeFocusedReportQuery(database, 'breakdown', request);
+    expect(result).toEqual(projectFocusedBreakdown(rows, support, request));
+    expect(result).toEqual(parseFocusedReportQueryResult('breakdown', result, request));
+    expect(result).not.toHaveProperty('rows');
+    expect(() => parseFocusedReportQueryResult('breakdown', result, { query: request.query })).toThrow();
+    const ordinary = executeFocusedReportQuery(database, 'breakdown', { query: request.query });
+    expect(ordinary).not.toHaveProperty('tokenFlow');
+  } finally {
+    database.close();
+  }
+});

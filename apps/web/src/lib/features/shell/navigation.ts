@@ -104,6 +104,12 @@ export const mobileNavigationFor = (url: URL, runtimeMode: RuntimeMode) => {
   ];
   const overflow: readonly MobileDestination[] = [
     { href: `/campaigns${url.search}`, icon: 'campaigns', label: 'Campaigns', active: url.pathname === '/campaigns' },
+    {
+      href: `/observatory${url.search}`,
+      icon: 'overview',
+      label: 'Observatory',
+      active: url.pathname === '/observatory',
+    },
     ...(runtimeMode === 'demo'
       ? []
       : shellManagementDestinations.map((destination) => ({

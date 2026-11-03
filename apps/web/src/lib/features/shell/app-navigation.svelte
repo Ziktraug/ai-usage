@@ -514,6 +514,13 @@
       icon="campaigns"
       label="Campaigns"
     />
+    <NavigationLink
+      active={page.url.pathname === '/observatory'}
+      class={linkClass(page.url.pathname === '/observatory')}
+      href={`/observatory${page.url.search}`}
+      icon="overview"
+      label="Observatory"
+    />
   </nav>
   {#if showManagement}
     <nav aria-label="Manage destinations" class={cx(navigationGroup, navigationGroupDivider)}>
