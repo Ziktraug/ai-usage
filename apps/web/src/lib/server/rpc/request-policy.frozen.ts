@@ -259,6 +259,16 @@ export const frozenRequestPolicyBehaviour = {
       transport: 'query',
       trustedLocal: 'required',
     },
+    '/session/evidence': {
+      applicationErrorFamilies: ['Forbidden', 'ForbiddenDemo', 'InvalidInput', 'Unavailable'],
+      csrf: 'not-required',
+      demo: 'forbidden',
+      method: 'POST',
+      requestSize: 'bounded-rpc-json',
+      responseSize: 'bounded-json',
+      transport: 'query',
+      trustedLocal: 'required',
+    },
     '/session/prompts': {
       applicationErrorFamilies: ['Forbidden', 'ForbiddenDemo', 'InvalidInput', 'RevisionExpired', 'Unavailable'],
       csrf: 'not-required',

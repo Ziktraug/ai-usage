@@ -10,6 +10,11 @@ import {
   type SessionDetailResponse,
   supportsSessionDetailHarness,
 } from '@ai-usage/report-core/session-detail';
+import {
+  parseSessionEvidenceResponse,
+  type SessionEvidence,
+  type SessionEvidenceResponse,
+} from '@ai-usage/report-core/session-evidence';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { authorizeLocalSessionAnchor } from './local-session-authority.server';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
@@ -25,12 +30,12 @@ export interface SessionDetailServerDependencies {
   resolveAnchor: (request: SessionDetailRequest) => Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
 }
 
-const defaultDependencies = (signal?: AbortSignal): SessionDetailServerDependencies => ({
+const defaultDependencies = (signal?: AbortSignal, captureEvidence = false): SessionDetailServerDependencies => ({
   readAnalysis: async (harnessKey, sourceSessionId, requestSignal) => {
     signal?.throwIfAborted();
     const analysis = await readLocalSessionAnalysis(
       { harnessKey, sourceSessionId },
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { captureEvidence, ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
     );
     signal?.throwIfAborted();
     return analysis;
@@ -119,4 +124,37 @@ export const getLocalSessionDetailForServer = async (
       `The local ${historyLabels[anchor.harnessKey]} history could not be read safely.`,
     );
   }
+};
+
+/** Same revision, row provenance and local-machine authority as the rounds reader. */
+export const getLocalSessionEvidenceForServer = async (
+  input: SessionDetailRequest,
+  dependencies?: SessionDetailServerDependencies,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<SessionEvidenceResponse> => {
+  const active = dependencies ?? defaultDependencies(options.signal, true);
+  let evidence: SessionEvidence | undefined;
+  const response = await getLocalSessionDetailForServer(
+    input,
+    {
+      ...active,
+      readAnalysis: async (harnessKey, sourceSessionId, signal) => {
+        const analysis = await active.readAnalysis(harnessKey, sourceSessionId, signal);
+        evidence = analysis?.evidence;
+        return analysis;
+      },
+    },
+    options,
+  );
+  if (response.status === 'unavailable') {
+    return response;
+  }
+  if (!evidence) {
+    return {
+      status: 'unavailable',
+      reason: 'unsupported',
+      message: 'Recorded result traces are not supported for this harness.',
+    };
+  }
+  return parseSessionEvidenceResponse({ status: 'available', revision: input.revision, evidence });
 };

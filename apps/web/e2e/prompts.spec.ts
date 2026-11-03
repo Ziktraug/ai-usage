@@ -35,6 +35,18 @@ test('prompt result opens the existing rounds reader', async ({ page }) => {
   await expect(page.getByRole('dialog').getByRole('button', { name: firstRoundPattern })).toBeVisible();
 });
 
+test('recorded results are requested explicitly and rendered as text', async ({ page }) => {
+  await page.goto('/prompts');
+  const response = page.getByText('Synthetic recorded response: the parser now rejects an invalid date.', {
+    exact: true,
+  });
+  await expect(response).toHaveCount(0);
+  await page.getByRole('button', { name: 'Read recorded results', exact: true }).first().click();
+  await page.getByText('Recorded response · Canonical turn 1', { exact: true }).first().click();
+  await expect(response.first()).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
 test('Claude selection and exact project label share canonical filter semantics', async ({ page }) => {
   await page.goto('/prompts');
   await page.getByRole('combobox', { name: 'Harness', exact: true }).selectOption({ label: 'Claude Code' });

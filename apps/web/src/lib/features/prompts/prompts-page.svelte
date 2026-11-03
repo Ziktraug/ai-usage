@@ -25,6 +25,7 @@
   import type { PromptsPageData } from './prompts-load';
   import { promptRequestForUrl } from './prompts-model';
   import { syntheticPromptCorpus } from './prompts-synthetic';
+  import SessionEvidence from './session-evidence.svelte';
 
   let { data }: { data: PromptsPageData } = $props();
   let mounted = $state(false);
@@ -243,6 +244,7 @@
               Read session rounds
             </button>
           </div>
+          <SessionEvidence revision={data.revision} rowId={entry.rowId} synthetic={data.mode !== 'live'} />
         </li>
       {/each}
     </ol>

@@ -87,6 +87,8 @@ export interface ClaudeSessionInput {
   /** Sidecars that existed but could not be read within budget. */
   agentMetasUnreadable?: number;
   isAgentFile?: boolean;
+  /** Opt-in native evidence, attributed by this parser's canonical ancestry model. */
+  onEvidenceRecord?: (record: Record<string, unknown>, recordIndex: number, turnIndex: number | null) => void;
   records: readonly unknown[];
   repository: SessionVcsRepository | null;
   /**
@@ -2004,6 +2006,23 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
   );
   const turnFacts = serializeClaudeTurns(mutableTurns.turnsByKey);
   const { detailTurns } = turnFacts;
+  if (input.onEvidenceRecord) {
+    const acceptedIndexes = new Set(events.map((event) => event.index));
+    for (const [index, record] of input.records.entries()) {
+      if (!acceptedIndexes.has(index) && isRecord(record)) {
+        input.onEvidenceRecord(record, index, null);
+      }
+    }
+    for (const event of events) {
+      const attributable = event.uuid && !graph.conflictingUuids.has(event.uuid);
+      const key =
+        attributable && event.uuid
+          ? (assistantFacts.assistantTurnKey.get(event.uuid) ?? assistantFacts.resolveTurnKey(event))
+          : null;
+      const turnIndex = key === null ? null : (turnFacts.turnIndexByKey.get(key) ?? null);
+      input.onEvidenceRecord(event.record, event.index, turnIndex);
+    }
+  }
   const turnsPartial =
     promptFacts.partial || assistantFacts.partial || mutableTurns.partial || timingPartial || turnFacts.partial;
   let { rejectedMetricRecords } = assistantFacts;

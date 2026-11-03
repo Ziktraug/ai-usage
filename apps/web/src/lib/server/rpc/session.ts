@@ -4,6 +4,7 @@ import {
   parsePromptCorpusPage,
 } from '@ai-usage/report-core/prompt-corpus';
 import { parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
+import { parseSessionEvidenceResponse } from '@ai-usage/report-core/session-evidence';
 import {
   parseSessionCampaignChildrenServerResult,
   parseSessionLookupServerResult,
@@ -34,6 +35,7 @@ interface SessionRevisionQueryInputByKind {
 
 export interface SessionRpcDependencies {
   readonly getDetail: (request: SessionDetailRequest, signal: AbortSignal | undefined) => Promise<unknown>;
+  readonly getEvidence: (request: SessionDetailRequest, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly getPrompts: (request: PromptCorpusRequest, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly resolveVcs: (request: SessionVcsResolveRequest, signal: AbortSignal | undefined) => Promise<unknown>;
   readonly runRevisionQuery: <Kind extends SessionRevisionQueryKind>(
@@ -98,6 +100,15 @@ export const createSessionRpcRouter = (dependencies: SessionRpcDependencies) => 
   const session = implement(sessionContract);
 
   return {
+    evidence: session.evidence.handler(
+      async ({ errors, input, signal }) =>
+        await runLocalRead(input, signal, dependencies.getEvidence, parseSessionEvidenceResponse, () =>
+          errors.Unavailable({
+            data: { reason: 'session-evidence-unavailable' },
+            message: 'Recorded result traces could not be read safely.',
+          }),
+        ),
+    ),
     prompts: session.prompts.handler(async ({ errors, input, signal }) => {
       throwIfAborted(signal);
       try {

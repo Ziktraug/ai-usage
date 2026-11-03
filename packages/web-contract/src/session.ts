@@ -1,5 +1,6 @@
 import { parsePromptCorpusPage, parsePromptCorpusRequest } from '@ai-usage/report-core/prompt-corpus';
 import { parseSessionDetailRequest, parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
+import { parseSessionEvidenceResponse } from '@ai-usage/report-core/session-evidence';
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionLookupRequest,
@@ -117,6 +118,16 @@ export const sessionVcsResolveResponseSchema = parserSchema(
 );
 
 export const sessionContract = {
+  evidence: rpcProcedure({
+    errors: localSessionErrors,
+    method: 'POST',
+    path: '/session/evidence',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    transport: 'query',
+  })
+    .input(sessionDetailRequestSchema)
+    .output(parserSchema(parseSessionEvidenceResponse, 'Expected bounded native result evidence.')),
   prompts: rpcProcedure({
     errors: { ...localSessionErrors, RevisionExpired: publicErrorMap.RevisionExpired },
     method: 'POST',

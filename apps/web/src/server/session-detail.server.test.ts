@@ -7,7 +7,7 @@ import type {
 } from '@ai-usage/report-core/session-detail';
 import { sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
 import type { SessionDetailServerDependencies } from './session-detail.server';
-import { getLocalSessionDetailForServer } from './session-detail.server';
+import { getLocalSessionDetailForServer, getLocalSessionEvidenceForServer } from './session-detail.server';
 
 const request = { revision: 'revision-a', rowId: 'row-a' };
 const tokens = { cacheRead: 0, cacheWrite: 0, input: 10, output: 5, total: 15 };
@@ -280,4 +280,37 @@ describe('local session detail server', () => {
     expect(observedSignal).toBe(controller.signal);
     expect(await outcome).toBe(reason);
   });
+});
+
+test('result evidence uses the same local authority before reading any native transcript', async () => {
+  let reads = 0;
+  const evidence = {
+    sourceSessionId: detail.sourceSessionId,
+    records: [],
+    coverage: { omittedRecords: 0, partial: false, unattributedRecords: 0 },
+  };
+  const readAnalysis = () => {
+    reads++;
+    return Promise.resolve({ ...analysis, evidence });
+  };
+  expect(
+    await getLocalSessionEvidenceForServer(
+      request,
+      dependencies({ readAnalysis, readMachine: () => Promise.resolve({ id: 'another-machine' }) }),
+    ),
+  ).toMatchObject({ status: 'unavailable', reason: 'not-local' });
+  expect(reads).toBe(0);
+  expect(await getLocalSessionEvidenceForServer(request, dependencies({ readAnalysis }))).toEqual({
+    status: 'available',
+    revision: request.revision,
+    evidence,
+  });
+  expect(reads).toBe(1);
+  await expect(
+    getLocalSessionEvidenceForServer(
+      { ...request, path: '/private/history' } as typeof request,
+      dependencies({ readAnalysis }),
+    ),
+  ).rejects.toThrow();
+  expect(reads).toBe(1);
 });

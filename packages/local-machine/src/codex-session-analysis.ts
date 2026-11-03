@@ -30,6 +30,7 @@ import {
   type LocalHistoryStorage as LocalHistoryStorageService,
 } from './local-history';
 import { firstExisting } from './platform-paths';
+import { createCodexEvidenceCapture } from './session-evidence';
 
 /**
  * The Codex skill extractors live in their own module because
@@ -136,6 +137,7 @@ const indexCodexRolloutFiles = (files: readonly string[]): ReadonlyMap<string, r
 
 export const readCodexSessionAnalysis = (
   sourceSessionId: string,
+  captureEvidence = false,
 ): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     if (!SAFE_CODEX_SESSION_ID.test(sourceSessionId)) {
@@ -150,21 +152,34 @@ export const readCodexSessionAnalysis = (
         for (const filePath of filesBySessionId.get(sessionId) ?? []) {
           const read = yield* readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
             const parser = createCodexSessionParser(captureDetail);
+            const evidence = captureEvidence && captureDetail ? createCodexEvidenceCapture() : null;
             return storage
-              .readLines(candidatePath, parser.visit, {
-                maxBytes: Math.max(0, maximumBytes - bytes),
-                maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
-              })
-              .pipe(Effect.map((result) => ({ bytes: result.bytes, parser })));
+              .readLines(
+                candidatePath,
+                (line) => {
+                  parser.visit(line);
+                  evidence?.visit(line, parser.evidenceContext);
+                },
+                {
+                  maxBytes: Math.max(0, maximumBytes - bytes),
+                  maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
+                },
+              )
+              .pipe(
+                Effect.map((result) => {
+                  evidence?.omit(result.oversizedLines);
+                  return { bytes: result.bytes, parser, evidence };
+                }),
+              );
           });
           bytes += read.value.bytes;
           const parser = read.value.parser;
           const session = parser.finish().session;
           if (session.id === sessionId) {
-            return { bytes, parser, session } as const;
+            return { bytes, parser, session, evidence: read.value.evidence } as const;
           }
         }
-        return { bytes, parser: null, session: null } as const;
+        return { bytes, parser: null, session: null, evidence: null } as const;
       });
     const targetRead = yield* readIndexedSession(sourceSessionId, true, CODEX_DETAIL_MAX_TOTAL_BYTES);
     if (!(targetRead.parser && targetRead.session)) {
@@ -232,7 +247,11 @@ export const readCodexSessionAnalysis = (
         const links = historyDatabase
           ? yield* readCodexChildLinksForSession(historyDatabase, sourceSessionId)
           : undefined;
-        return parser.analysis(usageOwnership, links);
+        const analysis = parser.analysis(usageOwnership, links);
+        if (analysis && targetRead.evidence) {
+          analysis.evidence = targetRead.evidence.finish(analysis.detail, parser.evidenceTurnIndexes());
+        }
+        return analysis;
       });
 
     const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));
