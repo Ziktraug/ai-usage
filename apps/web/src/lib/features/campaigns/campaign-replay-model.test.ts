@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import type { CampaignMap, CampaignMapNode } from '@ai-usage/report-core/campaign-map';
 import { parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import { sessionDetailFixtureResponse } from '../sessions/detail/session-detail.fixtures';
-import { campaignReplayFixture } from './campaign-replay-fixture';
+import { campaignReplayFixture, fractionalCampaignReplayFixture } from './campaign-replay-fixture';
 import { campaignReplay, MAX_REPLAY_EVENTS, replayNativeDetail, replayPhase } from './campaign-replay-model';
 
 test('seek uses half-open observed spans and never fills incomplete timing', () => {
@@ -59,3 +59,22 @@ test('native interaction timestamps are preserved and declared parentage does no
   expect(frame.events.filter((entry) => entry.kind === 'Message')).toHaveLength(1);
   expect(frame.events.some((entry) => entry.kind === 'Spawn')).toBe(false);
 });
+
+for (const duration of [500, 1500]) {
+  test(`preserves native events and the recorded end at exactly ${duration} ms`, () => {
+    const response = parseSessionDetailResponse(fractionalCampaignReplayFixture('fractional-replay', duration));
+    if (response.status !== 'available') {
+      throw new Error('Expected fractional fixture');
+    }
+    const startMs = Date.parse(response.detail.startedAt);
+    const endMs = Date.parse(response.detail.endedAt);
+    expect(endMs - startMs).toBe(duration);
+    expect(replayNativeDetail(response.detail, endMs - 1).events.map((event) => event.text)).not.toContain(
+      'Final fractional replay event',
+    );
+    expect(replayNativeDetail(response.detail, endMs).events.map((event) => event.text)).toContain(
+      'Final fractional replay event',
+    );
+    expect(replayPhase({ timingStatus: 'recorded', startMs, endMs } as CampaignMapNode, endMs)).toBe('after');
+  });
+}
