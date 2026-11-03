@@ -21,6 +21,7 @@
   import { sessionDetailFixtureResponse } from '../sessions/detail/session-detail.fixtures';
   import SessionDetailQuerySlot from '../sessions/detail/session-detail-query-slot.svelte';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
+  import PromptExploration from './prompt-exploration.svelte';
   import type { PromptsPageData } from './prompts-load';
   import { promptRequestForUrl } from './prompts-model';
   import { syntheticPromptCorpus } from './prompts-synthetic';
@@ -261,6 +262,12 @@
         search.
       </p>
     {/if}
+    <PromptExploration
+      complete={pages.length > 0 && !corpus.hasNextPage && !corpus.isError && partial === 0 && unavailable === 0}
+      {entries}
+      {onOpen}
+      revision={data.revision}
+    />
     {#if lookup.isError}
       <p role="alert">The selected session could not be read.</p>
     {/if}
