@@ -199,6 +199,8 @@
     '& th, & td': { p: '8px', borderBottom: '1px solid token(colors.line)', overflowWrap: 'anywhere' },
   });
   const scroll = css({ overflowX: 'auto', maxW: 'full' });
+  const graph = css({ w: 'full', h: 'auto', fill: 'ink' });
+  const graphLink = css({ stroke: 'accent' });
 </script>
 
 <section aria-label="Local semantic exploration" class={panel}>
@@ -258,25 +260,22 @@
     <figure>
       <svg
         aria-label="Projects connected to the selected family; link width follows the square root of distinct sessions"
+        class={graph}
         role="img"
-        style="width: 100%; height: auto; color: var(--colors-ink)"
         viewBox={`0 0 720 ${graphHeight}`}
       >
         <title>Projects contributing sessions to the selected family</title>
         {#each projectLinks as item, index (item.name)}
           <path
+            class={graphLink}
             d={`M 200 ${index * 44 + 30} C 360 ${index * 44 + 30}, 360 ${graphHeight / 2}, 510 ${graphHeight / 2}`}
             fill="none"
             opacity="0.55"
-            stroke="var(--colors-accent)"
             stroke-width={Math.sqrt(item.matched) * 3}
           />
-          <text fill="currentColor" font-size="13" x="0" y={index * 44 + 34}>
-            {item.name.slice(0, 24)}
-            · {item.matched}
-          </text>
+          <text font-size="13" x="0" y={index * 44 + 34}>{item.name.slice(0, 24)} · {item.matched}</text>
         {/each}
-        <text fill="currentColor" font-size="13" x="525" y={graphHeight / 2 + 4}>Selected family</text>
+        <text font-size="13" x="525" y={graphHeight / 2 + 4}>Selected family</text>
       </svg>
       <figcaption class={muted}>
         Up to seven projects with matching sessions. Links encode observed membership, not causality. Use the
