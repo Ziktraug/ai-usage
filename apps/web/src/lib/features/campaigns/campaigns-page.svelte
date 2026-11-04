@@ -85,6 +85,25 @@
   });
   let navigationError = $state<string | null>(null);
   let replayOpen = $state(false);
+  // Loaded on first open. A script-side import keeps Svelte's await-block runtime out of the
+  // shared first-load chunk, which the report's gzip budget counts.
+  let replayComponent = $state<typeof import('./campaign-replay.svelte')['default'] | null>(null);
+  let replayLoadFailed = $state(false);
+  const toggleReplay = (): void => {
+    replayOpen = !replayOpen;
+    if (!(replayOpen && replayComponent === null)) {
+      return;
+    }
+    replayLoadFailed = false;
+    import('./campaign-replay.svelte').then(
+      (module) => {
+        replayComponent = module.default;
+      },
+      () => {
+        replayLoadFailed = true;
+      },
+    );
+  };
   let previousKey = $state<QueryKey>();
   let inspected = $state<{ revision: string; generatedAt: string } | null>(null);
   let topDepth = $state(1);
@@ -1140,19 +1159,20 @@
       <div class={empty}>No campaigns match this period and search. Try a wider period or clear the search.</div>
     {/if}
     {#if timelineMap && mapRevision}
-      <button class={ghostButton} onclick={() => (replayOpen = !replayOpen)} type="button">
+      <button class={ghostButton} onclick={toggleReplay} type="button">
         {replayOpen ? 'Hide campaign replay' : 'Show campaign replay'}
       </button>
       {#if replayOpen}
-        {#key JSON.stringify([timelineMap.campaignKey, mapRevision])}
-          {#await import('./campaign-replay.svelte')}
-            <p role="status">Loading campaign replay…</p>
-          {:then module}
-            <module.default client={clients.session} map={timelineMap} onOpen={openSession} revision={mapRevision} />
-          {:catch}
-            <p role="alert">The replay could not load. Close and reopen it to retry.</p>
-          {/await}
-        {/key}
+        {#if replayComponent}
+          {@const CampaignReplay = replayComponent}
+          {#key JSON.stringify([timelineMap.campaignKey, mapRevision])}
+            <CampaignReplay client={clients.session} map={timelineMap} onOpen={openSession} revision={mapRevision} />
+          {/key}
+        {:else if replayLoadFailed}
+          <p role="alert">The replay could not load. Close and reopen it to retry.</p>
+        {:else}
+          <p role="status">Loading campaign replay…</p>
+        {/if}
       {/if}
     {/if}
     <SessionDetailQuerySlot
