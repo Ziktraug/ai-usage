@@ -20,7 +20,7 @@
     "start:web-only": "bun --no-env-file start.mjs",
     "test": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun test src ./*.test.ts",
     "test:bundle": "bun test bundle",
-    "test:e2e": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun --bun playwright test",
+    "test:e2e": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun --bun playwright test && bun --bun playwright test --config playwright.work-pagination.config.ts",
     "test:e2e-demo": "bun --no-env-file ../../tools/run-web-demo.ts --prepare-only && bun --bun playwright test --config playwright.demo.config.ts",
     "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.production.config.ts e2e/work-production.spec.ts && bun --bun playwright test --config playwright.production.config.ts e2e/work-threads-production.spec.ts && AI_USAGE_WORK_ATTEMPT_E2E=1 bun --bun playwright test --config playwright.production.config.ts e2e/work-attempt-production.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts e2e/campaign-map-production.scale.ts e2e/production-localhost-mutation.scale.ts && bun --bun playwright test --config playwright.campaign-continuity.config.ts",
     "typecheck": "bun run check:svelte && tsc -p tsconfig.e2e.json --noEmit"

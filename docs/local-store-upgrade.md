@@ -435,6 +435,20 @@ the usage store, but a rollback to a revision before schema 5 needs both: that
 code reopens `memory.sqlite`, and would create a new one with new identities if
 it were missing.
 
+## Incremental Jira synchronization (2026-10-28)
+
+ADR 0086 adds `jira_sync_state` at usage version 5. Its one row per machine
+holds a validated, bounded JSON checkpoint: scan start, full verification date,
+known keys and pending detail keys. The engine creates the table when absent;
+there is no backfill and no existing fact changes. The first run performs a full
+verification, then incremental searches resume from this durable state.
+An older binary ignores the table. Ordinary report readers do not require it.
+Back up the usage store (and retained Memory store, if present) before restarting.
+Restart Web and engine together: the source catalogue changes Jira cadence from
+ten to two minutes, and control-plane snapshot validation requires agreement.
+Disposable-store tests prove checkpoint persistence and additive creation, not
+that a real local store has been backed up or upgraded.
+
 ## Backup
 
 1. With the revision that last wrote the store still checked out, stop the

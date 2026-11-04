@@ -1599,11 +1599,11 @@ const writeClaudeDesktopJiraRegistry = (home: string, now: Date): void => {
 };
 
 describe('jira issue source', () => {
-  test('registers the source at the pull request cadence and detects it by the acli executable', async () => {
+  test('registers Jira at a two-minute cadence and detects it by the acli executable', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-detection-'));
     try {
       const absent = await createRegistry(home, { acliAvailable: () => false });
-      expect(Duration.toMillis(absent.get('jira.issues')?.cadence ?? Duration.zero)).toBe(600_000);
+      expect(Duration.toMillis(absent.get('jira.issues')?.cadence ?? Duration.zero)).toBe(120_000);
       expect(await Effect.runPromise(absent.get('jira.issues')?.detect ?? Effect.die('missing'))).toEqual({
         availability: 'not-detected',
         reason: {
@@ -2230,7 +2230,7 @@ describe('discovered work fact sources', () => {
       const result = await Effect.runPromise(
         registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
       );
-      expect(result).toEqual({ changed: false, inputCount: 1, outputCount: 1, warnings: [] });
+      expect(result).toMatchObject({ changed: false, inputCount: 1, outputCount: 1, warnings: [] });
       expect(calls.map(({ args }) => args[2])).toEqual(['search', 'view']);
       const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
       expect(stored.items.map(({ latest }) => [latest.key, latest.outcome])).toEqual([['DEMO-12', 'observed']]);
@@ -2316,7 +2316,7 @@ test('Jira discovery keeps explicit keys first and reports the observation ceili
     expect(result).toMatchObject({
       inputCount: 20,
       outputCount: 20,
-      warnings: [{ code: 'jira-issues-truncated', message: expect.stringContaining('28') }],
+      warnings: [{ code: 'jira-sync-pending', message: expect.stringContaining('8') }],
     });
     const viewedKeys = calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3]);
     expect(viewedKeys.slice(0, 4)).toEqual(['XLB-2091', 'XLB-2092', 'XLB-2090', 'DEMO-1']);
@@ -2348,13 +2348,13 @@ test('Jira candidates past the ceiling rotate in on the next run, never-read key
     await Effect.runPromise(registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'));
     const first = calls.splice(0).map(({ args }) => args[3]);
     expect(first).toHaveLength(20);
-    now = new Date('2026-10-21T21:10:00.000Z');
+    now = new Date('2026-10-21T21:00:01.000Z');
     await Effect.runPromise(registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'));
     const second = calls.map(({ args }) => args[3]);
     const unread = Array.from({ length: 8 }, (_, index) => `DEMO-${String(index + 18)}`);
-    // Discovery seeded threads on the first run, so equal read times follow thread-link order.
+    // The next run drains the durable backlog without re-reading unchanged tickets.
     expect(new Set(second.slice(0, 8))).toEqual(new Set(unread));
-    expect(second.slice(8).every((key) => first.includes(key))).toBe(true);
+    expect(second).toHaveLength(8);
     expect(new Set([...first, ...second]).size).toBe(28);
   } finally {
     rmSync(home, { force: true, recursive: true });
@@ -2708,12 +2708,12 @@ test('observes an older default-site Jira link when other sites fill the candida
     });
     for (let cycle = 0; cycle < 2; cycle++) {
       expect(await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])))).toMatchObject({
-        inputCount: 1,
-        outputCount: 1,
+        inputCount: cycle === 0 ? 1 : 0,
+        outputCount: cycle === 0 ? 1 : 0,
         warnings: [],
       });
     }
-    expect(calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3])).toEqual(['LINKED-1', 'LINKED-1']);
+    expect(calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3])).toEqual(['LINKED-1']);
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
@@ -2846,14 +2846,16 @@ test('thread Jira keys precede 45 session-declared keys and preserve truncation 
     expect(result).toMatchObject({
       inputCount: 20,
       outputCount: 20,
-      warnings: [{ code: 'jira-issues-truncated', message: expect.stringContaining('46') }],
+      warnings: [{ code: 'jira-sync-pending', message: expect.stringContaining('26') }],
     });
     const viewed = calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3]);
     expect(viewed[0]).toBe('LINKED-1');
     const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
     expect(stored.items.find(({ latest }) => latest.key === 'LINKED-1')?.latest.outcome).toBe('observed');
     const runs = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
-    expect(runs.runs.find(({ sourceId }) => sourceId === 'jira.issues')?.message).toContain('20 of 46');
+    expect(runs.runs.find(({ sourceId }) => sourceId === 'jira.issues')?.message).toContain(
+      '26 Jira tickets awaiting details',
+    );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -2938,12 +2940,121 @@ test('thread Jira keys precede discovery and exclude Done, detached and other-si
       },
     });
     const result = await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])));
-    expect(result).toMatchObject({ inputCount: 20, outputCount: 20, warnings: [{ code: 'jira-issues-truncated' }] });
+    expect(result).toMatchObject({ inputCount: 20, outputCount: 20, warnings: [{ code: 'jira-sync-pending' }] });
     const viewed = calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3]);
     expect(viewed[0]).toBe('LINKED-1');
     expect(viewed).not.toContain('CLOSED-1');
     expect(viewed).not.toContain('DETACHED-1');
     expect(viewed).not.toContain('OTHER-1');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('Jira incremental poll updates a done followed ticket absent from assignment discovery', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-incremental-'));
+  try {
+    await createLinkedThread(home, [
+      { kind: 'jira-issue', key: 'jira:default/LINKED-1' },
+      { kind: 'jira-issue', key: 'jira:default/LINKED-2' },
+    ]);
+    let now = new Date('2026-10-28T10:00:00.000Z');
+    let changed = false;
+    const viewed: string[] = [];
+    const registry = await createRegistry(home, {
+      acliAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: (options) => {
+        if (options.args[2] === 'search') {
+          const incremental = options.args[4]?.startsWith('key IN');
+          return Effect.succeed({
+            durationMs: 1,
+            exitCode: 0,
+            stdout: incremental && changed ? '[{"key":"LINKED-1"}]' : '[]',
+          });
+        }
+        const key = options.args[3]!;
+        viewed.push(key);
+        return Effect.succeed({
+          durationMs: 1,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            key,
+            fields: {
+              summary: key,
+              status: { name: changed ? 'Done' : 'To Do', statusCategory: { key: changed ? 'done' : 'new' } },
+              updated: now.toISOString(),
+            },
+          }),
+        });
+      },
+    });
+    await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])));
+    expect(new Set(viewed.splice(0))).toEqual(new Set(['LINKED-1', 'LINKED-2']));
+    now = new Date('2026-10-28T10:02:00.000Z');
+    changed = true;
+    expect(await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])))).toMatchObject({
+      inputCount: 1,
+      outputCount: 1,
+      warnings: [],
+    });
+    expect(viewed.splice(0)).toEqual(['LINKED-1']);
+    const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
+    expect(stored.items.find((item) => item.latest.key === 'LINKED-1')?.latest.status).toBe('Done');
+    expect(String(stored.items.find((item) => item.latest.key === 'LINKED-2')?.latest.observedAt)).toBe(
+      '2026-10-28T10:00:00.000Z',
+    );
+    now = new Date('2026-10-28T10:04:00.000Z');
+    changed = false;
+    expect(await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])))).toMatchObject({
+      inputCount: 0,
+      outputCount: 0,
+      warnings: [],
+    });
+    expect(viewed).toEqual([]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('one unreadable Jira issue retains its retry while healthy remaining batches continue', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-partial-catchup-'));
+  try {
+    const now = new Date('2026-10-28T10:00:00.000Z');
+    writeClaudeDesktopJiraRegistry(home, now);
+    const calls: BoundedProcessOptions[] = [];
+    const registry = await createRegistry(home, {
+      acliAvailable: () => true,
+      now: () => now,
+      workFactProcessRunner: (options) => {
+        if (options.args[2] === 'search') {
+          return Effect.succeed({
+            durationMs: 1,
+            exitCode: 0,
+            stdout: JSON.stringify(Array.from({ length: 25 }, (_, i) => ({ key: `DEMO-${i + 1}` }))),
+          });
+        }
+        if (options.args[3] === 'XLB-2091') {
+          return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '{"status":404}' });
+        }
+        return fakeJiraRunner(calls)(options);
+      },
+    });
+    await Effect.runPromise(registry.get('claude.desktop-sessions')!.run(progressContext([])));
+    expect(await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])))).toMatchObject({
+      continueSoon: true,
+      inputCount: 20,
+    });
+    calls.length = 0;
+    const next = await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])));
+    expect(next.inputCount).toBe(9);
+    expect(next.continueSoon).not.toBe(true);
+    expect(calls.filter((call) => call.args[2] === 'view')).toHaveLength(8);
+    expect(next.warnings).toContainEqual({ code: 'jira-sync-pending', message: '1 Jira ticket awaiting details.' });
+    expect(next.warnings).toContainEqual({
+      code: 'jira-details-incomplete',
+      message: 'Jira detail reads failed: 1.',
+    });
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

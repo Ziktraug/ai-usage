@@ -24,6 +24,8 @@ import {
   importJiraIssueObservations,
   importPullRequestObservations,
   initializeUsageStore,
+  queryJiraSyncState,
+  recordJiraSyncState,
   recordWorkFactRun,
 } from './writer';
 
@@ -1085,4 +1087,39 @@ test('old Jira observations remain readable without a URL; only the writer adds 
   } finally {
     db.close();
   }
+});
+
+test('Jira sync cursor and pending details survive reopening without advancing report generation', async () => {
+  const dbPath = await createStore('jira-sync');
+  const query = { dbPath, machineId: 'machine-a' };
+  expect(await Effect.runPromise(queryJiraSyncState(query))).toBeNull();
+  const generation = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+  const state = {
+    checkedThrough: at(1),
+    fullScanAt: at(0),
+    pendingKeys: ['DEMO-12', 'DEMO-13'],
+    knownKeys: ['DEMO-12', 'DEMO-13'],
+  };
+  await Effect.runPromise(recordJiraSyncState({ ...query, state }));
+  await Effect.runPromise(initializeUsageStore({ dbPath }));
+  expect(await Effect.runPromise(queryJiraSyncState(query))).toEqual(state);
+  expect(await Effect.runPromise(queryJiraSyncState({ ...query, machineId: 'other' }))).toBeNull();
+  expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toEqual(generation);
+  const bad = await Effect.runPromise(
+    Effect.result(recordJiraSyncState({ ...query, state: { ...state, pendingKeys: ['--invalid'] } })),
+  );
+  expect(bad._tag).toBe('Failure');
+  expect(await Effect.runPromise(queryJiraSyncState(query))).toEqual(state);
+});
+
+test('an existing schema-5 store gains only the Jira checkpoint table and retains its facts', async () => {
+  const dbPath = await createStore('jira-sync-upgrade');
+  await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [jiraIssue()] }));
+  const before = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }));
+  const db = new Database(dbPath);
+  db.exec('DROP TABLE jira_sync_state');
+  db.close();
+  await Effect.runPromise(initializeUsageStore({ dbPath }));
+  expect(await Effect.runPromise(queryJiraSyncState({ dbPath, machineId: 'machine-a' }))).toBeNull();
+  expect(await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }))).toEqual(before);
 });

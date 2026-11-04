@@ -23,11 +23,7 @@ import {
   type PullRequestLink,
 } from '@ai-usage/local-collectors/github-pull-requests';
 import { discoverJiraIssues } from '@ai-usage/local-collectors/jira-issue-discovery';
-import {
-  JIRA_ISSUE_DEFAULTS,
-  JIRA_NOT_INSTALLED_MESSAGE,
-  observeJiraIssues,
-} from '@ai-usage/local-collectors/jira-issues';
+import { JIRA_NOT_INSTALLED_MESSAGE, observeJiraIssues } from '@ai-usage/local-collectors/jira-issues';
 import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavingsResult,
@@ -90,13 +86,13 @@ import {
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
   queryEnrichableUsageRows,
-  queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
   queryWorkThreadWaitCandidates,
   type RtkSavingsContribution,
   recordJiraIntake,
+  recordJiraSyncState,
   recordWorkFactRun,
   type ServedLocalProjectSource,
   seedWorkThreads,
@@ -107,6 +103,7 @@ import {
 } from '@ai-usage/usage-store/writer';
 import { Data, Duration, Effect, Exit } from 'effect';
 import { listManagedCursorUsageExportPaths } from './input-file';
+import { prepareJiraSync } from './jira-sync';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
 import { CLAUDE_QUOTA_SOURCE_IDENTITY, OPENCODE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
@@ -961,34 +958,6 @@ const pullRequestBranchJiraKeys = (
   });
 
 /**
- * Rotates a bounded batch through every candidate: never-read keys first, then the oldest reads,
- * so an issue past the per-run bound is still observed within a few runs. Equal ages keep the
- * candidates' priority order.
- */
-const leastRecentlyObservedJiraKeys = (
-  dbPath: string,
-  machineId: string,
-  candidates: readonly string[],
-): Effect.Effect<readonly string[], UsageStoreError> =>
-  Effect.gen(function* () {
-    if (candidates.length <= JIRA_ISSUE_DEFAULTS.maxKeys) {
-      return candidates;
-    }
-    const { items } = yield* queryLatestJiraIssueObservations({
-      dbPath,
-      keys: candidates,
-      limit: MAX_WORK_FACT_QUERY_LIMIT,
-      machineId,
-    });
-    const observedAt = new Map(items.map((item) => [item.latest.key, Date.parse(item.latest.observedAt)]));
-    return candidates
-      .map((key, index) => ({ at: observedAt.get(key) ?? Number.NEGATIVE_INFINITY, index, key }))
-      .sort((left, right) => left.at - right.at || left.index - right.index)
-      .slice(0, JIRA_ISSUE_DEFAULTS.maxKeys)
-      .map(({ key }) => key);
-  });
-
-/**
  * Leaves out the links whose latest stored observation already showed the pull request merged,
  * with its status history. A merge is terminal: re-reading it every cadence for the fourteen days a
  * session stays active spends `gh` calls to learn nothing. Only a successful latest read counts; a
@@ -1721,16 +1690,23 @@ const createJiraIssueSource = (input: {
         pullRequestBranchJiraKeys(input.dbPath, input.machine.id),
         { keys: [], truncated: false },
       );
-      const candidates = [
-        ...new Set([...threadKeys, ...branchKeys.keys, ...desktop.jiraKeys, ...discovery.keys]),
-      ].slice(0, MAX_WORK_FACT_QUERY_LIMIT);
-      const keys = yield* servedInputsOrEmpty(
-        'jira.issues',
-        leastRecentlyObservedJiraKeys(input.dbPath, input.machine.id, candidates),
-        candidates.slice(0, JIRA_ISSUE_DEFAULTS.maxKeys),
-      );
+      const candidateKeys = [...new Set([...threadKeys, ...branchKeys.keys, ...desktop.jiraKeys, ...discovery.keys])];
+      const candidates = candidateKeys.slice(0, MAX_WORK_FACT_QUERY_LIMIT);
       const truncated =
-        candidates.length > keys.length || discovery.truncated || threadLinks.truncated || branchKeys.truncated;
+        candidateKeys.length > candidates.length ||
+        discovery.truncated ||
+        threadLinks.truncated ||
+        branchKeys.truncated;
+      const sync = yield* prepareJiraSync({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        candidates,
+        now: input.now(),
+        completeCandidates: discovery.outcome === 'observed' && !truncated,
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      const keys = sync.keys;
       const waits = yield* servedInputsOrEmpty(
         'jira.issues',
         queryWorkThreadWaitCandidates({
@@ -1741,8 +1717,9 @@ const createJiraIssueSource = (input: {
         }),
         { candidates: [], truncated: false },
       );
-      yield* reportProgress(context, { completed: 0, phase: 'reading', total: keys.length });
+      yield* reportProgress(context, { completed: 0, phase: 'reading', total: sync.state.pendingKeys.length });
       const batch = yield* observeJiraIssues({
+        concurrency: 3,
         keys,
         machineId: input.machine.id,
         now: input.now,
@@ -1761,6 +1738,16 @@ const createJiraIssueSource = (input: {
       yield* importJiraIssueObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
+      const succeeded = new Set(
+        observations.filter((observation) => observation.outcome === 'observed').map((observation) => observation.key),
+      );
+      // Failed keys move behind the unattempted ones; they remain durable and retry at normal cadence.
+      const attempted = new Set(keys);
+      const pendingKeys = [
+        ...sync.state.pendingKeys.filter((key) => !attempted.has(key)),
+        ...keys.filter((key) => !succeeded.has(key)),
+      ];
+
       const waitResult =
         waits.candidates.length === 0
           ? { satisfied: 0, unchanged: 0, unproven: 0 }
@@ -1771,6 +1758,11 @@ const createJiraIssueSource = (input: {
               candidates: waits.candidates,
               jiraIssues: batch.observations,
             }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+      yield* recordJiraSyncState({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        state: { ...sync.state, pendingKeys },
+      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       const waitWarnings = [
         ...(waits.truncated
           ? [
@@ -1801,14 +1793,21 @@ const createJiraIssueSource = (input: {
         }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       }
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
-      const failed =
-        discoveryWarnings.length +
-        batch.observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
+      const detailFailures = batch.observations.filter(
+        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled',
+      ).length;
+      const detailWarnings =
+        detailFailures > 0
+          ? [{ code: 'jira-details-incomplete', message: `Jira detail reads failed: ${detailFailures}.` }]
+          : [];
+      const failed = discoveryWarnings.length + sync.warnings.length + detailFailures;
       const notInstalled =
         batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
-      const truncation = truncated
-        ? `Observed ${String(keys.length)} of ${String(candidates.length)} candidate Jira issues; the least recently read go first on the next run, and additional search results may be omitted.`
-        : null;
+      const truncation = truncated ? 'Jira candidate discovery is incomplete; additional issues may be omitted.' : null;
+      const pending =
+        pendingKeys.length > 0
+          ? `${pendingKeys.length} Jira ${pendingKeys.length === 1 ? 'ticket' : 'tickets'} awaiting details.`
+          : null;
       yield* recordWorkFactRun({
         dbPath: input.dbPath,
         disabled: notInstalled,
@@ -1818,25 +1817,42 @@ const createJiraIssueSource = (input: {
           ? JIRA_NOT_INSTALLED_MESSAGE
           : [
               truncation,
+              pending,
               ...discoveryWarnings.map((warning) => warning.message),
+              ...sync.warnings.map((warning) => warning.message),
+              ...detailWarnings.map((warning) => warning.message),
               ...waitWarnings.map((warning) => warning.message),
             ]
               .filter(Boolean)
               .join(' ') || null,
         observed,
         ranAt: input.now(),
-        outcomeCode: discovery.outcome === 'unauthenticated' ? 'unauthenticated' : null,
+        outcomeCode:
+          discovery.outcome === 'unauthenticated' ||
+          sync.warnings.some((warning) => warning.code === 'jira-changes-unauthenticated')
+            ? 'unauthenticated'
+            : null,
         sourceId: 'jira.issues',
       }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
       return {
         changed: false,
         inputCount: keys.length,
         outputCount: batch.observations.length,
+        ...(pendingKeys.some((key) => !attempted.has(key)) &&
+        observed > 0 &&
+        discoveryWarnings.length === 0 &&
+        sync.warnings.length === 0 &&
+        observations.every((observation) => ['observed', 'invalid', 'not-found'].includes(observation.outcome))
+          ? { continueSoon: true }
+          : {}),
         ...(notInstalled ? { unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE } } : {}),
         warnings: [
           ...discoveryWarnings,
+          ...sync.warnings,
+          ...detailWarnings,
           ...desktop.warnings,
           ...waitWarnings,
+          ...(pending === null ? [] : [{ code: 'jira-sync-pending', message: pending }]),
           ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
         ],
       };
