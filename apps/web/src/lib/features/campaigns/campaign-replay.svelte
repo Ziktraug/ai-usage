@@ -147,7 +147,7 @@
     <p role="status">No recorded timestamps are available for playback.</p>
   {/if}
   <label class="selection"
-    >Inspect session<select aria-label="Replay session" class={tone.field} bind:value={selectedId}>
+    >Replay session<select class={tone.field} bind:value={selectedId}>
       <option value="">{replay.nodes[0]?.title ?? 'No session'}</option>
       {#each replay.nodes as node (node.row.rowId)}
         <option value={node.row.rowId}>{node.title}</option>
@@ -166,7 +166,9 @@
         <span
           >{node.title}
           <small class={tone.muted}
-            >{#if parent}
+            >{#if node.relationship === 'review'}
+              Automated review{parent ? ` of ${parent.title}` : ''}
+            {:else if parent}
               Declared parent: {parent.title}
             {:else if node.relationship === 'root'}
               Campaign root
