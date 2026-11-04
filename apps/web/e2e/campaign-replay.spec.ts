@@ -73,3 +73,28 @@ for (const duration of [500, 1500]) {
     await expect(replay.getByText('Final fractional replay event', { exact: true })).toBeVisible();
   });
 }
+
+test('scrolling the window down to the replay keeps the campaign list bounded', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.goto('/campaigns?range=all');
+  await waitForHydratedNavigation(page);
+  await page.getByRole('button', { name: 'Show campaign replay', exact: true }).click();
+  const replay = page.getByRole('region', { name: 'Campaign replay', exact: true });
+  await expect(replay).toBeVisible();
+  const list = page.getByRole('region', { name: 'Campaign sessions', exact: true });
+  const listHeight = async () => Math.round((await list.boundingBox())?.height ?? 0);
+  const documentHeight = () => page.evaluate(() => document.documentElement.scrollHeight);
+  // Scroll the window past the list, then change the replay so the list's sizing observer runs.
+  await replay.getByRole('heading', { level: 2 }).evaluate((heading) => heading.scrollIntoView({ block: 'start' }));
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await page.getByRole('slider', { name: 'Replay elapsed time', exact: true }).focus();
+  await page.keyboard.press('End');
+  await expect(replay.getByText(reviewPrompt, { exact: true })).toBeVisible();
+  await page.waitForTimeout(1000);
+  // Unbounded, the list grew by the scrolled distance on every sizing pass and never settled.
+  expect(await listHeight()).toBeLessThanOrEqual(600);
+  const settled = await documentHeight();
+  await page.waitForTimeout(1000);
+  expect(await documentHeight()).toBe(settled);
+  await expect(replay.getByRole('heading', { level: 2 })).toBeInViewport();
+});

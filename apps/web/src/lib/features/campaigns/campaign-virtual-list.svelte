@@ -9,6 +9,7 @@
     campaignAnchorFor,
     campaignOffsets,
     campaignRestoreAnchor,
+    campaignViewportHeight,
     campaignVirtualWindow,
     createCampaignAcquisitionBudget,
   } from './campaign-virtual-window';
@@ -292,8 +293,11 @@
       if (!active) {
         return;
       }
-      const reserve = window.innerWidth < 768 ? 88 : 40;
-      availableHeight = Math.max(220, Math.floor(window.innerHeight - host.getBoundingClientRect().top - reserve));
+      availableHeight = campaignViewportHeight({
+        hostTop: host.getBoundingClientRect().top,
+        innerHeight: window.innerHeight,
+        innerWidth: window.innerWidth,
+      });
       viewport = host.clientHeight;
       if (!navigation.anchor) {
         capture();
