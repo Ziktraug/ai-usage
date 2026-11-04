@@ -1,10 +1,10 @@
 <script lang="ts">
+  import { css, cx } from '@ai-usage/design-system/css';
   import { ghostButton } from '@ai-usage/design-system/report';
   import type { CampaignMap } from '@ai-usage/report-core/campaign-map';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { createQuery } from '@tanstack/svelte-query';
   import { browser } from '$app/env';
-  import { graphTheme } from '../../foundation/presentation/graph-theme';
   import { optionalSessionDetailQueryOptions } from '../../query/options/session';
   import type { SessionClientAdapter } from '../../rpc/session-client';
   import { campaignReplay, replayNativeDetail, replayPhase } from './campaign-replay-model';
@@ -69,10 +69,23 @@
     }, 100);
     return () => clearInterval(timer);
   });
+  // Theme colours, radii and fonts as Panda atomic classes (the global stylesheet already carries
+  // most of them); the scoped stylesheet below keeps layout only and reads no theme variable.
+  const tone = {
+    bar: css({ bg: 'accent' }),
+    cursor: css({ bg: 'ink' }),
+    field: css({ color: 'ink', bg: 'surface', border: '1px solid token(colors.line)' }),
+    frame: css({ border: '1px solid token(colors.line)', borderRadius: 'md' }),
+    mono: css({ fontFamily: 'mono' }),
+    muted: css({ color: 'muted' }),
+    selected: css({ borderColor: 'accent' }),
+    session: css({ border: '1px solid token(colors.line)', borderRadius: 'sm' }),
+    track: css({ bg: 'track' }),
+  };
 </script>
-<section aria-label="Campaign replay" class={`replay ${graphTheme}`}>
+<section aria-label="Campaign replay" class={cx('replay', tone.frame)}>
   <h2>Replay · {map.title}</h2>
-  <p class="muted">
+  <p class={cx('muted', tone.muted)}>
     {replay.nodes.length}
     of {map.totalCount} sessions shown; {replay.omitted} omitted. Recorded session spans include idle gaps. Playback
     uses elapsed wall time, not CPU time or current activity. Native rounds and events below cover only the selected
@@ -111,7 +124,7 @@
         Restart replay
       </button>
       <label
-        >Speed<select bind:value={speed}>
+        >Speed<select class={tone.field} bind:value={speed}>
           <option value={1}>1×</option>
           <option value={60}>60×</option>
           <option value={600}>600×</option>
@@ -134,7 +147,7 @@
     <p role="status">No recorded timestamps are available for playback.</p>
   {/if}
   <label class="selection"
-    >Inspect session<select aria-label="Replay session" bind:value={selectedId}>
+    >Inspect session<select aria-label="Replay session" class={tone.field} bind:value={selectedId}>
       <option value="">{replay.nodes[0]?.title ?? 'No session'}</option>
       {#each replay.nodes as node (node.row.rowId)}
         <option value={node.row.rowId}>{node.title}</option>
@@ -146,14 +159,13 @@
       {@const parent = map.nodes.find((candidate) => candidate.row.rowId === node.parentRowId)}
       <button
         aria-pressed={node.row.rowId === selected?.row.rowId}
-        class="session"
+        class={cx('session', tone.session, node.row.rowId === selected?.row.rowId && tone.selected)}
         onclick={() => (selectedId = node.row.rowId)}
         type="button"
-        class:selected={node.row.rowId === selected?.row.rowId}
       >
         <span
           >{node.title}
-          <small
+          <small class={tone.muted}
             >{#if parent}
               Declared parent: {parent.title}
             {:else if node.relationship === 'root'}
@@ -163,17 +175,17 @@
             {/if}</small
           ></span
         >
-        <span aria-hidden="true" class="track">
+        <span aria-hidden="true" class={cx('track', tone.track)}>
           {#if node.timingStatus === 'recorded' && node.startMs !== null && node.endMs !== null}
             <span
-              class="bar"
+              class={cx('bar', tone.bar)}
               style:left={`${percent(node.startMs)}%`}
               style:width={`${Math.max(0.2, percent(node.endMs) - percent(node.startMs))}%`}
             ></span>
           {/if}
-          <span class="cursor" style:left={`${percent(cursor)}%`}></span>
+          <span class={cx('cursor', tone.cursor)} style:left={`${percent(cursor)}%`}></span>
         </span>
-        <small>{labels[replayPhase(node, cursor)]}</small>
+        <small class={tone.muted}>{labels[replayPhase(node, cursor)]}</small>
       </button>
     {/each}
   </div>
@@ -196,7 +208,7 @@
       {:else if response?.status === 'unavailable'}
         <p role="status">Native events unavailable: {response.message}</p>
       {:else if detail && native}
-        <p class="muted">
+        <p class={cx('muted', tone.muted)}>
           Native history observed {detail.observedAt}. {native.startedRounds} of {native.totalRounds} rounds have a
           recorded start at or before the cursor. Round boundaries are observed spans, not continuous activity.
         </p>
@@ -209,7 +221,7 @@
         {/if}
         {#each Object.entries(detail.coverage) as [key, fact] (key)}
           {#if fact.status !== 'complete'}
-            <p class="muted">
+            <p class={cx('muted', tone.muted)}>
               {coverageLabels[key as keyof typeof coverageLabels]}: {fact.status};
               {fact.omittedCount ?? 'unknown'}
               omitted.
@@ -232,7 +244,7 @@
         <ol class="events">
           {#each native.events as entry (entry.id)}
             <li>
-              <time datetime={new Date(entry.at).toISOString()}>{time(entry.at)} UTC</time>
+              <time class={tone.mono} datetime={new Date(entry.at).toISOString()}>{time(entry.at)} UTC</time>
               <strong>{entry.kind}</strong>
               <p>{entry.text}</p>
             </li>
@@ -253,14 +265,11 @@
     min-width: 0;
     padding: 16px;
     margin-block: 24px;
-    border: 1px solid var(--graph-line);
-    border-radius: var(--graph-radius-md);
   }
   .muted,
   small {
     font-size: 12px;
     line-height: 1.6;
-    color: var(--graph-muted);
   }
   .controls {
     display: flex;
@@ -276,9 +285,6 @@
   select {
     max-width: 100%;
     padding: 8px;
-    color: var(--graph-ink);
-    background: var(--graph-surface);
-    border: 1px solid var(--graph-line);
   }
   .seek {
     flex: 1;
@@ -299,27 +305,20 @@
     gap: 6px 12px;
     padding: 10px;
     text-align: start;
-    border: 1px solid var(--graph-line);
-    border-radius: var(--graph-radius-sm);
   }
   .session small {
     display: block;
-  }
-  .selected {
-    border-color: var(--graph-accent);
   }
   .track {
     position: relative;
     align-self: center;
     min-height: 24px;
     overflow: hidden;
-    background: var(--graph-track);
   }
   .bar {
     position: absolute;
     top: 7px;
     height: 10px;
-    background: var(--graph-accent);
     opacity: 0.5;
   }
   .cursor {
@@ -327,7 +326,6 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--graph-ink);
   }
   .native {
     display: grid;
@@ -346,7 +344,6 @@
     white-space: pre-wrap;
   }
   .events time {
-    font-family: var(--graph-mono);
     font-size: 12px;
   }
 </style>
