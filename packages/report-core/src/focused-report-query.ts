@@ -11,6 +11,7 @@ import {
   processedTokensForAnalytics,
 } from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
+import { buildTokenFlow, parseTokenFlow, type TokenFlow } from './observatory';
 import { parseProjectGroupConfigs } from './project-group';
 import {
   type ApiPriceMeasurement,
@@ -118,6 +119,7 @@ export interface FocusedOverviewRequest {
 }
 
 export interface FocusedBreakdownRequest {
+  includeObservatory?: true;
   query: FocusedReportQueryScope;
 }
 
@@ -372,6 +374,7 @@ export interface FocusedBreakdownResult {
   };
   requestFingerprint: string;
   revision: string;
+  tokenFlow?: TokenFlow;
 }
 
 export interface FocusedFilterOption {
@@ -487,8 +490,14 @@ export const parseFocusedOverviewRequest = (value: unknown): FocusedOverviewRequ
 
 export const parseFocusedBreakdownRequest = (value: unknown): FocusedBreakdownRequest => {
   const record = requireRecord(value, 'breakdown request');
-  assertExactKeys(record, ['query'], 'breakdown request');
-  return { query: parseFocusedReportQueryScope(record.query) };
+  assertAllowedKeys(record, ['query'], ['includeObservatory'], 'breakdown request');
+  if (record.includeObservatory !== undefined && record.includeObservatory !== true) {
+    throw new Error('Invalid observatory request');
+  }
+  return {
+    query: parseFocusedReportQueryScope(record.query),
+    ...(record.includeObservatory === true ? { includeObservatory: true } : {}),
+  };
 };
 
 export const parseFocusedRevisionRequest = (value: unknown): FocusedRevisionRequest => {
@@ -1530,6 +1539,25 @@ export const projectFocusedBreakdown = (
     .filter((row) => matchesFocusedReportQuery(row, request.query, support.timeZone));
   const totalCost = visible.reduce((sum, row) => sum + usageRowApiPriceMeasurement(row).knownCost, 0);
   return {
+    ...(request.includeObservatory
+      ? {
+          tokenFlow: buildTokenFlow(
+            visible.flatMap((row) =>
+              usageRowModelContributions(row).map((segment) => ({
+                projectKey: row.projectKey,
+                projectLabel: row.projectLabel,
+                model: segment.key,
+                input: segment.tokIn,
+                cacheRead: segment.tokCr,
+                cacheWrite: segment.tokCw,
+                output: segment.tokOut,
+              })),
+            ),
+            visible.length,
+            visible.filter((row) => row.partial || row.usageUnavailable).length,
+          ),
+        }
+      : {}),
     context: {
       cursorCommitAttribution: support.datasets?.cursorCommitAttribution ?? [],
       ...(support.projectGroupConfigs === undefined ? {} : { projectGroupConfigs: support.projectGroupConfigs }),
@@ -2737,10 +2765,13 @@ export function parseFocusedReportQueryResult(
     const parsed = parseFocusedBreakdownRequest(request);
     const record = assertResultEnvelope(
       value,
-      ['context', 'groups', 'requestFingerprint', 'revision'],
+      ['context', 'groups', 'requestFingerprint', 'revision', ...(parsed.includeObservatory ? ['tokenFlow'] : [])],
       parsed.query.revision,
       focusedBreakdownFingerprint(parsed),
     );
+    if (parsed.includeObservatory) {
+      parseTokenFlow(record.tokenFlow);
+    }
     assertBreakdownGroups(record.groups);
     assertBreakdownContext(record.context);
     return record as unknown as FocusedBreakdownResult;

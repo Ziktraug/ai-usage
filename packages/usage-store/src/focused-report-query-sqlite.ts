@@ -34,6 +34,7 @@ import {
   projectFocusedOverviewFromPresentationRows,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
+import { buildTokenFlow, type TokenFlowContribution } from '@ai-usage/report-core/observatory';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import { type ApiPriceMeasurement, apiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import type {
@@ -1283,6 +1284,27 @@ const readProjectGroups = (
     turns: record.turns,
   }));
 
+const readTokenFlow = (database: SessionQuerySqliteDatabase, filter: SqlFilter, trace?: SessionQuerySqliteTrace) => {
+  const counts = executeGet<{ sessions: number; partial: number }>(
+    database,
+    `SELECT COUNT(*) AS sessions, COALESCE(SUM(CASE WHEN json_extract(row_json, '$.partial') = 1 OR usage_unavailable = 1 THEN 1 ELSE 0 END), 0) AS partial FROM session_rows WHERE ${filter.where}`,
+    filter.params,
+    trace,
+  )!;
+  const links = executeAll<TokenFlowContribution>(
+    database,
+    `WITH filtered AS (SELECT ordinal, project_key, project_label FROM session_rows WHERE ${filter.where})
+    SELECT filtered.project_key AS projectKey, MIN(filtered.project_label) AS projectLabel,
+      segments.model_key AS model, SUM(segments.tok_in) AS input, SUM(segments.tok_cr) AS cacheRead,
+      SUM(segments.tok_cw) AS cacheWrite, SUM(segments.tok_out) AS output
+    FROM filtered JOIN session_model_segments AS segments USING (ordinal)
+    GROUP BY filtered.project_key, segments.model_key`,
+    filter.params,
+    trace,
+  );
+  return buildTokenFlow(links, counts.sessions, counts.partial);
+};
+
 const runBreakdown = (
   database: SessionQuerySqliteDatabase,
   input: FocusedBreakdownRequest,
@@ -1300,6 +1322,7 @@ const runBreakdown = (
       ...(support.warnings === undefined ? {} : { warnings: support.warnings }),
     },
     groups: { ...groups, projects: readProjectGroups(database, filter, trace) },
+    ...(request.includeObservatory ? { tokenFlow: readTokenFlow(database, filter, trace) } : {}),
     requestFingerprint: focusedBreakdownFingerprint(request),
     revision: request.query.revision,
   };
