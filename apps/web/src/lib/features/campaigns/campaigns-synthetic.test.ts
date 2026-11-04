@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { parseSessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import {
   enrichSessionPresentationRow,
   parseSessionLookupServerResult,
@@ -18,7 +19,16 @@ describe('synthetic campaign session lookup', () => {
         ok: true,
         revision: request.revision,
       });
-      expect(await client.detail(request)).toMatchObject({ reason: 'unsupported', status: 'unavailable' });
+      const detail = parseSessionDetailResponse(await client.detail(request));
+      if (row.source?.sourceSessionId === 'forecast-root') {
+        expect(detail).toMatchObject({
+          status: 'available',
+          revision: request.revision,
+          detail: { sourceSessionId: 'forecast-root', startedAt: row.date },
+        });
+      } else {
+        expect(detail).toMatchObject({ reason: 'unsupported', status: 'unavailable' });
+      }
     }
   });
 
