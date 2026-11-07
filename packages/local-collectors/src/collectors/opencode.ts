@@ -1,5 +1,5 @@
 import {
-  LocalHistoryError,
+  type LocalHistoryError,
   type LocalHistoryWarning,
   localHistoryWarningFromError,
 } from '@ai-usage/local-machine/errors';
@@ -7,19 +7,25 @@ import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { type LocalHistoryDatabase, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import {
   OPENCODE_DIRECT_USER_PART_PREDICATE,
+  OPENCODE_MESSAGE_METRIC_COLUMNS,
+  OPENCODE_SCHEMA_SQL,
   OPENCODE_SKILL_PART_PREDICATE,
   OPENCODE_TOOL_PART_PREDICATE,
   OPENCODE_V2_SKILL_CONTENT_PREDICATE,
   OPENCODE_V2_TOOL_CONTENT_PREDICATE,
+  type OpenCodeSchemaKind,
+  openCodeSchemaError,
+  openCodeSchemaKinds,
 } from '@ai-usage/local-machine/opencode-schema';
 import {
   buildOpenCodeProjectionSummary,
-  decodeOpenCodeMessageRow,
+  decodeOpenCodeMessageColumns,
   decodeOpenCodeSkillPart,
+  type OpenCodeMessageColumnRow,
   type OpenCodeMessageFact,
 } from '@ai-usage/local-machine/opencode-session-facts';
 import { resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
-import { base, safeJSON } from '@ai-usage/local-machine/text';
+import { base } from '@ai-usage/local-machine/text';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import {
   type SkillObservation,
@@ -68,13 +74,14 @@ interface SessionRow {
 }
 
 interface SchemaRow {
-  name: string;
+  name: unknown;
 }
-interface MessageRow {
-  data: string;
+interface CountRow {
+  n: unknown;
+}
+interface MessageRow extends OpenCodeMessageColumnRow {
   id: unknown;
   session_id: string;
-  time_created?: unknown;
 }
 interface TurnRow {
   message_id: unknown;
@@ -138,16 +145,13 @@ export const setOpenCodeSkillPartLimitForTesting = (limit: number | null): void 
 const openCodeSkillPartLimit = (): number => openCodeSkillPartLimitOverride ?? MAX_OPENCODE_SKILL_PARTS;
 
 /**
- * OpenCode has stored sessions in two schemas. The legacy one keeps sessions in
- * `session`, messages in `message` and their parts in `part`. The current one
- * (OpenCode's `session_v2` migration) keeps sessions in `session_v2` and
- * messages in `session_message`, whose `type` column carries the role and whose
- * `data.content` array carries what used to be parts. A migrated database holds
- * both: every legacy session also exists in `session_v2`, and a session's
- * messages may be split between `message` and `session_message`, so reads are
- * deduplicated by session id for metadata and by message id for usage.
+ * The two OpenCode schemas (see `OPENCODE_SCHEMA_SQL`). Message reads project
+ * only the metric columns: an assistant payload in the current schema carries
+ * the whole reasoning, text and tool state of the message in `data.content`,
+ * which is hundreds of megabytes over a year of history and is never needed for
+ * a usage row. Content is scanned only by the tool-count and skill queries,
+ * which aggregate it in SQL.
  */
-export const OPENCODE_SCHEMA_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name";
 export const OPENCODE_LEGACY_SESSION_SQL =
   'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 export const OPENCODE_LEGACY_TOOL_COUNT_SQL = `SELECT session_id, message_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id, message_id`;
@@ -155,8 +159,7 @@ export const OPENCODE_LEGACY_TOOL_COUNT_SQL = `SELECT session_id, message_id, co
 export const openCodeLegacySkillPartSql = (limit: number) =>
   `SELECT id, message_id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${limit + 1}`;
 export const OPENCODE_LEGACY_TURN_SQL = `SELECT m.session_id, m.id AS message_id FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id, m.id`;
-export const OPENCODE_LEGACY_MESSAGE_SQL =
-  'SELECT id, session_id, data, time_created FROM message ORDER BY session_id, time_created, id';
+export const OPENCODE_LEGACY_MESSAGE_SQL = `SELECT id, session_id, json_extract(data, '$.role') AS role, ${OPENCODE_MESSAGE_METRIC_COLUMNS} FROM message WHERE json_valid(data) AND json_extract(data, '$.role') = 'assistant' ORDER BY session_id, time_created, id`;
 
 export const OPENCODE_V2_SESSION_SQL =
   'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session_v2';
@@ -166,16 +169,16 @@ export const openCodeV2SkillPartSql = (limit: number) =>
 // Synthetic and system inputs have their own `type`, so every `user` row is a
 // direct prompt; the legacy schema needs the part predicate for the same cut.
 export const OPENCODE_V2_TURN_SQL = "SELECT session_id, id AS message_id FROM session_message WHERE type = 'user'";
-export const OPENCODE_V2_MESSAGE_SQL =
-  "SELECT id, session_id, data, time_created FROM session_message WHERE type = 'assistant' ORDER BY session_id, time_created, id";
-
-type OpenCodeSchemaKind = 'legacy' | 'v2';
+export const OPENCODE_V2_MESSAGE_SQL = `SELECT id, session_id, 'assistant' AS role, ${OPENCODE_MESSAGE_METRIC_COLUMNS} FROM session_message WHERE type = 'assistant' AND json_valid(data) ORDER BY session_id, time_created, id`;
+// The row is declared an assistant message by its type column, so an unreadable
+// payload is a lost metric record; the metric read above filters it out.
+export const OPENCODE_V2_MALFORMED_ASSISTANT_SQL =
+  "SELECT count(*) n FROM session_message WHERE type = 'assistant' AND NOT json_valid(data)";
 
 interface OpenCodeTableSet {
   kind: OpenCodeSchemaKind;
+  malformedAssistantSql: string | null;
   messageSql: string;
-  /** The role the message query already selected, or `null` when the payload carries it. */
-  role: 'assistant' | null;
   sessionSql: string;
   skillPartSql: (limit: number) => string;
   toolCountSql: string;
@@ -184,8 +187,8 @@ interface OpenCodeTableSet {
 
 const OPENCODE_V2_TABLES: OpenCodeTableSet = {
   kind: 'v2',
+  malformedAssistantSql: OPENCODE_V2_MALFORMED_ASSISTANT_SQL,
   messageSql: OPENCODE_V2_MESSAGE_SQL,
-  role: 'assistant',
   sessionSql: OPENCODE_V2_SESSION_SQL,
   skillPartSql: openCodeV2SkillPartSql,
   toolCountSql: OPENCODE_V2_TOOL_COUNT_SQL,
@@ -194,34 +197,18 @@ const OPENCODE_V2_TABLES: OpenCodeTableSet = {
 
 const OPENCODE_LEGACY_TABLES: OpenCodeTableSet = {
   kind: 'legacy',
+  malformedAssistantSql: null,
   messageSql: OPENCODE_LEGACY_MESSAGE_SQL,
-  role: null,
   sessionSql: OPENCODE_LEGACY_SESSION_SQL,
   skillPartSql: openCodeLegacySkillPartSql,
   toolCountSql: OPENCODE_LEGACY_TOOL_COUNT_SQL,
   turnSql: OPENCODE_LEGACY_TURN_SQL,
 };
 
-/** The current schema is read first so that a migrated message is taken from it and skipped in the legacy tables. */
-const detectOpenCodeTableSets = (tables: ReadonlySet<string>): OpenCodeTableSet[] => {
-  const sets: OpenCodeTableSet[] = [];
-  if (tables.has('session_v2') && tables.has('session_message')) {
-    sets.push(OPENCODE_V2_TABLES);
-  }
-  if (tables.has('session') && tables.has('message') && tables.has('part')) {
-    sets.push(OPENCODE_LEGACY_TABLES);
-  }
-  return sets;
+const OPENCODE_TABLE_SETS: Record<OpenCodeSchemaKind, OpenCodeTableSet> = {
+  legacy: OPENCODE_LEGACY_TABLES,
+  v2: OPENCODE_V2_TABLES,
 };
-
-const openCodeSchemaError = (dbPath: string, tables: ReadonlySet<string>): LocalHistoryError =>
-  new LocalHistoryError({
-    operation: 'opencode.schema',
-    path: dbPath,
-    cause: new Error(
-      `No known OpenCode session schema: expected the tables session, message and part (legacy) or session_v2 and session_message (current); found ${[...tables].sort().join(', ') || 'no table'}`,
-    ),
-  });
 
 const optionalId = (value: unknown): string | null => (typeof value === 'string' && value.length > 0 ? value : null);
 
@@ -247,7 +234,7 @@ const readOpenCodeDatabaseFacts = (
       (rows) => ({ db: source, rows: rows.length }),
     );
     const tables = new Set(schemaRows.flatMap((row) => (typeof row.name === 'string' ? [row.name] : [])));
-    const tableSets = detectOpenCodeTableSets(tables);
+    const tableSets = openCodeSchemaKinds(tables).map((kind) => OPENCODE_TABLE_SETS[kind]);
     if (tableSets.length === 0) {
       return yield* Effect.fail(openCodeSchemaError(dbPath, tables));
     }
@@ -313,7 +300,6 @@ const readOpenCodeDatabaseFacts = (
       yield* withPerfSpan(
         'aiUsage.collect.opencode.parse.messages',
         Effect.sync(() => {
-          let assistantRows = 0;
           let tokenRows = 0;
           let skippedRows = 0;
           for (const row of messageRows) {
@@ -321,19 +307,7 @@ const readOpenCodeDatabaseFacts = (
               skippedRows++;
               continue;
             }
-            const data = safeJSON(row.data);
-            if (tableSet.role === 'assistant' && data === null) {
-              // The row is declared an assistant message by its type column, so
-              // an unreadable payload is a lost metric record, not a non-metric row.
-              facts.rejectedMetricRecords++;
-              continue;
-            }
-            const role = tableSet.role ?? data?.role;
-            if (role !== 'assistant') {
-              continue;
-            }
-            assistantRows++;
-            const decoded = decodeOpenCodeMessageRow({ ...data, role, created: row.time_created });
+            const decoded = decodeOpenCodeMessageColumns(row);
             if (decoded.kind === 'ignored') {
               continue;
             }
@@ -344,18 +318,27 @@ const readOpenCodeDatabaseFacts = (
             tokenRows++;
             facts.factsBySession.getOrInsertComputed(row.session_id, () => []).push(decoded.value);
           }
-          return { assistantRows, skippedRows, tokenRows };
+          return { skippedRows, tokenRows };
         }),
         (result) => ({
           db: source,
           rows: messageRows.length,
           schema: tableSet.kind,
           sessions: facts.factsBySession.size,
-          assistantRows: result.assistantRows,
           skippedRows: result.skippedRows,
           tokenRows: result.tokenRows,
         }),
       );
+      if (tableSet.malformedAssistantSql) {
+        const malformedRows = yield* withPerfSpan(
+          span('malformedMessages'),
+          db.all<CountRow>(tableSet.malformedAssistantSql),
+          (rows) => ({ db: source, rows: rows.length, schema: tableSet.kind }),
+        );
+        const malformed = parseOptionalNonNegativeSafeInteger(malformedRows[0]?.n);
+        // A count that does not parse is itself one unreadable record.
+        facts.rejectedMetricRecords += malformed.ok ? malformed.value : 1;
+      }
 
       const turnRows = yield* withPerfSpan(span('turnCounts'), db.all<TurnRow>(tableSet.turnSql), (rows) => ({
         db: source,

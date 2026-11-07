@@ -11,6 +11,7 @@ import {
   openCodeParentKind,
 } from '@ai-usage/local-machine/opencode-session-facts';
 import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
+import { seedOpenCodeV2Scenario } from '@ai-usage/local-machine/testing/opencode-v2-database';
 import { serializeUsageRow } from '@ai-usage/report-core/report-data';
 import { sessionProjectionFactsForSerializedRow } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
@@ -209,5 +210,37 @@ describe('OpenCode session facts', () => {
       { model: 'openai/gpt-5', promptIds: [] },
     ]);
     expect(analysis.detail.turnsStatus).toBe('partial');
+  });
+
+  test('keeps report and detail projection facts identical across the session_v2 and legacy schemas', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'opencode-v2-parity-'));
+    temporaryHomes.push(home);
+    const scenario = await seedOpenCodeV2Scenario(home);
+    const storage = createLocalHistoryStorage(home);
+    const run = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>): Promise<A> =>
+      Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+
+    const collection = await run(collectOpenCodeResult);
+    for (const sourceSessionId of Object.values(scenario.ids)) {
+      const analysis = await run(readOpenCodeSessionAnalysis(sourceSessionId));
+      const reportRow = collection.rows.find((row) => row.source?.sourceSessionId === sourceSessionId);
+      if (!(reportRow && analysis)) {
+        throw new Error(`Expected matching OpenCode report and detail rows for ${sourceSessionId}`);
+      }
+      const { projectPath: _projectPath, source: _source, ...rowWithoutSource } = reportRow;
+      expect(sessionProjectionFactsForSerializedRow(serializeUsageRow(rowWithoutSource))).toEqual(analysis.projection);
+    }
+    const v2Content = await run(readOpenCodeSessionAnalysis(scenario.ids.v2Content));
+    expect(v2Content?.projection).toEqual({
+      calls: 3,
+      durationMs: 71_000,
+      modelSegments: [
+        { model: 'claude-agent/opus', tokens: { cacheRead: 20, cacheWrite: 4, input: 56, output: 17, total: 97 } },
+      ],
+      partial: false,
+      tokens: { cacheRead: 20, cacheWrite: 4, input: 56, output: 17, total: 97 },
+      tools: 3,
+      turns: 1,
+    });
   });
 });

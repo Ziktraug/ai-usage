@@ -159,6 +159,65 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
   };
 };
 
+/**
+ * One assistant message as `OPENCODE_MESSAGE_METRIC_COLUMNS` projects it. Every
+ * value is `unknown`: the columns come straight from SQLite and are validated by
+ * `decodeOpenCodeMessageRow`.
+ */
+export interface OpenCodeMessageColumnRow {
+  completed?: unknown;
+  cost: unknown;
+  created: unknown;
+  id?: unknown;
+  model_id: unknown;
+  parent_id?: unknown;
+  provider_id: unknown;
+  role: unknown;
+  token_cache_read: unknown;
+  token_cache_write: unknown;
+  token_input: unknown;
+  token_output: unknown;
+  token_reasoning: unknown;
+  tokens_type: unknown;
+  variant: unknown;
+}
+
+/**
+ * Decode the projected metric columns of one message. A `tokens` object that
+ * is present but empty still counts as a token payload; an absent or null one
+ * leaves the message ignored, as with the raw payload.
+ */
+export const decodeOpenCodeMessageColumns = (row: OpenCodeMessageColumnRow): OpenCodeMessageDecodeResult => {
+  const hasExtractedTokenValue = [
+    row.token_cache_read,
+    row.token_cache_write,
+    row.token_input,
+    row.token_output,
+    row.token_reasoning,
+  ].some((value) => value !== undefined && value !== null);
+  const tokens =
+    row.tokens_type === 'object' || hasExtractedTokenValue
+      ? {
+          cache: { read: row.token_cache_read, write: row.token_cache_write },
+          input: row.token_input,
+          output: row.token_output,
+          reasoning: row.token_reasoning,
+        }
+      : undefined;
+  return decodeOpenCodeMessageRow({
+    completed: row.completed,
+    cost: row.cost,
+    created: row.created,
+    id: row.id,
+    model_id: row.model_id,
+    parent_id: row.parent_id,
+    provider_id: row.provider_id,
+    role: row.role,
+    ...(tokens ? { tokens } : {}),
+    variant: row.variant,
+  });
+};
+
 export interface OpenCodeSkillPartRow {
   data: unknown;
   id?: unknown;

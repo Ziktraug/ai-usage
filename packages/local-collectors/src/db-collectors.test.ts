@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { OPENCODE_SCHEMA_SQL } from '@ai-usage/local-machine/opencode-schema';
 import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
@@ -14,7 +15,7 @@ import {
   OPENCODE_LEGACY_SESSION_SQL,
   OPENCODE_LEGACY_TOOL_COUNT_SQL,
   OPENCODE_LEGACY_TURN_SQL,
-  OPENCODE_SCHEMA_SQL,
+  OPENCODE_V2_MALFORMED_ASSISTANT_SQL,
   OPENCODE_V2_MESSAGE_SQL,
   OPENCODE_V2_SESSION_SQL,
   OPENCODE_V2_TOOL_COUNT_SQL,
@@ -43,14 +44,27 @@ interface OpenCodeSessionFixture {
   title: string;
   [column: string]: unknown;
 }
+/** The metric columns the collector projects out of a message payload in SQL. */
 interface OpenCodeMessageFixture {
-  data: string;
+  completed?: number | string | null;
+  cost?: number | null;
+  created?: number | string;
   id: string;
+  model_id?: string;
+  provider_id?: string;
+  role?: string;
   session_id: string;
-  time_created?: number;
+  token_cache_read?: unknown;
+  token_cache_write?: unknown;
+  token_input?: unknown;
+  token_output?: unknown;
+  token_reasoning?: unknown;
+  tokens_type?: string | null;
+  variant?: string | null;
   [column: string]: unknown;
 }
 interface OpenCodeTableFixture {
+  malformedAssistantRows?: number;
   messages: OpenCodeMessageFixture[];
   sessions: OpenCodeSessionFixture[];
   skillParts?: Array<{ data: string; id?: string; message_id: string; session_id: string; time_created?: number }>;
@@ -80,6 +94,7 @@ const writeOpenCodeV2Tables = (storage: TestMemoryStorage, dbPath: string, fixtu
   storage.writeDatabaseRows(dbPath, OPENCODE_V2_TOOL_COUNT_SQL, fixture.tools ?? []);
   storage.writeDatabaseRows(dbPath, OPENCODE_V2_TURN_SQL, fixture.turns ?? []);
   storage.writeDatabaseRows(dbPath, OPENCODE_V2_MESSAGE_SQL, fixture.messages);
+  storage.writeDatabaseRows(dbPath, OPENCODE_V2_MALFORMED_ASSISTANT_SQL, [{ n: fixture.malformedAssistantRows ?? 0 }]);
   storage.writeDatabaseRows(dbPath, openCodeV2SkillPartSql(MAX_OPENCODE_SKILL_PARTS), fixture.skillParts ?? []);
 };
 
@@ -93,11 +108,12 @@ const writeOpenCodeV2Database = (storage: TestMemoryStorage, dbPath: string, fix
   writeOpenCodeV2Tables(storage, dbPath, fixture);
 };
 
-/** The `session_v2` message payload: the role lives in the row's `type` column, the model is an object. */
-const v2Assistant = (
-  model: { id: string; providerID: string; variant?: string },
-  usage: { cost?: number | null; tokens: Record<string, unknown>; time?: Record<string, unknown> },
-) => JSON.stringify({ model, ...usage });
+/** One assistant message as the collector's SQL projects it; both schemas yield the same columns. */
+const assistantRow = (
+  id: string,
+  sessionId: string,
+  columns: Omit<OpenCodeMessageFixture, 'id' | 'session_id'>,
+): OpenCodeMessageFixture => ({ id, role: 'assistant', session_id: sessionId, tokens_type: 'object', ...columns });
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
 const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';
@@ -165,16 +181,8 @@ describe('DB-backed Harness collectors', () => {
         { id: 'open-session', title: 'Open session', directory: '/work', summary_additions: 0, summary_deletions: 0 },
       ],
       messages: [
-        {
-          id: 'invalid-message',
-          session_id: 'open-session',
-          data: JSON.stringify({ role: 'assistant', tokens: { input: 'private-invalid-value' } }),
-        },
-        {
-          id: 'valid-message',
-          session_id: 'open-session',
-          data: JSON.stringify({ role: 'assistant', tokens: { input: 10, output: 5 } }),
-        },
+        assistantRow('invalid-message', 'open-session', { token_input: 'private-invalid-value' }),
+        assistantRow('valid-message', 'open-session', { token_input: 10, token_output: 5 }),
       ],
     });
     const opencode = runWithStorage(
@@ -548,19 +556,18 @@ describe('DB-backed Harness collectors', () => {
       tools: [{ session_id: 'session-1', message_id: 'assistant-1', n: 2 }],
       turns: [{ session_id: 'session-1', message_id: 'user-1' }],
       messages: [
-        { id: 'user-1', session_id: 'session-1', data: JSON.stringify({ role: 'user' }) },
-        {
-          id: 'assistant-1',
-          session_id: 'session-1',
-          data: JSON.stringify({
-            role: 'assistant',
-            providerID: 'openai',
-            modelID: 'gpt-5.3',
-            cost: 0.12,
-            tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 4 } },
-            time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:01:00.000Z' },
-          }),
-        },
+        assistantRow('assistant-1', 'session-1', {
+          completed: '2026-01-01T00:01:00.000Z',
+          cost: 0.12,
+          created: '2026-01-01T00:00:00.000Z',
+          model_id: 'gpt-5.3',
+          provider_id: 'openai',
+          token_cache_read: 30,
+          token_cache_write: 4,
+          token_input: 100,
+          token_output: 20,
+          token_reasoning: 5,
+        }),
       ],
     });
 
@@ -584,11 +591,8 @@ describe('DB-backed Harness collectors', () => {
 
   test('preserves OpenCode provider/model chronology and separates active time from pauses', () => {
     const storage = new TestMemoryStorage();
-    const assistant = (id: string, data: Record<string, unknown>) => ({
-      id,
-      session_id: 'mixed-session',
-      data: JSON.stringify({ role: 'assistant', ...data }),
-    });
+    const assistant = (id: string, columns: Omit<OpenCodeMessageFixture, 'id' | 'session_id'>) =>
+      assistantRow(id, 'mixed-session', columns);
     writeOpenCodeLegacyDatabase(storage, OPENCODE_DB, {
       sessions: [
         {
@@ -606,39 +610,49 @@ describe('DB-backed Harness collectors', () => {
       ],
       messages: [
         assistant('assistant-1', {
-          providerID: 'openai',
-          modelID: 'gpt-5',
+          completed: '2026-02-01T00:01:00.000Z',
           cost: 0,
-          tokens: { input: 1_100_000, output: 0 },
-          time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
+          created: '2026-02-01T00:00:00.000Z',
+          model_id: 'gpt-5',
+          provider_id: 'openai',
+          token_input: 1_100_000,
+          token_output: 0,
         }),
         assistant('assistant-2', {
-          providerID: 'anthropic',
-          modelID: 'claude-sonnet-4-5',
+          completed: '2026-02-01T01:01:00.000Z',
           cost: 1,
-          tokens: { input: 1_000_000, output: 0 },
-          time: { created: '2026-02-01T01:00:00.000Z', completed: '2026-02-01T01:01:00.000Z' },
+          created: '2026-02-01T01:00:00.000Z',
+          model_id: 'claude-sonnet-4-5',
+          provider_id: 'anthropic',
+          token_input: 1_000_000,
+          token_output: 0,
         }),
         assistant('assistant-3', {
-          providerID: 'openai',
-          modelID: 'gpt-5',
           cost: 0,
-          tokens: { input: 200_000, output: 0 },
-          time: { created: '2026-02-01T02:00:00.000Z' },
+          created: '2026-02-01T02:00:00.000Z',
+          model_id: 'gpt-5',
+          provider_id: 'openai',
+          token_input: 200_000,
+          token_output: 0,
         }),
         assistant('assistant-4', {
-          providerID: 'local',
-          modelID: 'unpriced-zero-token-model',
           cost: 0,
-          tokens: { input: 0, output: 0 },
-          time: { created: '2026-02-01T03:00:00.000Z' },
+          created: '2026-02-01T03:00:00.000Z',
+          model_id: 'unpriced-zero-token-model',
+          provider_id: 'local',
+          token_input: 0,
+          token_output: 0,
         }),
         assistant('assistant-5', {
-          providerID: 'local',
-          modelID: 'unpriced-token-model',
           cost: 0,
-          tokens: { input: 7, output: 2, reasoning: 1, cache: { read: 4, write: 5 } },
-          time: { created: '2026-02-01T04:00:00.000Z' },
+          created: '2026-02-01T04:00:00.000Z',
+          model_id: 'unpriced-token-model',
+          provider_id: 'local',
+          token_cache_read: 4,
+          token_cache_write: 5,
+          token_input: 7,
+          token_output: 2,
+          token_reasoning: 1,
         }),
       ],
     });
@@ -743,19 +757,17 @@ describe('DB-backed Harness collectors', () => {
       tools: [{ session_id: 'live-1', message_id: 'live-assistant', n: 1 }],
       turns: [{ session_id: 'live-1', message_id: 'live-user' }],
       messages: [
-        { id: 'live-user', session_id: 'live-1', data: JSON.stringify({ role: 'user' }) },
-        {
-          id: 'live-assistant',
-          session_id: 'live-1',
-          data: JSON.stringify({
-            role: 'assistant',
-            providerID: 'anthropic',
-            modelID: 'claude-4',
-            cost: 0.05,
-            tokens: { input: 50, output: 10, cache: { read: 5, write: 1 } },
-            time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
-          }),
-        },
+        assistantRow('live-assistant', 'live-1', {
+          completed: '2026-02-01T00:01:00.000Z',
+          cost: 0.05,
+          created: '2026-02-01T00:00:00.000Z',
+          model_id: 'claude-4',
+          provider_id: 'anthropic',
+          token_cache_read: 5,
+          token_cache_write: 1,
+          token_input: 50,
+          token_output: 10,
+        }),
       ],
     });
 
@@ -764,19 +776,16 @@ describe('DB-backed Harness collectors', () => {
       tools: [{ session_id: 'stable-1', message_id: 'stable-assistant', n: 3 }],
       turns: [{ session_id: 'stable-1', message_id: 'stable-user' }],
       messages: [
-        { id: 'stable-user', session_id: 'stable-1', data: JSON.stringify({ role: 'user' }) },
-        {
-          id: 'stable-assistant',
-          session_id: 'stable-1',
-          data: JSON.stringify({
-            role: 'assistant',
-            providerID: 'openai',
-            modelID: 'gpt-5',
-            cost: 0,
-            tokens: { input: 200, output: 40, reasoning: 10 },
-            time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:02:00.000Z' },
-          }),
-        },
+        assistantRow('stable-assistant', 'stable-1', {
+          completed: '2026-01-01T00:02:00.000Z',
+          cost: 0,
+          created: '2026-01-01T00:00:00.000Z',
+          model_id: 'gpt-5',
+          provider_id: 'openai',
+          token_input: 200,
+          token_output: 40,
+          token_reasoning: 10,
+        }),
       ],
     });
 
@@ -810,30 +819,32 @@ describe('DB-backed Harness collectors', () => {
         { session_id: 'v2-session', message_id: 'v2-user-2' },
       ],
       messages: [
-        {
-          id: 'v2-assistant-1',
-          session_id: 'v2-session',
-          data: v2Assistant(
-            { id: 'opus', providerID: 'claude-agent', variant: 'implementation' },
-            {
-              cost: 0,
-              tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 4 } },
-              time: { created: 1_793_000_000_000, completed: 1_793_000_060_000 },
-            },
-          ),
-        },
-        {
-          id: 'v2-assistant-2',
-          session_id: 'v2-session',
-          data: v2Assistant(
-            { id: 'gpt-6.1-sol', providerID: 'openai', variant: 'high' },
-            {
-              cost: 0,
-              tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
-              time: { created: 1_793_000_120_000, completed: 1_793_000_130_000 },
-            },
-          ),
-        },
+        assistantRow('v2-assistant-1', 'v2-session', {
+          completed: 1_793_000_060_000,
+          cost: 0,
+          created: 1_793_000_000_000,
+          model_id: 'opus',
+          provider_id: 'claude-agent',
+          token_cache_read: 30,
+          token_cache_write: 4,
+          token_input: 100,
+          token_output: 20,
+          token_reasoning: 5,
+          variant: 'implementation',
+        }),
+        assistantRow('v2-assistant-2', 'v2-session', {
+          completed: 1_793_000_130_000,
+          cost: 0,
+          created: 1_793_000_120_000,
+          model_id: 'gpt-6.1-sol',
+          provider_id: 'openai',
+          token_cache_read: 0,
+          token_cache_write: 0,
+          token_input: 10,
+          token_output: 2,
+          token_reasoning: 0,
+          variant: 'high',
+        }),
       ],
     });
 
@@ -856,8 +867,15 @@ describe('DB-backed Harness collectors', () => {
   test('reads session_v2 and the legacy session table once per session and once per message', () => {
     const storage = new TestMemoryStorage();
     writeOpenCodeSchema(storage, OPENCODE_DB, [...OPENCODE_LEGACY_TABLES, ...OPENCODE_V2_TABLES]);
-    const migratedTime = { created: 1_780_000_000_000, completed: 1_780_000_010_000 };
-    const legacyAssistant = (data: Record<string, unknown>) => JSON.stringify({ role: 'assistant', ...data });
+    const migrated = {
+      completed: 1_780_000_010_000,
+      cost: 0,
+      created: 1_780_000_000_000,
+      model_id: 'gpt-5.3-codex',
+      provider_id: 'openai',
+      token_input: 100,
+      token_output: 10,
+    };
     writeOpenCodeV2Tables(storage, OPENCODE_DB, {
       sessions: [
         {
@@ -872,22 +890,15 @@ describe('DB-backed Harness collectors', () => {
       tools: [{ session_id: 'shared', message_id: 'shared-migrated', n: 2 }],
       turns: [{ session_id: 'shared', message_id: 'shared-user' }],
       messages: [
-        {
-          id: 'shared-migrated',
-          session_id: 'shared',
-          data: v2Assistant(
-            { id: 'gpt-5.3-codex', providerID: 'openai' },
-            { cost: 0, tokens: { input: 100, output: 10 }, time: migratedTime },
-          ),
-        },
-        {
-          id: 'v2-only-assistant',
-          session_id: 'v2-only',
-          data: v2Assistant(
-            { id: 'minimax-m3', providerID: 'opencode-go' },
-            { cost: 0, tokens: { input: 7, output: 3 }, time: { created: 1_790_000_000_000 } },
-          ),
-        },
+        assistantRow('shared-migrated', 'shared', migrated),
+        assistantRow('v2-only-assistant', 'v2-only', {
+          cost: 0,
+          created: 1_790_000_000_000,
+          model_id: 'minimax-m3',
+          provider_id: 'opencode-go',
+          token_input: 7,
+          token_output: 3,
+        }),
       ],
     });
     writeOpenCodeLegacyTables(storage, OPENCODE_DB, {
@@ -920,39 +931,23 @@ describe('DB-backed Harness collectors', () => {
         { session_id: 'legacy-only', message_id: 'legacy-user' },
       ],
       messages: [
-        {
-          id: 'shared-migrated',
-          session_id: 'shared',
-          data: legacyAssistant({
-            providerID: 'openai',
-            modelID: 'gpt-5.3-codex',
-            cost: 0,
-            tokens: { input: 100, output: 10 },
-            time: migratedTime,
-          }),
-        },
-        {
-          id: 'shared-legacy-only',
-          session_id: 'shared',
-          data: legacyAssistant({
-            providerID: 'openai',
-            modelID: 'gpt-5.3-codex',
-            cost: 0,
-            tokens: { input: 50, output: 5 },
-            time: { created: 1_779_000_000_000, completed: 1_779_000_005_000 },
-          }),
-        },
-        {
-          id: 'legacy-assistant',
-          session_id: 'legacy-only',
-          data: legacyAssistant({
-            providerID: 'anthropic',
-            modelID: 'claude-sonnet-4-5',
-            cost: 0.5,
-            tokens: { input: 20, output: 4 },
-            time: { created: 1_770_000_000_000, completed: 1_770_000_001_000 },
-          }),
-        },
+        assistantRow('shared-migrated', 'shared', migrated),
+        assistantRow('shared-legacy-only', 'shared', {
+          ...migrated,
+          completed: 1_779_000_005_000,
+          created: 1_779_000_000_000,
+          token_input: 50,
+          token_output: 5,
+        }),
+        assistantRow('legacy-assistant', 'legacy-only', {
+          completed: 1_770_000_001_000,
+          cost: 0.5,
+          created: 1_770_000_000_000,
+          model_id: 'claude-sonnet-4-5',
+          provider_id: 'anthropic',
+          token_input: 20,
+          token_output: 4,
+        }),
       ],
     });
 

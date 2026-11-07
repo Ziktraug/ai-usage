@@ -1,6 +1,10 @@
 import { Database } from 'bun:sqlite';
-import { describe, expect, test } from 'bun:test';
-import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { OPENCODE_SCHEMA_SQL } from '@ai-usage/local-machine/opencode-schema';
 import {
   OPENCODE_DETAIL_CHILDREN_SQL,
   OPENCODE_DETAIL_MESSAGE_SQL,
@@ -11,6 +15,10 @@ import {
   readOpenCodeSessionAnalysis,
 } from '@ai-usage/local-machine/opencode-session-analysis';
 import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
+import {
+  createOpenCodeUnknownSchemaDatabase,
+  seedOpenCodeV2Scenario,
+} from '@ai-usage/local-machine/testing/opencode-v2-database';
 import { parseSessionDetail } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
 
@@ -22,6 +30,21 @@ const MESSAGE_PARAMETERS = [SESSION_ID, 2049] as const;
 const PARENT_PARAMETERS = [SESSION_ID, SESSION_ID, 1025] as const;
 const PROMPT_PARAMETERS = [SESSION_ID, SESSION_ID, 1025] as const;
 const TOOL_PARAMETERS = [SESSION_ID, 1025] as const;
+const LEGACY_SCHEMA_ROWS = [{ name: 'message' }, { name: 'part' }, { name: 'session' }];
+
+const temporaryHomes: string[] = [];
+afterEach(async () => {
+  for (const home of temporaryHomes.splice(0)) {
+    await rm(home, { force: true, recursive: true });
+  }
+});
+const makeHome = async (): Promise<string> => {
+  const home = await mkdtemp(join(tmpdir(), 'opencode-analysis-'));
+  temporaryHomes.push(home);
+  return home;
+};
+const runAtHome = <A, E>(home: string, effect: Effect.Effect<A, E, LocalHistoryStorage>): Promise<A> =>
+  Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
 const readOpenCodeDetailForTest = (sourceSessionId: string) =>
   readOpenCodeSessionAnalysis(sourceSessionId).pipe(Effect.map((analysis) => analysis?.detail ?? null));
@@ -30,6 +53,7 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
 const writeDetailFixture = (storage: TestMemoryStorage): void => {
+  storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SCHEMA_SQL, LEGACY_SCHEMA_ROWS);
   storage.writeDatabaseRows(
     OPENCODE_DB,
     OPENCODE_DETAIL_SESSION_SQL,
@@ -126,6 +150,7 @@ const writeDetailFixture = (storage: TestMemoryStorage): void => {
 };
 
 const writeGroupedTurnFixture = (storage: TestMemoryStorage): void => {
+  storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SCHEMA_SQL, LEGACY_SCHEMA_ROWS);
   storage.writeDatabaseRows(
     OPENCODE_DB,
     OPENCODE_DETAIL_SESSION_SQL,
@@ -434,6 +459,7 @@ describe('OpenCode session detail', () => {
   test('binds the requested session id instead of interpolating it into SQL', () => {
     const storage = new TestMemoryStorage();
     const sourceSessionId = "session' OR 1=1";
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SCHEMA_SQL, LEGACY_SCHEMA_ROWS);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_SESSION_SQL, [], [sourceSessionId, 2]);
 
     expect(runWithStorage(readOpenCodeDetailForTest(sourceSessionId), storage)).toBeNull();
@@ -459,6 +485,108 @@ describe('OpenCode session detail', () => {
     expect(detail.turns.reduce((total, turn) => total + turn.tokens.total, 0)).toBe(24);
     expect(detail.phases.reduce((total, phase) => total + phase.tokens.total, 0)).toBe(24);
     expect(detail.turns.reduce((total, turn) => total + (turn.durationMs ?? 0), 0)).toBe(detail.activeDurationMs ?? -1);
+  });
+
+  test('reads a session_v2 session: rounds by sequence, prompts from message text, tools from content', async () => {
+    const home = await makeHome();
+    const scenario = await seedOpenCodeV2Scenario(home);
+    const t0 = scenario.times.v2ContentStartMs;
+
+    const analysis = await runAtHome(home, readOpenCodeSessionAnalysis(scenario.ids.v2Content));
+
+    if (!analysis) {
+      throw new Error('Expected session_v2 analysis');
+    }
+    const { detail } = analysis;
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(detail.prompts).toEqual([
+      { id: 'v2-user-1', text: 'Run the v2 fixture', timestamp: new Date(t0).toISOString(), truncated: false },
+    ]);
+    expect(detail.turns).toHaveLength(1);
+    expect(detail.turns[0]).toMatchObject({
+      calls: 3,
+      durationMs: 71_000,
+      effort: 'high',
+      model: 'claude-agent/opus',
+      promptIds: ['v2-user-1'],
+      timingStatus: 'recorded',
+      tokens: { cacheRead: 20, cacheWrite: 4, input: 56, output: 17, total: 97 },
+      tools: 3,
+    });
+    expect(detail.turnsStatus).toBe('recorded');
+    expect(detail.durationStatus).toBe('recorded');
+    expect(detail.efforts).toEqual(['high']);
+    expect(detail.models).toEqual(['claude-agent/opus']);
+    expect(detail.startedAt).toBe(new Date(t0).toISOString());
+    expect(detail.endedAt).toBe(new Date(t0 + 111_000).toISOString());
+    expect(detail.activeDurationMs).toBe(71_000);
+    expect(detail.coverage.grouping).toEqual({ omittedCount: 0, reasons: [], status: 'complete' });
+    expect(analysis.projection).toEqual({
+      calls: 3,
+      durationMs: 71_000,
+      modelSegments: [
+        { model: 'claude-agent/opus', tokens: { cacheRead: 20, cacheWrite: 4, input: 56, output: 17, total: 97 } },
+      ],
+      partial: false,
+      tokens: { cacheRead: 20, cacheWrite: 4, input: 56, output: 17, total: 97 },
+      tools: 3,
+      turns: 1,
+    });
+  });
+
+  test('reads a partially migrated session once per message across both schemas', async () => {
+    const home = await makeHome();
+    const scenario = await seedOpenCodeV2Scenario(home);
+    const a = scenario.times.sharedStartMs;
+
+    const analysis = await runAtHome(home, readOpenCodeSessionAnalysis(scenario.ids.shared));
+
+    if (!analysis) {
+      throw new Error('Expected mixed-schema analysis');
+    }
+    const { detail } = analysis;
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(detail.prompts.map(({ id, text }) => ({ id, text }))).toEqual([
+      { id: 'shared-user', text: 'go' },
+      { id: 'shared-legacy-user-part', text: 'more' },
+    ]);
+    expect(detail.turns.map(({ calls, promptIds, tokens, tools }) => ({ calls, promptIds, tokens, tools }))).toEqual([
+      {
+        calls: 1,
+        promptIds: ['shared-user'],
+        tokens: { cacheRead: 0, cacheWrite: 0, input: 100, output: 10, total: 110 },
+        tools: 2,
+      },
+      {
+        calls: 1,
+        promptIds: ['shared-legacy-user-part'],
+        tokens: { cacheRead: 0, cacheWrite: 0, input: 50, output: 5, total: 55 },
+        tools: 1,
+      },
+    ]);
+    expect(detail.turnsStatus).toBe('recorded');
+    expect(detail.startedAt).toBe(new Date(a).toISOString());
+    expect(detail.endedAt).toBe(new Date(a + 16_000).toISOString());
+    expect(analysis.projection).toMatchObject({ calls: 2, durationMs: 10_000, partial: false, tools: 3, turns: 2 });
+    expect(analysis.projection.tokens).toEqual({ cacheRead: 0, cacheWrite: 0, input: 150, output: 15, total: 165 });
+
+    const legacyOnly = await runAtHome(home, readOpenCodeSessionAnalysis(scenario.ids.legacyOnly));
+    expect(legacyOnly?.projection).toMatchObject({ calls: 1, tools: 0, turns: 0 });
+    const v2Only = await runAtHome(home, readOpenCodeSessionAnalysis(scenario.ids.v2Only));
+    expect(v2Only?.projection).toMatchObject({ calls: 1, tools: 0, turns: 0 });
+    expect(v2Only?.detail.models).toEqual(['opencode-go/minimax-m3']);
+  });
+
+  test('fails on a database without a known session schema instead of answering null', async () => {
+    const home = await makeHome();
+    const databasePath = await createOpenCodeUnknownSchemaDatabase(home);
+
+    const result = await runAtHome(home, readOpenCodeSessionAnalysis('any-session').pipe(Effect.result));
+
+    expect(result._tag).toBe('Failure');
+    if (result._tag === 'Failure') {
+      expect(result.failure).toMatchObject({ operation: 'opencode.schema', path: databasePath });
+    }
   });
 
   test('lists child sessions by parent id without inventing a spawning turn', () => {
