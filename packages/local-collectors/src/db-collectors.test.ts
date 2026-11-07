@@ -5,7 +5,23 @@ import { Effect } from 'effect';
 import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
 import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
-import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
+import {
+  classifyOpenCodeTitle,
+  collectOpenCode,
+  collectOpenCodeResult,
+  MAX_OPENCODE_SKILL_PARTS,
+  OPENCODE_LEGACY_MESSAGE_SQL,
+  OPENCODE_LEGACY_SESSION_SQL,
+  OPENCODE_LEGACY_TOOL_COUNT_SQL,
+  OPENCODE_LEGACY_TURN_SQL,
+  OPENCODE_SCHEMA_SQL,
+  OPENCODE_V2_MESSAGE_SQL,
+  OPENCODE_V2_SESSION_SQL,
+  OPENCODE_V2_TOOL_COUNT_SQL,
+  OPENCODE_V2_TURN_SQL,
+  openCodeLegacySkillPartSql,
+  openCodeV2SkillPartSql,
+} from './collectors/opencode';
 import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
@@ -15,12 +31,73 @@ const runAsyncWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStora
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
-const OPENCODE_SESSION_SQL = { includes: ['SELECT id, parent_id, title, directory', 'FROM session'] } as const;
-const OPENCODE_TOOL_SQL = {
-  includes: ['FROM part WHERE', "json_extract(data, '$.type') = 'tool'"],
-} as const;
-const OPENCODE_TURN_SQL = { includes: ['count(DISTINCT m.id)', 'FROM message m JOIN part p'] } as const;
-const OPENCODE_MESSAGE_SQL = { includes: ['SELECT session_id, data, time_created FROM message'] } as const;
+const OPENCODE_LEGACY_TABLES = ['session', 'message', 'part'] as const;
+const OPENCODE_V2_TABLES = ['session_v2', 'session_message'] as const;
+
+interface OpenCodeSessionFixture {
+  directory: string;
+  id: string;
+  parent_id?: string | null;
+  summary_additions: number;
+  summary_deletions: number;
+  title: string;
+  [column: string]: unknown;
+}
+interface OpenCodeMessageFixture {
+  data: string;
+  id: string;
+  session_id: string;
+  time_created?: number;
+  [column: string]: unknown;
+}
+interface OpenCodeTableFixture {
+  messages: OpenCodeMessageFixture[];
+  sessions: OpenCodeSessionFixture[];
+  skillParts?: Array<{ data: string; id?: string; message_id: string; session_id: string; time_created?: number }>;
+  tools?: Array<{ message_id: string; n: number; session_id: string }>;
+  turns?: Array<{ message_id: string; session_id: string }>;
+}
+
+/** Which of the known OpenCode tables the fixture database declares. */
+const writeOpenCodeSchema = (storage: TestMemoryStorage, dbPath: string, tables: readonly string[]) => {
+  storage.writeDatabaseRows(
+    dbPath,
+    OPENCODE_SCHEMA_SQL,
+    tables.map((name) => ({ name })),
+  );
+};
+
+const writeOpenCodeLegacyTables = (storage: TestMemoryStorage, dbPath: string, fixture: OpenCodeTableFixture) => {
+  storage.writeDatabaseRows(dbPath, OPENCODE_LEGACY_SESSION_SQL, fixture.sessions);
+  storage.writeDatabaseRows(dbPath, OPENCODE_LEGACY_TOOL_COUNT_SQL, fixture.tools ?? []);
+  storage.writeDatabaseRows(dbPath, OPENCODE_LEGACY_TURN_SQL, fixture.turns ?? []);
+  storage.writeDatabaseRows(dbPath, OPENCODE_LEGACY_MESSAGE_SQL, fixture.messages);
+  storage.writeDatabaseRows(dbPath, openCodeLegacySkillPartSql(MAX_OPENCODE_SKILL_PARTS), fixture.skillParts ?? []);
+};
+
+const writeOpenCodeV2Tables = (storage: TestMemoryStorage, dbPath: string, fixture: OpenCodeTableFixture) => {
+  storage.writeDatabaseRows(dbPath, OPENCODE_V2_SESSION_SQL, fixture.sessions);
+  storage.writeDatabaseRows(dbPath, OPENCODE_V2_TOOL_COUNT_SQL, fixture.tools ?? []);
+  storage.writeDatabaseRows(dbPath, OPENCODE_V2_TURN_SQL, fixture.turns ?? []);
+  storage.writeDatabaseRows(dbPath, OPENCODE_V2_MESSAGE_SQL, fixture.messages);
+  storage.writeDatabaseRows(dbPath, openCodeV2SkillPartSql(MAX_OPENCODE_SKILL_PARTS), fixture.skillParts ?? []);
+};
+
+const writeOpenCodeLegacyDatabase = (storage: TestMemoryStorage, dbPath: string, fixture: OpenCodeTableFixture) => {
+  writeOpenCodeSchema(storage, dbPath, OPENCODE_LEGACY_TABLES);
+  writeOpenCodeLegacyTables(storage, dbPath, fixture);
+};
+
+const writeOpenCodeV2Database = (storage: TestMemoryStorage, dbPath: string, fixture: OpenCodeTableFixture) => {
+  writeOpenCodeSchema(storage, dbPath, OPENCODE_V2_TABLES);
+  writeOpenCodeV2Tables(storage, dbPath, fixture);
+};
+
+/** The `session_v2` message payload: the role lives in the row's `type` column, the model is an object. */
+const v2Assistant = (
+  model: { id: string; providerID: string; variant?: string },
+  usage: { cost?: number | null; tokens: Record<string, unknown>; time?: Record<string, unknown> },
+) => JSON.stringify({ model, ...usage });
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
 const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';
@@ -83,21 +160,23 @@ describe('DB-backed Harness collectors', () => {
     );
 
     const openCodeStorage = new TestMemoryStorage();
-    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
-      { id: 'open-session', title: 'Open session', directory: '/work', summary_additions: 0, summary_deletions: 0 },
-    ]);
-    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
-    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, []);
-    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
-      {
-        session_id: 'open-session',
-        data: JSON.stringify({ role: 'assistant', tokens: { input: 'private-invalid-value' } }),
-      },
-      {
-        session_id: 'open-session',
-        data: JSON.stringify({ role: 'assistant', tokens: { input: 10, output: 5 } }),
-      },
-    ]);
+    writeOpenCodeLegacyDatabase(openCodeStorage, OPENCODE_DB, {
+      sessions: [
+        { id: 'open-session', title: 'Open session', directory: '/work', summary_additions: 0, summary_deletions: 0 },
+      ],
+      messages: [
+        {
+          id: 'invalid-message',
+          session_id: 'open-session',
+          data: JSON.stringify({ role: 'assistant', tokens: { input: 'private-invalid-value' } }),
+        },
+        {
+          id: 'valid-message',
+          session_id: 'open-session',
+          data: JSON.stringify({ role: 'assistant', tokens: { input: 10, output: 5 } }),
+        },
+      ],
+    });
     const opencode = runWithStorage(
       collectSelectedHarnessResults({ harness: 'opencode', includeCursor: false }),
       openCodeStorage,
@@ -143,7 +222,8 @@ describe('DB-backed Harness collectors', () => {
         },
       ),
     );
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
+    // Only the legacy session query has fixture rows: the schema probe fails, so the database read fails.
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_LEGACY_SESSION_SQL, [
       {
         id: 'broken-opencode',
         title: 'Broken OpenCode DB',
@@ -454,32 +534,35 @@ describe('DB-backed Harness collectors', () => {
 
   test('collects OpenCode Usage rows through SQLite fixture storage', () => {
     const storage = new TestMemoryStorage();
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
-      {
-        id: 'session-1',
-        parent_id: 'parent-session',
-        title: 'Build usage report',
-        directory: '/work/ai-usage',
-        summary_additions: 12,
-        summary_deletions: 3,
-      },
-    ]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'session-1', n: 2 }]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'session-1', n: 1 }]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
-      { session_id: 'session-1', data: JSON.stringify({ role: 'user' }) },
-      {
-        session_id: 'session-1',
-        data: JSON.stringify({
-          role: 'assistant',
-          providerID: 'openai',
-          modelID: 'gpt-5.3',
-          cost: 0.12,
-          tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 4 } },
-          time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:01:00.000Z' },
-        }),
-      },
-    ]);
+    writeOpenCodeLegacyDatabase(storage, OPENCODE_DB, {
+      sessions: [
+        {
+          id: 'session-1',
+          parent_id: 'parent-session',
+          title: 'Build usage report',
+          directory: '/work/ai-usage',
+          summary_additions: 12,
+          summary_deletions: 3,
+        },
+      ],
+      tools: [{ session_id: 'session-1', message_id: 'assistant-1', n: 2 }],
+      turns: [{ session_id: 'session-1', message_id: 'user-1' }],
+      messages: [
+        { id: 'user-1', session_id: 'session-1', data: JSON.stringify({ role: 'user' }) },
+        {
+          id: 'assistant-1',
+          session_id: 'session-1',
+          data: JSON.stringify({
+            role: 'assistant',
+            providerID: 'openai',
+            modelID: 'gpt-5.3',
+            cost: 0.12,
+            tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 4 } },
+            time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:01:00.000Z' },
+          }),
+        },
+      ],
+    });
 
     const rows = runWithStorage(collectOpenCode, storage);
 
@@ -501,75 +584,64 @@ describe('DB-backed Harness collectors', () => {
 
   test('preserves OpenCode provider/model chronology and separates active time from pauses', () => {
     const storage = new TestMemoryStorage();
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
-      {
-        id: 'mixed-session',
-        parent_id: null,
-        title: 'Mixed providers',
-        directory: '/work/ai-usage',
-        summary_additions: 0,
-        summary_deletions: 0,
-      },
-    ]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'mixed-session', n: 2 }]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
-      {
-        session_id: 'mixed-session',
-        data: JSON.stringify({
-          role: 'assistant',
+    const assistant = (id: string, data: Record<string, unknown>) => ({
+      id,
+      session_id: 'mixed-session',
+      data: JSON.stringify({ role: 'assistant', ...data }),
+    });
+    writeOpenCodeLegacyDatabase(storage, OPENCODE_DB, {
+      sessions: [
+        {
+          id: 'mixed-session',
+          parent_id: null,
+          title: 'Mixed providers',
+          directory: '/work/ai-usage',
+          summary_additions: 0,
+          summary_deletions: 0,
+        },
+      ],
+      turns: [
+        { session_id: 'mixed-session', message_id: 'user-1' },
+        { session_id: 'mixed-session', message_id: 'user-2' },
+      ],
+      messages: [
+        assistant('assistant-1', {
           providerID: 'openai',
           modelID: 'gpt-5',
           cost: 0,
           tokens: { input: 1_100_000, output: 0 },
           time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
         }),
-      },
-      {
-        session_id: 'mixed-session',
-        data: JSON.stringify({
-          role: 'assistant',
+        assistant('assistant-2', {
           providerID: 'anthropic',
           modelID: 'claude-sonnet-4-5',
           cost: 1,
           tokens: { input: 1_000_000, output: 0 },
           time: { created: '2026-02-01T01:00:00.000Z', completed: '2026-02-01T01:01:00.000Z' },
         }),
-      },
-      {
-        session_id: 'mixed-session',
-        data: JSON.stringify({
-          role: 'assistant',
+        assistant('assistant-3', {
           providerID: 'openai',
           modelID: 'gpt-5',
           cost: 0,
           tokens: { input: 200_000, output: 0 },
           time: { created: '2026-02-01T02:00:00.000Z' },
         }),
-      },
-      {
-        session_id: 'mixed-session',
-        data: JSON.stringify({
-          role: 'assistant',
+        assistant('assistant-4', {
           providerID: 'local',
           modelID: 'unpriced-zero-token-model',
           cost: 0,
           tokens: { input: 0, output: 0 },
           time: { created: '2026-02-01T03:00:00.000Z' },
         }),
-      },
-      {
-        session_id: 'mixed-session',
-        data: JSON.stringify({
-          role: 'assistant',
+        assistant('assistant-5', {
           providerID: 'local',
           modelID: 'unpriced-token-model',
           cost: 0,
           tokens: { input: 7, output: 2, reasoning: 1, cache: { read: 4, write: 5 } },
           time: { created: '2026-02-01T04:00:00.000Z' },
         }),
-      },
-    ]);
+      ],
+    });
 
     const [row] = runWithStorage(collectOpenCode, storage);
 
@@ -666,41 +738,47 @@ describe('DB-backed Harness collectors', () => {
       summary_deletions: 0,
     };
 
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [liveSession]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'live-1', n: 1 }]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'live-1', n: 1 }]);
-    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
-      { session_id: 'live-1', data: JSON.stringify({ role: 'user' }) },
-      {
-        session_id: 'live-1',
-        data: JSON.stringify({
-          role: 'assistant',
-          providerID: 'anthropic',
-          modelID: 'claude-4',
-          cost: 0.05,
-          tokens: { input: 50, output: 10, cache: { read: 5, write: 1 } },
-          time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
-        }),
-      },
-    ]);
+    writeOpenCodeLegacyDatabase(storage, OPENCODE_DB, {
+      sessions: [liveSession],
+      tools: [{ session_id: 'live-1', message_id: 'live-assistant', n: 1 }],
+      turns: [{ session_id: 'live-1', message_id: 'live-user' }],
+      messages: [
+        { id: 'live-user', session_id: 'live-1', data: JSON.stringify({ role: 'user' }) },
+        {
+          id: 'live-assistant',
+          session_id: 'live-1',
+          data: JSON.stringify({
+            role: 'assistant',
+            providerID: 'anthropic',
+            modelID: 'claude-4',
+            cost: 0.05,
+            tokens: { input: 50, output: 10, cache: { read: 5, write: 1 } },
+            time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
+          }),
+        },
+      ],
+    });
 
-    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_SESSION_SQL, [stableSession]);
-    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'stable-1', n: 3 }]);
-    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TURN_SQL, [{ session_id: 'stable-1', n: 1 }]);
-    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_MESSAGE_SQL, [
-      { session_id: 'stable-1', data: JSON.stringify({ role: 'user' }) },
-      {
-        session_id: 'stable-1',
-        data: JSON.stringify({
-          role: 'assistant',
-          providerID: 'openai',
-          modelID: 'gpt-5',
-          cost: 0,
-          tokens: { input: 200, output: 40, reasoning: 10 },
-          time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:02:00.000Z' },
-        }),
-      },
-    ]);
+    writeOpenCodeLegacyDatabase(storage, OPENCODE_STABLE_DB, {
+      sessions: [stableSession],
+      tools: [{ session_id: 'stable-1', message_id: 'stable-assistant', n: 3 }],
+      turns: [{ session_id: 'stable-1', message_id: 'stable-user' }],
+      messages: [
+        { id: 'stable-user', session_id: 'stable-1', data: JSON.stringify({ role: 'user' }) },
+        {
+          id: 'stable-assistant',
+          session_id: 'stable-1',
+          data: JSON.stringify({
+            role: 'assistant',
+            providerID: 'openai',
+            modelID: 'gpt-5',
+            cost: 0,
+            tokens: { input: 200, output: 40, reasoning: 10 },
+            time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:02:00.000Z' },
+          }),
+        },
+      ],
+    });
 
     const rows = runWithStorage(collectOpenCode, storage);
 
@@ -711,6 +789,211 @@ describe('DB-backed Harness collectors', () => {
     expect(stableRow).toBeDefined();
     expect(liveRow?.provider).toBe('Anthropic API');
     expect(stableRow?.provider).toBe('Codex sub (OC)');
+  });
+
+  test('collects OpenCode sessions from the session_v2 schema with the object-shaped model', () => {
+    const storage = new TestMemoryStorage();
+    writeOpenCodeV2Database(storage, OPENCODE_DB, {
+      sessions: [
+        {
+          id: 'v2-session',
+          parent_id: 'v2-parent',
+          title: 'Migrate the collector',
+          directory: '/work/ai-usage',
+          summary_additions: 8,
+          summary_deletions: 2,
+        },
+      ],
+      tools: [{ session_id: 'v2-session', message_id: 'v2-assistant-1', n: 3 }],
+      turns: [
+        { session_id: 'v2-session', message_id: 'v2-user-1' },
+        { session_id: 'v2-session', message_id: 'v2-user-2' },
+      ],
+      messages: [
+        {
+          id: 'v2-assistant-1',
+          session_id: 'v2-session',
+          data: v2Assistant(
+            { id: 'opus', providerID: 'claude-agent', variant: 'implementation' },
+            {
+              cost: 0,
+              tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 4 } },
+              time: { created: 1_793_000_000_000, completed: 1_793_000_060_000 },
+            },
+          ),
+        },
+        {
+          id: 'v2-assistant-2',
+          session_id: 'v2-session',
+          data: v2Assistant(
+            { id: 'gpt-6.1-sol', providerID: 'openai', variant: 'high' },
+            {
+              cost: 0,
+              tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+              time: { created: 1_793_000_120_000, completed: 1_793_000_130_000 },
+            },
+          ),
+        },
+      ],
+    });
+
+    const rows = runWithStorage(collectOpenCode, storage);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.harness).toBe('OpenCode');
+    expect(rows[0]?.name).toBe('Migrate the collector');
+    expect(rows[0]?.origin).toBe('subagent');
+    expect(rows[0]?.source?.parentSourceSessionId).toBe('v2-parent');
+    expect(rows[0]?.model).toBe('claude-agent/opus');
+    expect(rows[0]?.models).toEqual(['claude-agent/opus', 'openai/gpt-6.1-sol']);
+    expect(rows[0]?.provider).toBe('Claude sub (OC)');
+    expect(rows[0]).toMatchObject({ calls: 2, tokCr: 30, tokCw: 4, tokIn: 110, tokOut: 27, tools: 3, turns: 2 });
+    expect(rows[0]?.durationMs).toBe(70_000);
+    expect(rows[0]?.linesAdded).toBe(8);
+    expect(rows[0]?.date?.getTime()).toBe(1_793_000_000_000);
+  });
+
+  test('reads session_v2 and the legacy session table once per session and once per message', () => {
+    const storage = new TestMemoryStorage();
+    writeOpenCodeSchema(storage, OPENCODE_DB, [...OPENCODE_LEGACY_TABLES, ...OPENCODE_V2_TABLES]);
+    const migratedTime = { created: 1_780_000_000_000, completed: 1_780_000_010_000 };
+    const legacyAssistant = (data: Record<string, unknown>) => JSON.stringify({ role: 'assistant', ...data });
+    writeOpenCodeV2Tables(storage, OPENCODE_DB, {
+      sessions: [
+        {
+          id: 'shared',
+          title: 'Shared (v2 title)',
+          directory: '/work/shared',
+          summary_additions: 5,
+          summary_deletions: 5,
+        },
+        { id: 'v2-only', title: 'Only in v2', directory: '/work/v2', summary_additions: 1, summary_deletions: 0 },
+      ],
+      tools: [{ session_id: 'shared', message_id: 'shared-migrated', n: 2 }],
+      turns: [{ session_id: 'shared', message_id: 'shared-user' }],
+      messages: [
+        {
+          id: 'shared-migrated',
+          session_id: 'shared',
+          data: v2Assistant(
+            { id: 'gpt-5.3-codex', providerID: 'openai' },
+            { cost: 0, tokens: { input: 100, output: 10 }, time: migratedTime },
+          ),
+        },
+        {
+          id: 'v2-only-assistant',
+          session_id: 'v2-only',
+          data: v2Assistant(
+            { id: 'minimax-m3', providerID: 'opencode-go' },
+            { cost: 0, tokens: { input: 7, output: 3 }, time: { created: 1_790_000_000_000 } },
+          ),
+        },
+      ],
+    });
+    writeOpenCodeLegacyTables(storage, OPENCODE_DB, {
+      sessions: [
+        {
+          id: 'shared',
+          title: 'Shared (legacy title)',
+          directory: '/work/shared',
+          summary_additions: 0,
+          summary_deletions: 0,
+        },
+        {
+          id: 'legacy-only',
+          title: 'Only in legacy',
+          directory: '/work/legacy',
+          summary_additions: 2,
+          summary_deletions: 1,
+        },
+      ],
+      // The migrated message keeps its legacy tool parts and user turn; only the
+      // legacy-only message and turn add to the session.
+      tools: [
+        { session_id: 'shared', message_id: 'shared-migrated', n: 2 },
+        { session_id: 'shared', message_id: 'shared-legacy-only', n: 1 },
+        { session_id: 'legacy-only', message_id: 'legacy-assistant', n: 4 },
+      ],
+      turns: [
+        { session_id: 'shared', message_id: 'shared-user' },
+        { session_id: 'shared', message_id: 'shared-legacy-user' },
+        { session_id: 'legacy-only', message_id: 'legacy-user' },
+      ],
+      messages: [
+        {
+          id: 'shared-migrated',
+          session_id: 'shared',
+          data: legacyAssistant({
+            providerID: 'openai',
+            modelID: 'gpt-5.3-codex',
+            cost: 0,
+            tokens: { input: 100, output: 10 },
+            time: migratedTime,
+          }),
+        },
+        {
+          id: 'shared-legacy-only',
+          session_id: 'shared',
+          data: legacyAssistant({
+            providerID: 'openai',
+            modelID: 'gpt-5.3-codex',
+            cost: 0,
+            tokens: { input: 50, output: 5 },
+            time: { created: 1_779_000_000_000, completed: 1_779_000_005_000 },
+          }),
+        },
+        {
+          id: 'legacy-assistant',
+          session_id: 'legacy-only',
+          data: legacyAssistant({
+            providerID: 'anthropic',
+            modelID: 'claude-sonnet-4-5',
+            cost: 0.5,
+            tokens: { input: 20, output: 4 },
+            time: { created: 1_770_000_000_000, completed: 1_770_000_001_000 },
+          }),
+        },
+      ],
+    });
+
+    const rows = runWithStorage(collectOpenCode, storage);
+    const byId = new Map(rows.map((row) => [row.source?.sourceSessionId, row]));
+
+    expect([...byId.keys()].sort()).toEqual(['legacy-only', 'shared', 'v2-only']);
+    const shared = byId.get('shared');
+    expect(shared?.name).toBe('Shared (v2 title)');
+    expect(shared?.linesAdded).toBe(5);
+    // The migrated message is counted once; the legacy-only message is added.
+    expect(shared).toMatchObject({ calls: 2, tokIn: 150, tokOut: 15, tools: 3, turns: 2 });
+    expect(shared?.date?.getTime()).toBe(1_779_000_000_000);
+    expect(byId.get('legacy-only')).toMatchObject({
+      calls: 1,
+      provider: 'Anthropic API',
+      tokIn: 20,
+      tools: 4,
+      turns: 1,
+    });
+    expect(byId.get('v2-only')).toMatchObject({ calls: 1, provider: 'OpenCode Go', tokIn: 7 });
+  });
+
+  test('warns instead of returning no OpenCode sessions when neither known schema is present', () => {
+    const storage = new TestMemoryStorage();
+    writeOpenCodeSchema(storage, OPENCODE_DB, ['kv', 'project']);
+
+    const result = runWithStorage(collectOpenCodeResult, storage);
+    const selected = runWithStorage(
+      collectSelectedHarnessResults({ harness: 'opencode', includeCursor: false }),
+      storage,
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.harness).toBe('opencode');
+    expect(result.warnings[0]?.operation).toBe('opencode.schema');
+    expect(result.warnings[0]?.message).toContain('Failed to read OpenCode live database');
+    expect(result.warnings[0]?.message).toContain('session_v2');
+    expect(result.observationCompleteness.invocation.truncated).toBe(true);
+    expect(selected.harnesses.find((harness) => harness.harness === 'opencode')?.status).toBe('warning');
   });
 
   test('collects Cursor partial Usage rows through SQLite fixture storage', () => {

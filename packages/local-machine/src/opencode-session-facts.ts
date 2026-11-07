@@ -90,6 +90,13 @@ const tokenValue = (tokens: Record<string, unknown>, flat: Record<string, unknow
   return tokens[key] ?? flat[`token_${key}`];
 };
 
+/**
+ * Decode one OpenCode assistant message into a usage fact. Two storage shapes
+ * are accepted: the legacy `message.data` (`providerID`/`modelID`/`variant` at
+ * the top level, `role` inside the payload) and the `session_v2`
+ * `session_message.data` (`model: { providerID, id, variant }`; the role is the
+ * row's `type` column, which the caller copies into `role`).
+ */
 export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeResult => {
   if (!isJsonObject(value)) {
     return { kind: 'invalid' };
@@ -97,6 +104,7 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
   if (value.role !== 'assistant') {
     return { kind: 'ignored' };
   }
+  const model = isJsonObject(value.model) ? value.model : null;
   const nestedTokens = isJsonObject(value.tokens) ? value.tokens : null;
   const hasFlatTokens = OPEN_CODE_FLAT_TOKEN_KEYS.some((key) => value[key] !== undefined && value[key] !== null);
   if (!(nestedTokens || hasFlatTokens)) {
@@ -125,15 +133,15 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
     return { kind: 'invalid' };
   }
   const time = isJsonObject(value.time) ? value.time : null;
-  const providerId = boundedString(value.providerID ?? value.provider_id) ?? '?';
-  const modelId = boundedString(value.modelID ?? value.model_id) ?? '?';
+  const providerId = boundedString(value.providerID ?? value.provider_id ?? model?.providerID) ?? '?';
+  const modelId = boundedString(value.modelID ?? value.model_id ?? model?.id) ?? '?';
   return {
     kind: 'fact',
     value: {
       completedMs: timestampMs(time?.completed ?? value.completed),
       cost: cost.value,
       createdMs: timestampMs(time?.created ?? value.created),
-      effort: boundedString(value.variant),
+      effort: boundedString(value.variant ?? model?.variant),
       id: boundedString(value.id),
       model: `${providerId}/${modelId}`,
       modelId,
@@ -162,6 +170,11 @@ export interface OpenCodeSkillPartRow {
 /**
  * Decode one OpenCode `skill` tool part into a `declared` skill observation.
  *
+ * Two shapes are accepted: a legacy `part` row (`tool`, `callID`,
+ * `state.time.start`) and a `session_v2` content item embedded in the
+ * assistant message (`name`, `id`, `time.created`); the state payload carrying
+ * the skill name, directory and status is the same in both.
+ *
  * Measured against real local history, every skill part carries a resolved
  * skill directory in `state.metadata.dir`. That is captured when present, but
  * its absence is a state and not a rejection (ADR 0022): the observation is
@@ -173,15 +186,16 @@ export interface OpenCodeSkillPartRow {
  */
 export const decodeOpenCodeSkillPart = (row: OpenCodeSkillPartRow): SkillObservation | null => {
   const data = typeof row.data === 'string' ? (safeParse(row.data) ?? null) : row.data;
-  if (!(isJsonObject(data) && data.type === 'tool' && data.tool === 'skill')) {
+  if (!(isJsonObject(data) && data.type === 'tool' && (data.tool ?? data.name) === 'skill')) {
     return null;
   }
   const state = isJsonObject(data.state) ? data.state : null;
   const input = isJsonObject(state?.input) ? state.input : null;
   const metadata = isJsonObject(state?.metadata) ? state.metadata : null;
   const time = isJsonObject(state?.time) ? state.time : null;
-  const observedMs = timestampMs(time?.start) ?? timestampMs(row.time_created);
-  const callId = boundedString(data.callID) ?? boundedString(row.id);
+  const itemTime = isJsonObject(data.time) ? data.time : null;
+  const observedMs = timestampMs(time?.start) ?? timestampMs(itemTime?.created) ?? timestampMs(row.time_created);
+  const callId = boundedString(data.callID) ?? boundedString(data.id) ?? boundedString(row.id);
   return parseSkillObservation({
     argsPresent: null,
     harnessKey: 'opencode',

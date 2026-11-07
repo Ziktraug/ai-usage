@@ -7,6 +7,7 @@ import { readOpenCodeSessionAnalysis } from '@ai-usage/local-machine/opencode-se
 import {
   buildOpenCodeProjectionSummary,
   decodeOpenCodeMessageRow,
+  decodeOpenCodeSkillPart,
   openCodeParentKind,
 } from '@ai-usage/local-machine/opencode-session-facts';
 import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
@@ -78,6 +79,75 @@ describe('OpenCode session facts', () => {
     expect(openCodeParentKind('human-1', users, new Set(['human-1']))).toBe('human');
     expect(openCodeParentKind('internal-1', users, new Set(['human-1']))).toBe('internal');
     expect(openCodeParentKind('missing', users, new Set(['human-1']))).toBe('unresolved');
+  });
+
+  test('decodes the session_v2 message shape: object model with variant, role supplied by the row type', () => {
+    const decoded = decodeOpenCodeMessageRow({
+      agent: 'build',
+      cost: 0,
+      finish: 'tool-calls',
+      model: { id: 'gpt-6.1-sol', providerID: 'openai', variant: 'implementation' },
+      role: 'assistant',
+      time: { completed: 1_793_000_060_000, created: 1_793_000_000_000 },
+      tokens: { cache: { read: 30, write: 4 }, input: 100, output: 20, reasoning: 5 },
+    });
+
+    expect(decoded).toEqual({
+      kind: 'fact',
+      value: {
+        completedMs: 1_793_000_060_000,
+        cost: 0,
+        createdMs: 1_793_000_000_000,
+        effort: 'implementation',
+        id: null,
+        model: 'openai/gpt-6.1-sol',
+        modelId: 'gpt-6.1-sol',
+        parentId: null,
+        providerId: 'openai',
+        reportedCostKnown: true,
+        tokens: { cacheRead: 30, cacheWrite: 4, input: 100, output: 25, total: 159 },
+      },
+    });
+    expect(
+      decodeOpenCodeMessageRow({
+        model: { id: 'opus', providerID: 'claude-agent' },
+        role: 'assistant',
+        tokens: { input: 1, output: 1 },
+      }),
+    ).toMatchObject({ kind: 'fact', value: { effort: null, model: 'claude-agent/opus', providerId: 'claude-agent' } });
+  });
+
+  test('decodes a session_v2 skill tool item embedded in message content', () => {
+    const observation = decodeOpenCodeSkillPart({
+      data: {
+        id: 'call_skill_v2',
+        name: 'skill',
+        state: {
+          input: { id: 'skill-id', name: 'fixture-skill' },
+          metadata: { dir: '/work/fixture/.agents/skills/fixture-skill', name: 'fixture-skill' },
+          status: 'error',
+        },
+        time: { completed: 1_793_000_013_000, created: 1_793_000_012_000 },
+        type: 'tool',
+      },
+      projectPath: '/work/fixture',
+      session_id: 'v2-session',
+      time_created: 1_793_000_010_000,
+    });
+
+    expect(observation).toMatchObject({
+      harnessKey: 'opencode',
+      observationKey: 'call_skill_v2',
+      observedAt: '2026-10-26T07:33:32.000Z',
+      resolvedPath: '/work/fixture/.agents/skills/fixture-skill',
+      sessionId: 'v2-session',
+      skillName: 'fixture-skill',
+      success: false,
+      tier: 'declared',
+    });
+    expect(
+      decodeOpenCodeSkillPart({ data: { id: 'call_read', name: 'read', type: 'tool' }, session_id: 's' }),
+    ).toBeNull();
   });
 
   test('rejects invalid and overflowing metrics without producing NaN', () => {
