@@ -10,7 +10,7 @@ import {
   type LineMeasurementAccumulator,
   processedTokensForAnalytics,
 } from './analytics';
-import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
+import { parseReportDatasets, withoutRetiredCursorFacet } from './datasets';
 import { buildTokenFlow, parseTokenFlow, type TokenFlow } from './observatory';
 import { parseProjectGroupConfigs } from './project-group';
 import {
@@ -360,7 +360,6 @@ export interface FocusedProjectGroup extends LineMeasurementAccumulator {
 
 export interface FocusedBreakdownResult {
   context: {
-    cursorCommitAttribution: CursorCommitAttributionRow[];
     projectGroupConfigs?: NonNullable<FocusedReportSupport['projectGroupConfigs']>;
     projectGroups?: NonNullable<FocusedReportSupport['projectGroups']>;
     warnings?: NonNullable<FocusedReportSupport['warnings']>;
@@ -1559,7 +1558,6 @@ export const projectFocusedBreakdown = (
         }
       : {}),
     context: {
-      cursorCommitAttribution: support.datasets?.cursorCommitAttribution ?? [],
       ...(support.projectGroupConfigs === undefined ? {} : { projectGroupConfigs: support.projectGroupConfigs }),
       ...(support.projectGroups === undefined ? {} : { projectGroups: support.projectGroups }),
       ...(support.warnings === undefined ? {} : { warnings: support.warnings }),
@@ -2575,18 +2573,11 @@ const assertBreakdownContext = (value: unknown): void => {
   const context = requireRecord(value, 'breakdown context');
   assertAllowedKeys(
     context,
-    ['cursorCommitAttribution'],
-    ['projectGroupConfigs', 'projectGroups', 'warnings'],
+    [],
+    ['cursorCommitAttribution', 'projectGroupConfigs', 'projectGroups', 'warnings'],
     'breakdown context',
   );
-  if (
-    !(
-      Array.isArray(context.cursorCommitAttribution) &&
-      context.cursorCommitAttribution.every(isCursorCommitAttributionRow)
-    )
-  ) {
-    throw new Error('breakdown context.cursorCommitAttribution is invalid');
-  }
+  // Older immutable projections include retired attribution; readers intentionally ignore it.
   if (context.projectGroupConfigs !== undefined) {
     assertProjectGroupConfigs(context.projectGroupConfigs);
   }
@@ -2654,7 +2645,13 @@ export const parseFocusedReportSupport = (value: unknown): FocusedReportSupport 
   if (machineFreshness !== undefined) {
     assertFocusedMachineFreshness(machineFreshness);
   }
-  return support as unknown as FocusedReportSupport;
+  return {
+    ...support,
+    ...(support.datasets === undefined ? {} : { datasets: parseReportDatasets(support.datasets) }),
+    ...(support.facets === undefined
+      ? {}
+      : { facets: withoutRetiredCursorFacet(requireRecord(support.facets, 'support facets')) }),
+  } as unknown as FocusedReportSupport;
 };
 
 const assertBootstrapSupport = (value: unknown): void => {
@@ -2774,7 +2771,8 @@ export function parseFocusedReportQueryResult(
     }
     assertBreakdownGroups(record.groups);
     assertBreakdownContext(record.context);
-    return record as unknown as FocusedBreakdownResult;
+    const { cursorCommitAttribution: _retired, ...context } = requireRecord(record.context, 'breakdown context');
+    return { ...record, context } as unknown as FocusedBreakdownResult;
   }
   const parsed = parseFocusedRevisionRequest(request);
   const record = assertResultEnvelope(

@@ -1,11 +1,5 @@
-import type { CursorCommitAttributionRow, ReportDatasets } from '@ai-usage/report-core/datasets';
+import { parseReportDatasets, type ReportDatasets } from '@ai-usage/report-core/datasets';
 import { mergeProviderStatusDatasets, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
-
-export interface LegacyHarnessFacets extends Record<string, unknown> {
-  readonly cursor?: {
-    readonly commitAttribution: readonly CursorCommitAttributionRow[];
-  };
-}
 
 export const mergeReportDatasets = (
   ...datasets: readonly (ReportDatasets | undefined)[]
@@ -15,7 +9,7 @@ export const mergeReportDatasets = (
     if (!dataset) {
       continue;
     }
-    for (const [key, value] of Object.entries(dataset)) {
+    for (const [key, value] of Object.entries(parseReportDatasets(dataset) ?? {})) {
       if (key !== 'providerStatus') {
         merged[key] = value;
       }
@@ -28,11 +22,4 @@ export const mergeReportDatasets = (
     merged.providerStatus = providerStatus;
   }
   return Object.keys(merged).length > 0 ? merged : undefined;
-};
-
-export const mirrorDatasetsToLegacyFacets = (datasets: ReportDatasets | undefined): LegacyHarnessFacets | undefined => {
-  if (!datasets?.cursorCommitAttribution?.length) {
-    return;
-  }
-  return { cursor: { commitAttribution: datasets.cursorCommitAttribution } };
 };

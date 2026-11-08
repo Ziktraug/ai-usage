@@ -512,27 +512,8 @@ describe('usage snapshots', () => {
     });
   });
 
-  test('rejects malformed known datasets while retaining JSON-safe future datasets', () => {
+  test('ignores retired datasets while validating current and retaining JSON-safe future datasets', () => {
     const snapshot = currentSnapshot();
-    const cursorCommitAttribution = {
-      blankLinesAdded: 0,
-      blankLinesDeleted: 0,
-      branchName: 'main',
-      commitDate: '2026-01-01T00:00:00.000Z',
-      commitHash: 'abc123',
-      commitMessage: 'Implement snapshot validation',
-      composerLinesAdded: 1,
-      composerLinesDeleted: 0,
-      humanLinesAdded: 0,
-      humanLinesDeleted: 0,
-      linesAdded: 1,
-      linesDeleted: 0,
-      scoredAt: '2026-01-01T00:01:00.000Z',
-      tabLinesAdded: 0,
-      tabLinesDeleted: 0,
-      v1AiPercentage: 100,
-      v2AiPercentage: null,
-    };
     const futureDataset = { schemaVersion: 2, payload: { values: [1, true, null] } };
     const providerStatus = createProviderStatusDataset([
       {
@@ -545,19 +526,25 @@ describe('usage snapshots', () => {
       },
     ]);
 
-    const datasets = { cursorCommitAttribution: [cursorCommitAttribution], futureDataset };
-    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, datasets })).datasets).toEqual(datasets);
+    for (const schemaVersion of [1, 2, 3]) {
+      for (const retired of [null, [{ commitHash: 'old' }]]) {
+        const parsed = parseUsageSnapshot(
+          JSON.stringify({
+            ...snapshot,
+            schemaVersion,
+            datasets: { cursorCommitAttribution: retired, futureDataset },
+            facets: { cursor: { commitAttribution: retired }, retained: { ok: true } },
+          }),
+        );
+        expect(parsed.datasets).toEqual({ futureDataset });
+        expect(parsed.facets).toEqual({ retained: { ok: true } });
+        expect(mergeUsageSnapshots([parsed]).datasets).toEqual({ futureDataset });
+      }
+    }
 
     const invalidDatasets = [
       null,
       [],
-      { cursorCommitAttribution: null },
-      { cursorCommitAttribution: [{ commitHash: 'missing-required-fields' }] },
-      { cursorCommitAttribution: [{ ...cursorCommitAttribution, linesAdded: -1 }] },
-      { cursorCommitAttribution: [{ ...cursorCommitAttribution, commitDate: 'not-a-timestamp' }] },
-      { cursorCommitAttribution: [{ ...cursorCommitAttribution, scoredAt: 'not-a-timestamp' }] },
-      { cursorCommitAttribution: [{ ...cursorCommitAttribution, v1AiPercentage: 101 }] },
-      { cursorCommitAttribution: [{ ...cursorCommitAttribution, unexpected: true }] },
       { providerStatus: { generatedAt: snapshot.generatedAt, providers: [], schemaVersion: 2 } },
       { providerStatus: { ...providerStatus, unexpected: true } },
       {

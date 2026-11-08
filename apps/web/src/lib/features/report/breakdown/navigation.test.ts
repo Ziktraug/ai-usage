@@ -63,7 +63,7 @@ describe('P8 breakdown navigation', () => {
   });
 
   test('preserves focus while changing Analysis dimension with the tab control', () => {
-    let current: DashboardSearch = { ...dashboardSearchDefaultsFor('cost'), tab: 'cursor-ai' };
+    let current: DashboardSearch = { ...dashboardSearchDefaultsFor('cost'), tab: 'models' };
     let options: SearchNavigationOptions | undefined;
     const navigation = createBreakdownNavigation((update, nextOptions) => {
       current = update(current);

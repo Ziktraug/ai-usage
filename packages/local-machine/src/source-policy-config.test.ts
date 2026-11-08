@@ -39,3 +39,16 @@ test('uses the catalogue defaults when no home override exists', async () => {
 
   await expect(readLocalSourcePolicyOverrides(homePath)).resolves.toEqual({});
 });
+
+test('accepts an inert retired Cursor attribution policy in an old home config', async () => {
+  const homePath = await mkdtemp(path.join(tmpdir(), 'ai-usage-retired-source-policy-'));
+  roots.push(homePath);
+  const configPath = path.join(homePath, '.config', 'ai-usage', 'config.json');
+  await mkdir(path.dirname(configPath), { recursive: true });
+  const policies = {
+    'cursor.commit-attribution': { enabled: false },
+    'cursor.sessions': { enabled: true },
+  };
+  await writeFile(configPath, JSON.stringify({ sourcePolicies: policies }));
+  await expect(readLocalSourcePolicyOverrides(homePath)).resolves.toEqual(policies);
+});

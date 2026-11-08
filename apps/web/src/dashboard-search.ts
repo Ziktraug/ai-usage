@@ -39,13 +39,12 @@ export const dashboardTabs = [
   'providers',
   'harnesses',
   'projects',
-  'cursor-ai',
 ] as const;
 export type DashboardTab = (typeof dashboardTabs)[number];
 
 // Keep legacy URL values valid while projecting them onto canonical visual destinations.
 // A parsed legacy value remains untouched until the user explicitly selects another tab.
-export const breakdownTabs = ['models', 'harness-providers', 'projects', 'cursor-ai'] as const;
+export const breakdownTabs = ['models', 'harness-providers', 'projects'] as const;
 export type BreakdownTab = (typeof breakdownTabs)[number];
 const legacyBreakdownTabs = ['providers', 'harnesses'] as const;
 type LegacyBreakdownTab = (typeof legacyBreakdownTabs)[number];
@@ -340,6 +339,8 @@ export const validateDashboardSearch = (
   const cols = uniqueValidStrings(search.cols, isSearchableColumnDiffId);
   const colsBase = isSessionColumnVisibilityBase(search.colsBase) ? search.colsBase : defaults.colsBase;
   const timeCell = parseDashboardTimeCell(search.timeCell);
+  // Keep retired bookmarks in the default breakdown, not an unrelated destination.
+  const tab = search.tab === 'cursor-ai' ? 'models' : search.tab;
 
   return {
     breakdownSort: isBreakdownSort(search.breakdownSort) ? search.breakdownSort : defaults.breakdownSort,
@@ -353,7 +354,7 @@ export const validateDashboardSearch = (
     range: parseRange(search.range, defaults.range),
     sort: parseSort(search.sort, defaults.sort),
     ...(timeCell === undefined ? {} : { timeCell: serializeDashboardTimeCell(timeCell) }),
-    tab: isDashboardTab(search.tab) ? search.tab : defaults.tab,
+    tab: isDashboardTab(tab) ? tab : defaults.tab,
   };
 };
 

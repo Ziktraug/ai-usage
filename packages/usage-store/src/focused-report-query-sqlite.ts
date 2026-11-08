@@ -1316,7 +1316,6 @@ const runBreakdown = (
   const groups = readAnalyticsGroups(database, filter, trace);
   return {
     context: {
-      cursorCommitAttribution: support.datasets?.cursorCommitAttribution ?? [],
       ...(support.projectGroupConfigs === undefined ? {} : { projectGroupConfigs: support.projectGroupConfigs }),
       ...(support.projectGroups === undefined ? {} : { projectGroups: support.projectGroups }),
       ...(support.warnings === undefined ? {} : { warnings: support.warnings }),

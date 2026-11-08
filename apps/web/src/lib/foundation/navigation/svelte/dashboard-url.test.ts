@@ -81,10 +81,11 @@ const trackedNavigation = (initialUrl = 'http://local/?utm=kept') => {
 
 describe('dashboard URL parity', () => {
   test('[url:dashboard.tab] covers canonical/default/legacy values and push/no-scroll history', () => {
-    const canonical = ['overview', 'sessions', 'models', 'harness-providers', 'projects', 'cursor-ai'];
+    const canonical = ['overview', 'sessions', 'models', 'harness-providers', 'projects'];
     for (const tab of canonical) {
       expect(parseDashboardSearchUrl(new URL(`http://local/?tab=${tab}`), codec).tab).toBe(tab);
     }
+    expect(parseDashboardSearchUrl(new URL('http://local/?tab=cursor-ai'), codec).tab).toBe('models');
     for (const tab of ['providers', 'harnesses']) {
       expect(parseDashboardSearchUrl(new URL(`http://local/?tab=${tab}`), codec).tab).toBe(tab);
     }

@@ -319,7 +319,7 @@ export const sourceControlView = (state: InternalControlState): SourceControlVie
     ...(state.publication.revision === undefined ? {} : { revision: state.publication.revision }),
   },
   queueDepth: state.queueDepth,
-  runningCount: Object.values(state.sources).filter(({ running }) => running).length,
+  runningCount: collectionSourceDefinitions.filter(({ id }) => state.sources[id].running).length,
   sources: collectionSourceDefinitions.map(({ id }) => sourceEntryView(id, state.sources[id])),
 });
 

@@ -24,7 +24,6 @@ import {
   queryClaudeDesktopSessions,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
-  queryNormalizedDatasetItems,
   queryReportRows,
   querySkillObservations,
   queryWorkThreadLinks,
@@ -563,77 +562,6 @@ describe('scheduled source adapters', () => {
       await Effect.runPromise(registry.get('claude.sessions')?.run(progressContext([])) ?? Effect.die('missing'));
       const afterBaseReimports = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
       expect(afterBaseReimports.rows[0]).toMatchObject({ rtkSavedTokens: 9, tokIn: 11 });
-    } finally {
-      rmSync(home, { force: true, recursive: true });
-    }
-  });
-
-  test('persists Cursor attribution as versioned normalized items', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-source-cursor-attribution-'));
-    try {
-      const attributionPath = path.join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db');
-      mkdirSync(path.dirname(attributionPath), { recursive: true });
-      const { Database } = await import('bun:sqlite');
-      const db = new Database(attributionPath);
-      db.exec(`
-        CREATE TABLE scored_commits (
-          commitHash TEXT,
-          branchName TEXT,
-          scoredAt INTEGER,
-          linesAdded INTEGER,
-          linesDeleted INTEGER,
-          tabLinesAdded INTEGER,
-          tabLinesDeleted INTEGER,
-          composerLinesAdded INTEGER,
-          composerLinesDeleted INTEGER,
-          humanLinesAdded INTEGER,
-          humanLinesDeleted INTEGER,
-          blankLinesAdded INTEGER,
-          blankLinesDeleted INTEGER,
-          commitMessage TEXT,
-          commitDate TEXT,
-          v1AiPercentage REAL,
-          v2AiPercentage REAL
-        )
-      `);
-      db.query('INSERT INTO scored_commits VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-        'abc123',
-        'main',
-        Date.parse('2026-07-16T10:00:00.000Z'),
-        5,
-        1,
-        0,
-        0,
-        3,
-        1,
-        2,
-        0,
-        0,
-        0,
-        null,
-        null,
-        60,
-        60,
-      );
-      db.close();
-
-      const registry = await createRegistry(home);
-      const result = await Effect.runPromise(
-        registry.get('cursor.commit-attribution')?.run(progressContext([])) ?? Effect.die('missing'),
-      );
-      const stored = await Effect.runPromise(
-        queryNormalizedDatasetItems({
-          datasetKey: 'cursor.commit-attribution',
-          dbPath: usageStorePath(home),
-        }),
-      );
-
-      expect(result).toMatchObject({ changed: true, inputCount: 1, outputCount: 1 });
-      expect(stored.items[0]).toMatchObject({
-        machineId: machine.id,
-        payload: { branchName: 'main', commitHash: 'abc123' },
-        schemaVersion: 1,
-      });
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
