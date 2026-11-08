@@ -3650,6 +3650,8 @@ export const {
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
   recordWorkFactRun,
+  queryJiraSyncState,
+  recordJiraSyncState,
 } = createWorkFactStore({
   usageStoreError,
   usageStoreReadError,

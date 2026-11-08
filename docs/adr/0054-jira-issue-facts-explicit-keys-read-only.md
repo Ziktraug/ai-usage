@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-10-22
 - **Extends**: 0009, 0050, 0051
+- **Amended by**: [0088](0088-incremental-jira-synchronization.md) (incremental selection, two-minute cadence, bounded concurrency and durable catch-up)
 
 ## Context
 
