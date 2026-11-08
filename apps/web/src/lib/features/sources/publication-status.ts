@@ -19,7 +19,8 @@ export const pendingPublishRequests = (publication: SourcePublicationView): numb
   Math.max(0, publication.requestedGeneration - publication.acknowledgedRequestGeneration);
 
 export const publicationHealthy = (publication: SourcePublicationView): boolean =>
-  publication.lastOutcome === 'success' &&
+  (publication.lastOutcome === 'success' ||
+    (publication.lastOutcome === 'not-run' && publication.revision !== undefined)) &&
   !publication.running &&
   !publication.queued &&
   !publication.pendingDemand &&
@@ -31,20 +32,29 @@ export const publicationOutcomeLabel = (publication: SourcePublicationView): str
   if (publication.lastOutcome === 'success') {
     return 'Succeeded';
   }
+  if (publication.lastOutcome === 'not-run' && publication.revision !== undefined) {
+    return 'Published';
+  }
   return publication.lastOutcome === 'failed' ? 'Failed' : 'Not published yet';
 };
 
 export const publicationStatus = (publication: SourcePublicationView): string => {
+  if (publication.lastOutcome === 'failed') {
+    if (publication.running) {
+      return 'The last publish failed; retrying now.';
+    }
+    if (publication.queued) {
+      return 'The last publish failed; a retry is queued.';
+    }
+    return 'The last publish failed. Run all enabled to retry publishing the collected data.';
+  }
   if (publication.running) {
     return 'Publishing stored data now.';
   }
   if (publication.queued) {
     return 'Publishing is queued.';
   }
-  if (publication.lastOutcome === 'failed') {
-    return 'The last publish failed. Run all enabled to retry publishing the collected data.';
-  }
-  if (publication.lastOutcome === 'not-run') {
+  if (publication.lastOutcome === 'not-run' && publication.revision === undefined) {
     return 'The report has not been published yet. Run all enabled to collect and publish local history.';
   }
   if (rtkDependencyStatus(publication).behind) {

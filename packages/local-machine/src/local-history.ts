@@ -610,8 +610,9 @@ const ZSTD_STREAM_FORMAT = 'zstd' satisfies Bun.CompressionFormat as Compression
  * Neither Bun's own one-shot zstd decoder nor the one-shot `node:zlib` one:
  * the former corrupted the heap on Bun 1.3.13 (2026-10-19) and takes no
  * output bound, the latter holds the whole output at once. This decoder was
- * re-qualified on Bun 1.4.3 (ADR 0047, amendment of 2026-10-24), and the
- * reader test keeps it the only one these packages reach.
+ * re-qualified on Bun 1.4.3 (ADR 0047, amendment of 2026-10-24) and on 1.4.4
+ * (ADR 0070, amendment of 2026-10-28), and the reader test keeps it the only
+ * one these packages reach.
  */
 export const streamHistoryArchive = async (
   compressed: Buffer<ArrayBuffer>,
