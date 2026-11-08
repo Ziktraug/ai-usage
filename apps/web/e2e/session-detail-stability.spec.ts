@@ -93,12 +93,14 @@ test('repeated Rounds and Timeline retry failures stay visible without unhandled
   await page.getByRole('button', { name: 'Fail detail', exact: true }).click();
   for (const tab of [ROUNDS_TAB, 'Timeline']) {
     await page.getByRole('tab', { name: tab }).click();
-    await expect(page.getByRole('alert')).toContainText('Fixture detail refresh failed');
-    await page.getByRole('button', { name: 'Retry', exact: true }).click();
+    const panel = page.getByRole('tabpanel', { name: tab });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole('alert')).toContainText('Fixture detail refresh failed');
+    await panel.getByRole('button', { name: 'Retry', exact: true }).click();
     await expect(page.locator('[data-session-detail-fixture]')).toHaveAttribute('data-pending', 'true');
     await page.getByRole('button', { name: 'Fail detail', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('Fixture detail refresh failed');
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+    await expect(panel.getByRole('alert')).toContainText('Fixture detail refresh failed');
+    await expect(panel.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
   }
 });
 

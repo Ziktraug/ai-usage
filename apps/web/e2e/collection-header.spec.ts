@@ -113,6 +113,23 @@ for (const dismissal of ['Escape', 'click'] as const) {
   });
 }
 
+test('movement without a hydrated pointerenter still preserves hover dismissal', async ({ page }) => {
+  await openHydratedReport(page);
+  const trigger = page.getByRole('button', { name: 'Collection status' });
+  const details = page.getByRole('dialog', { name: 'Collection details' });
+  // A pointer already over the server-rendered trigger never delivered pointerenter to
+  // Svelte. Model that missing event by delivering only its subsequent movement.
+  await trigger.dispatchEvent('pointermove', { pointerType: 'mouse' });
+  await expect(details).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
+  await trigger.dispatchEvent('pointermove', { pointerType: 'mouse', movementX: 1 });
+  await expect(details).toHaveCount(0);
+  await trigger.dispatchEvent('pointerleave', { pointerType: 'mouse' });
+  await trigger.hover();
+  await expect(details).toBeVisible();
+});
+
 test('keeps the mobile header compact and collection actions usable by touch', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openHydratedReport(page);

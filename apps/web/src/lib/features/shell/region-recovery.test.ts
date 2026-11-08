@@ -50,9 +50,9 @@ test('recovery owners use in-app query/routing recovery, never a document reload
   const drawer = await readFile(new URL('../sessions/detail/session-drawer.svelte', import.meta.url), 'utf8');
   expect(session).not.toContain('location.reload');
   expect(route).not.toContain('location.reload');
-  expect(session).toContain('createSessionDetailRecovery(detailQuery, drawerLoader)');
+  expect(session).toContain('createSessionDetailRecovery(detailQuery, drawerLoader,');
   expect(session).toContain('recoverRegion: recovery.recoverRegion');
-  expect(session).toContain('onclick={recovery.retryChunk}');
+  expect(session).toContain('<SessionDetailChunkRetry onRetry={recovery.retryChunk} />');
   expect(drawer).toContain('<RecoverableRegion label="Session details" onRetry={controller.recoverRegion}>');
   expect(route).toContain('refreshAll: true, replace: true');
 });

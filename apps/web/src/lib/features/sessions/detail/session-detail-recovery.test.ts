@@ -2,6 +2,8 @@ import { expect, mock, test } from 'bun:test';
 import { ORPCError } from '@orpc/client';
 import { QueryObserver } from '@tanstack/svelte-query';
 import { createWebQueryClient } from '../../../query/client';
+import { optionalSessionDetailQueryOptions } from '../../../query/options/session';
+import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
 import { recoverRegion } from '../../shell/report-render-error';
 import { createSessionDetailRecovery } from './session-detail-recovery';
@@ -61,7 +63,7 @@ const fixture = async () => {
     onLoaded,
     onFailureChange,
     vcs,
-    recovery: createSessionDetailRecovery(detail, drawer),
+    recovery: createSessionDetailRecovery(detail, drawer, () => true),
     allowChunk: () => {
       failChunk = false;
     },
@@ -136,5 +138,39 @@ test('a failed owning detail query leaves the render region unavailable for anot
     expect(state.detail.getCurrentResult().error).toBe(state.failure);
   } finally {
     state.dispose();
+  }
+});
+
+test('a disabled detail observer can recover without calling the sentinel transport', async () => {
+  const client = createWebQueryClient();
+  const transport = mock(() => Promise.reject(new ORPCError('Unavailable')));
+  const adapter: SessionClientAdapter = {
+    campaignChildren: transport,
+    detail: transport,
+    lookup: transport,
+    neighbors: transport,
+    page: transport,
+    vcs: transport,
+  };
+  const options = optionalSessionDetailQueryOptions(adapter, undefined, { browser: true });
+  const detail = new QueryObserver(client, options);
+  const stop = detail.subscribe(() => undefined);
+  const drawer = createLazyModuleLoader({
+    importModule: () => Promise.resolve('drawer'),
+    onFailureChange: () => undefined,
+    onLoaded: () => undefined,
+  });
+  const recovery = createSessionDetailRecovery(detail, drawer, () => false);
+  const reset = mock(() => undefined);
+  try {
+    expect(options.enabled).toBe(false);
+    await expect(recoverRegion(reset, recovery.recoverRegion)).resolves.toBeUndefined();
+    expect(reset).toHaveBeenCalledTimes(1);
+    await recovery.retryAnalysis();
+    expect(transport).not.toHaveBeenCalled();
+    expect(detail.getCurrentResult().error).toBeNull();
+  } finally {
+    stop();
+    client.clear();
   }
 });

@@ -12,6 +12,7 @@
   } from '../../../query/options/session';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
+  import SessionDetailChunkRetry from './session-detail-chunk-retry.svelte';
   import { createSessionDetailRecovery } from './session-detail-recovery';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './types';
 
@@ -134,13 +135,18 @@
   const drawerLoader = createLazyModuleLoader({
     importModule: () => import('./session-detail-members-query-slot.svelte'),
     onFailureChange: (failed) => {
-      drawerLoadFailed = failed;
+      // Keep the failed surface mounted while a retry runs so its button retains focus.
+      if (failed) {
+        drawerLoadFailed = true;
+      }
     },
     onLoaded: (module) => {
       drawerModule = module;
     },
   });
-  const recovery = createSessionDetailRecovery(detailQuery, drawerLoader);
+  const recovery = createSessionDetailRecovery(detailQuery, drawerLoader, () =>
+    Boolean(analysisOpen && revision && target),
+  );
 
   const navigate = (delta: -1 | 1): void => {
     if (drawerClosing) {
@@ -257,9 +263,6 @@
       {snapshot}
     />
   {:else if selection?.row && drawerLoadFailed}
-    <p role="status">
-      Session details are temporarily unavailable.
-      <button onclick={recovery.retryChunk} type="button">Retry session details</button>
-    </p>
+    <SessionDetailChunkRetry onRetry={recovery.retryChunk} />
   {/if}
 </div>

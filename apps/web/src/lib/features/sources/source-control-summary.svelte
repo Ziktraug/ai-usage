@@ -209,7 +209,11 @@
         hoverSuppressed = false;
         leave();
       }}
-      onpointermove={enter}
+      onpointermove={(event) => {
+        // pointerenter may have occurred over the server-rendered trigger before hydration.
+        triggerHovered = true;
+        enter(event);
+      }}
       type="button"
     >
       <span
