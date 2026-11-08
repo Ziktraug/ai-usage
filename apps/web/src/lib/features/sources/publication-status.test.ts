@@ -53,8 +53,8 @@ describe('publication status presentation', () => {
   });
   test('state precedence never presents an unhealthy publication as up to date', () => {
     const cases: readonly (readonly [Partial<SourcePublicationView>, string])[] = [
-      [{ running: true, queued: true, lastOutcome: 'failed' }, 'Publishing stored data now.'],
-      [{ queued: true, lastOutcome: 'failed' }, 'Publishing is queued.'],
+      [{ running: true, queued: true, lastOutcome: 'failed' }, 'The last publish failed; retrying now.'],
+      [{ queued: true, lastOutcome: 'failed' }, 'The last publish failed; a retry is queued.'],
       [{ lastOutcome: 'failed' }, 'The last publish failed. Run all enabled to retry publishing the collected data.'],
       [
         { lastOutcome: 'failed', dirty: true, pendingDemand: true },
@@ -73,6 +73,21 @@ describe('publication status presentation', () => {
     for (const [state, message] of cases) {
       expect(publicationStatus(publication(state))).toBe(message);
     }
+  });
+
+  test('an externally published initial revision is published even before a scheduled attempt', () => {
+    const initial = publication({
+      lastOutcome: 'not-run',
+      revision: 'initial',
+      lastPublishedAt: '2026-11-08T00:00:00Z',
+    });
+    expect(publicationHealthy(initial)).toBe(true);
+    expect(publicationOutcomeLabel(initial)).toBe('Published');
+    expect(publicationStatus(initial)).toBe('The report is up to date with everything collected.');
+    expect(publicationStatus({ ...initial, dirty: true })).toBe('New data is waiting to be published.');
+    expect(publicationHealthy(publication({ lastOutcome: 'not-run', lastPublishedAt: '2026-11-08T00:00:00Z' }))).toBe(
+      false,
+    );
   });
 
   test('presents outcomes, pending requests, and RTK progress without engine jargon', () => {

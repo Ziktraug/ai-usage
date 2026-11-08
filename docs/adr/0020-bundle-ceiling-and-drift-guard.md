@@ -59,6 +59,23 @@ most of the remaining room (over a 298,131 B build after the in-major bumps,
 SvelteKit 3 alone added 4,381 B and Panda 2 alone 1,664 B). The next change
 that grows the closure therefore starts by recovering headroom.
 
+### 2026-11-08 amendment: 315,000 B ceiling
+
+The operator raised the ceiling from 305,000 B to 315,000 B. A fresh production
+build records 312,576 B, up 8,180 B from the 304,396 B measured on the base
+before the change. The extra bytes buy navigation-intent prefetch, independent
+failure and recovery of report and shell regions, view transitions and the
+report progress indicator. A lazy split of route prefetch was measured and
+saved only 146 B, so the bytes stay in the first load.
+
+Separating drawer chunk, analysis and render-region retries removes the eager
+campaign-member query dependency from the detail slot. This reduces the prior
+314,676 B recording by 2,100 B without removing the independent retry surfaces.
+
+The recorded closure sits 2,424 B under the new ceiling, below the headroom
+expectation above. The next change that grows the closure therefore starts by
+recovering headroom.
+
 ## Consequences
 
 - No per-feature byte accounting returns without revisiting this ADR.

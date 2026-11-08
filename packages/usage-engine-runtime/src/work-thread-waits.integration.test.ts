@@ -35,6 +35,7 @@ const MACHINE = { id: 'wait-machine', label: 'Wait fixture' };
 const PR_KEY = 'github.com/fixture/project#7';
 const JIRA_KEY = 'jira:default/WAIT-7';
 const at = (minute: number) => canonicalInstantFromDate(new Date(Date.UTC(2026, 9, 24, 10, minute)));
+const JIRA_UPDATED_WITHIN_PATTERN = /updated >= "-(\d+)m"/;
 const roots: string[] = [];
 
 afterEach(() => {
@@ -123,11 +124,18 @@ const fixture = async (
       if (request.command === 'gh' && request.args.join(' ') === 'auth token --hostname github.com') {
         return { durationMs: 1, exitCode: 0, stdout: 'fixture-token\n' };
       }
-      if (
-        (request.command === 'gh' && request.args[0] === 'search') ||
-        (request.command === 'acli' && request.args.includes('search'))
-      ) {
+      if (request.command === 'gh' && request.args[0] === 'search') {
         return { durationMs: 1, exitCode: 0, stdout: '[]' };
+      }
+      if (request.command === 'acli' && request.args.includes('search')) {
+        // As Jira would: a change search returns the followed issue only when it was updated within the
+        // relative window. Assignment discovery names nothing, so only followed keys are searched.
+        const jql = request.args[request.args.indexOf('--jql') + 1] ?? '';
+        const minutes = JIRA_UPDATED_WITHIN_PATTERN.exec(jql)?.[1];
+        const changed =
+          jql.includes('WAIT-7') &&
+          (minutes === undefined || Date.parse(updatedAt) >= Date.parse(at(now)) - Number(minutes) * 60_000);
+        return { durationMs: 1, exitCode: 0, stdout: JSON.stringify(changed ? [{ key: 'WAIT-7' }] : []) };
       }
       if (request.command === 'gh' && isReviewThreadsFixtureRead(request.args)) {
         return {
@@ -305,7 +313,8 @@ describe('external observations satisfy identified waits through the engine', ()
     async (evidence) => {
       const input = await fixture(evidence === 'jira-status' ? 'jira-update' : 'pull-request-review');
       await input.poll();
-      input.next({ minute: 20 });
+      // An incremental Jira sync reads details only for a reported change: an earlier edit starts this read.
+      input.next({ minute: 20, ...(evidence === 'jira-status' ? { updatedAt: at(10) } : {}) });
       input.beforeView(() => {
         input.next({
           minute: 22,

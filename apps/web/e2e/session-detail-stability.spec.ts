@@ -87,6 +87,21 @@ test('restores the reading position after a visible refresh error and retry', as
   await expect(page.getByRole('button', { name: 'Show the opening only' })).toBeVisible();
 });
 
+test('repeated Rounds and Timeline retry failures stay visible without unhandled rejections', async ({ page }) => {
+  await page.getByRole('button', { name: 'Publish revision', exact: true }).click();
+  await expect(page.locator('[data-session-detail-fixture]')).toHaveAttribute('data-pending', 'true');
+  await page.getByRole('button', { name: 'Fail detail', exact: true }).click();
+  for (const tab of [ROUNDS_TAB, 'Timeline']) {
+    await page.getByRole('tab', { name: tab }).click();
+    await expect(page.getByRole('alert')).toContainText('Fixture detail refresh failed');
+    await page.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(page.locator('[data-session-detail-fixture]')).toHaveAttribute('data-pending', 'true');
+    await page.getByRole('button', { name: 'Fail detail', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Fixture detail refresh failed');
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+  }
+});
+
 test('restores the outer reading scroll after visiting another tab', async ({ page }) => {
   await page.getByRole('button', { name: CONTINUE_READING }).click();
   const body = page.locator('[data-session-drawer-body]');

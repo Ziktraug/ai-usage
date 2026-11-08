@@ -1,21 +1,18 @@
 <script lang="ts">
   import { type SessionPresentationRow, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
-  import { createQuery, type QueryClient, type QueryKey } from '@tanstack/svelte-query';
+  import { createQuery, type QueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, tick } from 'svelte';
   import { classifySessionAnalysisError } from '../../../../session-analysis-error';
   import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
   import { drawerCommandForKey } from '../../../foundation/navigation/svelte/navigation';
-  import { campaignMembersOptions } from '../../../query/options/campaigns';
   import {
     optionalSessionDetailQueryOptions,
     optionalSessionNeighborsQueryOptions,
     optionalSessionVcsQueryOptions,
-    sessionDetailKey,
-    sessionNeighborsKey,
-    sessionVcsKey,
   } from '../../../query/options/session';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
+  import { createSessionDetailRecovery } from './session-detail-recovery';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './types';
 
   type SessionDrawerModule = typeof import('./session-detail-members-query-slot.svelte');
@@ -143,28 +140,7 @@
       drawerModule = module;
     },
   });
-  const retrySessionDetailQueries = async (): Promise<void> => {
-    const keys: QueryKey[] = [];
-    if (revision && target) {
-      keys.push(
-        sessionDetailKey({ revision, rowId: target.reportRowId }),
-        sessionVcsKey({ revision, rowId: target.reportRowId }),
-      );
-    }
-    if (selection?.query) {
-      keys.push(sessionNeighborsKey({ query: selection.query, rowId: selection.row.rowId }));
-    }
-    if (revision && selection?.row.campaignKey) {
-      keys.push(campaignMembersOptions(client, revision, selection.row.campaignKey).queryKey);
-    }
-    await Promise.all(
-      keys.map((queryKey) => queryClient.resetQueries({ queryKey, exact: true }, { throwOnError: true })),
-    );
-  };
-  const retrySessionDetails = async (): Promise<void> => {
-    await retrySessionDetailQueries();
-    await drawerLoader.retry();
-  };
+  const recovery = createSessionDetailRecovery(detailQuery, drawerLoader);
 
   const navigate = (delta: -1 | 1): void => {
     if (drawerClosing) {
@@ -228,9 +204,8 @@
       await tick();
       await vcsQuery.refetch();
     },
-    retryAnalysis: async () => {
-      await retrySessionDetailQueries();
-    },
+    recoverRegion: recovery.recoverRegion,
+    retryAnalysis: recovery.retryAnalysis,
     select: (nextSelection) => onSelectionChange(nextSelection),
     subscribe: (listener) => {
       listener(snapshot);
@@ -284,7 +259,7 @@
   {:else if selection?.row && drawerLoadFailed}
     <p role="status">
       Session details are temporarily unavailable.
-      <button onclick={retrySessionDetails} type="button">Retry session details</button>
+      <button onclick={recovery.retryChunk} type="button">Retry session details</button>
     </p>
   {/if}
 </div>

@@ -334,6 +334,52 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
 });
 
+test('a delayed render frame cannot overwrite a reader scroll after navigation', async ({ page }) => {
+  await page.goto('/');
+  await waitForHydratedReport(page);
+  await expect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible();
+  await page.evaluate(() => {
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 700);
+    const request = window.requestAnimationFrame;
+    const cancel = window.cancelAnimationFrame;
+    const queued = new Map<number, FrameRequestCallback>();
+    let sequence = 0;
+    window.requestAnimationFrame = (callback) => {
+      const id = ++sequence;
+      queued.set(id, callback);
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      queued.delete(id);
+    };
+    window.addEventListener(
+      'release-render-frame',
+      () => {
+        window.requestAnimationFrame = request;
+        window.cancelAnimationFrame = cancel;
+        for (const callback of queued.values()) {
+          request(callback);
+        }
+        queued.clear();
+      },
+      { once: true },
+    );
+  });
+  try {
+    await page.getByRole('link', { name: 'Sessions' }).click();
+    await expect(page.getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+    await page.evaluate(() => {
+      window.scrollTo(0, 1200);
+      window.dispatchEvent(new Event('release-render-frame'));
+    });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(1200);
+  } finally {
+    await page.evaluate(() => window.dispatchEvent(new Event('release-render-frame')));
+  }
+});
+
 // SvelteKit 3 runs no `beforeNavigate` for a navigation that starts while another one is in flight,
 // so a link that asks to keep the scroll position must be honoured from its own click. SvelteKit 2
 // carried `noScroll` on each navigation.
