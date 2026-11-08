@@ -3,7 +3,7 @@ import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportS
 
 const CAMPAIGN_KEY = 'fixture-machine:codex:campaign-root';
 const DERIVED_LABEL = 'Build report UI';
-const RENAMED_LABEL = 'Release train';
+const RENAMED_LABEL = '__init__ cleanup **literal** &amp;';
 const CAMPAIGN_LABEL_RPC_PATH = '/rpc/campaign/setLabelOverride';
 const CAMPAIGN_OVERVIEW_PATTERN = /Campaign ·/;
 const CAMPAIGN_FILTER_URL = `/?filters=${encodeURIComponent(JSON.stringify({ campaign: CAMPAIGN_KEY }))}&tab=sessions`;

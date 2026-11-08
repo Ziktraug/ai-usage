@@ -716,7 +716,11 @@ test('keeps mobile Rounds modal and restores focus after the original virtual ro
         playState: animation.playState,
       })),
     };
-    await Promise.all(animations.map((animation) => animation.finished));
+    await Promise.all(
+      animations
+        .filter((animation) => animation.effect?.getTiming().iterations !== Number.POSITIVE_INFINITY)
+        .map((animation) => animation.finished),
+    );
     return { before, settledOpacity: getComputedStyle(element).opacity };
   });
   await test.info().attach('drawer-motion-before-axe', {

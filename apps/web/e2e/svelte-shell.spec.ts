@@ -525,6 +525,7 @@ test('renders retryable route errors and the default accessible Not Found shell'
   await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-error': 'once' });
   const failed = await page.goto('/?foreign=kept');
   expect(failed?.status()).toBe(503);
+  await expect(page.locator('[data-error-route][data-hydrated="true"]')).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
   await expect(page.getByText('Report data could not be loaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();

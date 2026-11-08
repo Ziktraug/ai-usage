@@ -7,6 +7,7 @@
     message = 'Report data could not be loaded.',
     onRetry,
     pending = false,
+    hydrated = false,
     retryHref,
     retryParameters = [],
     status,
@@ -14,6 +15,7 @@
     message?: string | undefined;
     onRetry?: () => Promise<void> | void;
     pending?: boolean;
+    hydrated?: boolean;
     retryHref?: string;
     retryParameters?: readonly (readonly [string, string])[];
     status: number;
@@ -37,7 +39,7 @@
     </div>
   </main>
 {:else}
-  <main class={page} data-hydrated="false">
+  <main class={page} data-error-route data-hydrated={hydrated ? 'true' : 'false'}>
     <div class={shell}>
       <WorkspaceHeader eyebrow="Workspace" heading="Usage report" />
       <section aria-live="polite" class={`${panel} ${statusPanel}`}>

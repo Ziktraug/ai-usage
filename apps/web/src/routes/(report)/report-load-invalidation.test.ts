@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 
 const URL_READ_PATTERN = /\burl\b/;
+const URL_REFERENCES_PATTERN = /\burl\b/g;
+const FETCH_CALL_PATTERN = /\bfetch\s*\(/;
 
 describe('report route load invalidation', () => {
   test('keeps layout navigation reactive while report acquisition ignores search changes', async () => {
@@ -13,17 +15,21 @@ describe('report route load invalidation', () => {
     expect(layoutSource).not.toContain('untrack');
     expect(layoutSource).not.toContain('searchParams');
     expect(pageSource).toContain('await untrack(() => parent())');
-    // The universal load acquires nothing, so it reads neither the URL nor a fetch.
-    expect(pageSource).not.toMatch(URL_READ_PATTERN);
-    expect(pageSource).not.toContain('fetch');
+    // Intent warming may read a detached URL, but must not make search navigation load-scoped.
+    expect(pageSource).toContain('untrack(() => new URL(url.href))');
+    expect(pageSource.match(URL_REFERENCES_PATTERN)).toHaveLength(2); // parameter and the sole untracked read
+    expect(pageSource).not.toContain('searchParams');
+    expect(pageSource).not.toMatch(FETCH_CALL_PATTERN);
+    expect(pageSource).toContain('prefetchNavigationIntent(data.reportQueryState,');
   });
 
   test('acquires the report on the server so hydration never repeats the request', async () => {
     const pageSource = await readFile(new URL('+layout.ts', import.meta.url), 'utf8');
     const serverSource = await readFile(new URL('+layout.server.ts', import.meta.url), 'utf8');
 
-    // The universal load must stay free of report acquisition: it runs again in the browser.
+    // Hydration must never call the SSR acquisition path or create another runtime.
     expect(pageSource).not.toContain('acquireLiveReportQueryState');
+    expect(pageSource).not.toContain('createWebQueryRuntime');
     expect(serverSource).toContain('acquireLiveReportQueryState');
     expect(serverSource).toContain('if (isDataRequest)');
     expect(serverSource).toContain('deferredLiveReportQueryState()');

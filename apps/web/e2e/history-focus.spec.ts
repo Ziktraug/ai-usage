@@ -13,6 +13,7 @@ const STANDALONE_TITLE = 'Review release notes';
 const ROOT_TITLE = 'Build forecast model';
 const OPEN_ROOT_SESSION_NAME = new RegExp(`^Open session ${ROOT_TITLE}(?:\\s|$)`);
 const OPEN_BUILD_REPORT_UI_NAME = /^Open details for Build report UI\./;
+const MODELS_TAB_URL = /[?&]tab=models(?:&|$)/;
 
 const agentMap = (page: Page): Locator => page.getByRole('region', { name: 'Agent Map', exact: true });
 
@@ -64,6 +65,8 @@ test('Back across a kept-focus Analysis tab change resets focus to the page', as
   await page.keyboard.press('Enter');
   await expect(models).toHaveAttribute('aria-selected', 'true');
   await expect(models).toBeFocused();
+  // The selected style is optimistic; Back must traverse a committed entry.
+  await expect(page).toHaveURL(MODELS_TAB_URL);
 
   await page.goBack();
   await expect(harnesses).toHaveAttribute('aria-selected', 'true');

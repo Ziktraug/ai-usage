@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { onMount, tick } from 'svelte';
+  import { onMount, type Snippet, tick } from 'svelte';
   import { afterNavigate, beforeNavigate, disableScrollHandling, onNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
@@ -37,6 +37,7 @@
   import NavigationLink from './navigation-link.svelte';
   import { useShellNavigationOwner } from './navigation-owner-context';
   import { usePageStateWriter } from './page-state-writer';
+  import { reportUnexpectedPrefetchFailure } from './prefetch-errors';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import ProviderQuotaRail from './provider-quota-rail.svelte';
@@ -46,11 +47,13 @@
   let {
     pageStateFailure = false,
     providerQuota = [],
+    quotaRail,
     runtimeMode,
   }: {
     /** A history annotation written outside the rail was rejected. */
     pageStateFailure?: boolean;
     providerQuota?: readonly ProviderQuotaRailEntry[];
+    quotaRail?: Snippet;
     runtimeMode: RuntimeMode;
   } = $props();
 
@@ -108,6 +111,7 @@
     textTransform: 'uppercase',
   });
   const navigationLink = css({
+    isolation: 'isolate',
     position: 'relative',
     display: 'flex',
     alignItems: 'center',
@@ -138,7 +142,6 @@
   const navigationLinkInactive = css({ borderColor: 'transparent', color: 'muted' });
   const navigationLinkActive = css({
     borderColor: 'transparent',
-    bg: 'accentSoft',
     color: 'accent',
   });
   // One `mt: auto` for the whole bottom stack: the quota panel renders conditionally, so hanging the
@@ -352,6 +355,25 @@
   });
 
   onMount(() => {
+    // Capture pointerenter (non-bubbling), keyboard focus and touch without changing link semantics.
+    const prefetchTab = (event: Event): void => {
+      const link = event.target instanceof Element ? event.target.closest('a') : null;
+      if (!(link instanceof HTMLAnchorElement && link.closest('[data-app-navigation]'))) {
+        return;
+      }
+      if (event.type === 'pointerenter' && event.target !== link) {
+        return;
+      }
+      const target = new URL(link.href);
+      if (target.origin === pageUrl.origin && runtimeMode === 'live' && isReportPathname(target.pathname)) {
+        import('../report/core/report-intent')
+          .then(({ prefetchReportTabIntent }) => prefetchReportTabIntent(target, runtimeMode))
+          .catch(reportUnexpectedPrefetchFailure);
+      }
+    };
+    document.addEventListener('pointerenter', prefetchTab, true);
+    document.addEventListener('focus', prefetchTab, true);
+    document.addEventListener('touchstart', prefetchTab, { capture: true, passive: true });
     scrollLifecycle = installScrollLifecycle({
       afterNavigate: (listener) => {
         afterScrollListeners.add(listener);
@@ -439,6 +461,9 @@
     });
     navigationHydrated = true;
     return () => {
+      document.removeEventListener('pointerenter', prefetchTab, true);
+      document.removeEventListener('focus', prefetchTab, true);
+      document.removeEventListener('touchstart', prefetchTab, true);
       stopDirtyBridge();
       scrollLifecycle?.dispose();
       scrollLifecycle = undefined;
@@ -482,6 +507,7 @@
   class={desktopRail}
   data-app-navigation="desktop"
   data-hydrated={navigationHydrated ? 'true' : 'false'}
+  style:view-transition-name="workspace-desktop-navigation"
 >
   <div class={productName}>
     <span aria-hidden="true" class={productMark}><ProductMark /></span><span class={productWordmark}>ai-usage</span>
@@ -492,6 +518,7 @@
       class={linkClass(isActiveManagementDestination(page.url.pathname, workDestination.href))}
       href={workDestination.href}
       icon={workDestination.icon}
+      indicator
       label={workDestination.label}
     />
   </nav>
@@ -503,6 +530,7 @@
         class={linkClass(isReportPathname(page.url.pathname) && activeReportTab(pageUrl) === destination.tab)}
         href={reportDestinationUrl(pageUrl, destination.tab).href}
         icon={destination.icon}
+        indicator
         label={destination.label}
         preserveScroll
       />
@@ -512,6 +540,7 @@
       class={linkClass(page.url.pathname === '/campaigns')}
       href={`/campaigns${page.url.search}`}
       icon="campaigns"
+      indicator
       label="Campaigns"
     />
     <NavigationLink
@@ -531,13 +560,18 @@
           class={linkClass(isActiveManagementDestination(page.url.pathname, destination.href))}
           href={destination.href}
           icon={destination.icon}
+          indicator
           label={destination.label}
         />
       {/each}
     </nav>
   {/if}
   <div class={railBottom}>
-    <ProviderQuotaRail entries={providerQuota} />
+    {#if quotaRail}
+      {@render quotaRail()}
+    {:else}
+      <ProviderQuotaRail entries={providerQuota} />
+    {/if}
     <div class={railFooter}><span class={navigationGroupLabel}>Theme</span><ThemeToggle /></div>
   </div>
 </aside>
@@ -547,6 +581,7 @@
   class={mobileNavigation}
   data-app-navigation="mobile"
   data-hydrated={navigationHydrated ? 'true' : 'false'}
+  style:view-transition-name="workspace-mobile-navigation"
 >
   {#each mobileDestinations.primary as destination (destination.label)}
     <NavigationLink

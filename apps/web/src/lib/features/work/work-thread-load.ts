@@ -1,6 +1,7 @@
 import { isWorkThreadId } from '@ai-usage/report-core/work-thread';
 import type { RuntimeMode } from '../../../runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
+import type { WebQueryRuntime } from '../../query/composition';
 import { prefetchWorkThreadRoute } from '../../query/options/work-threads';
 import { createWorkThreadsClient } from '../../rpc/work-threads-client';
 import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';
@@ -20,14 +21,18 @@ export const loadThreadPageData = async (
   options: RouteQueryLoadOptions,
   mode: RuntimeMode,
 ): Promise<ThreadPageData> => {
-  const queryState = await createAwaitedRouteQueryState(options, async (runtime) => {
-    const client = createWorkThreadsClient(runtime.rpc.workThreads);
-    const task = options.url.searchParams.get('task');
-    await prefetchWorkThreadRoute(runtime.queryClient, client, {
-      cursors: threadPageCursors(options.url.searchParams),
-      query: threadListQuery(options.url.searchParams),
-      threadId: isWorkThreadId(task) ? task : null,
-    });
-  });
+  const queryState = await createAwaitedRouteQueryState(options, (runtime) =>
+    prefetchThreadsRoute(runtime, options.url),
+  );
   return { mode, queryState };
+};
+
+export const prefetchThreadsRoute = async (runtime: WebQueryRuntime, url: URL): Promise<void> => {
+  const client = createWorkThreadsClient(runtime.rpc.workThreads);
+  const task = url.searchParams.get('task');
+  await prefetchWorkThreadRoute(runtime.queryClient, client, {
+    cursors: threadPageCursors(url.searchParams),
+    query: threadListQuery(url.searchParams),
+    threadId: isWorkThreadId(task) ? task : null,
+  });
 };

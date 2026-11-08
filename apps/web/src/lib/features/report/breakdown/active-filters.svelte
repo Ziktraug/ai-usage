@@ -15,6 +15,7 @@
     hidden,
     navigation,
     pending = false,
+    stale = pending,
     presentMachineLabel,
     search,
     total,
@@ -23,6 +24,7 @@
     hidden: number;
     navigation: BreakdownNavigation;
     pending?: boolean;
+    stale?: boolean;
     presentMachineLabel: (value: string) => string;
     search: DashboardSearch;
     total: number;
@@ -41,12 +43,12 @@
   let hiddenCountWidth = $state(0);
   let reservedWidths = $state({ hidden: 0, visible: 0 });
   $effect(() => {
-    if (!pending) {
+    if (!stale) {
       reservedWidths = { hidden: hiddenCountWidth, visible: visibleCountWidth };
     }
   });
-  const reserved = (width: number): string | undefined => (pending && width > 0 ? `${width}px` : undefined);
-  const busyAttributes = $derived(pending ? ({ 'aria-busy': 'true' } as const) : {});
+  const reserved = (width: number): string | undefined => (stale && width > 0 ? `${width}px` : undefined);
+  const busyAttributes = $derived(stale ? { 'aria-busy': pending } : {});
 </script>
 
 <div class={filterSummary} data-active-filters data-pending={pending}>
@@ -57,14 +59,14 @@
     style:min-width={reserved(reservedWidths.visible)}
     bind:offsetWidth={visibleCountWidth}
   >
-    {#if !pending}
+    {#if !stale}
       {fmtNum(visible)}
       / {fmtNum(total)} sessions
     {/if}
   </span>
   {#if hidden > 0}
     <span {...busyAttributes} style:min-width={reserved(reservedWidths.hidden)} bind:offsetWidth={hiddenCountWidth}>
-      {#if !pending}
+      {#if !stale}
         {fmtNum(hidden)}
         hidden by filters
       {/if}

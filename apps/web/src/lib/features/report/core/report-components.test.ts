@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, spyOn } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
@@ -65,16 +65,46 @@ const viteServer = await createServer({
 });
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
-const [overviewModule, rootModule, workspaceModule, serverModule] = await Promise.all([
+const [overviewModule, rootModule, workspaceModule, regionModule, throwingModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-bootstrap-overview.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-root.fixture.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-workspace.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-region.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-region-throwing.fixture.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const overview = componentFrom(overviewModule, 'Report bootstrap overview');
 const reportRoot = componentFrom(rootModule, 'Hydrated report root fixture');
 const reportWorkspace = componentFrom(workspaceModule, 'Report workspace');
+const reportRegion = componentFrom(regionModule, 'Report region');
+const throwingRegion = componentFrom(throwingModule, 'Throwing report region');
 const { render } = rendererFrom(serverModule);
+
+it('documents how a throwing child in ReportRegion is rendered by Svelte SSR', () => {
+  const logged = spyOn(console, 'error').mockImplementation(() => undefined);
+  // This fixture deliberately throws; production onerror still reports the defect.
+  try {
+    // Svelte 5.57 boundaries catch client render/effect failures, not synchronous SSR failures.
+    // A failed SSR render must remain an error document, never an apparently complete report.
+    expect(() => render(throwingRegion).body).toThrow('Expected region render failure');
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+it('keeps a failed request stale but no longer busy after fetching stops', () => {
+  const { body } = render(reportRegion, {
+    props: {
+      kind: 'overview',
+      pending: false,
+      stale: true,
+      onRetry: () => Promise.resolve(),
+      children: () => undefined,
+    },
+  });
+  expect(body).toContain('data-report-stale="true"');
+  expect(body).toContain('aria-busy="false"');
+});
 
 const compatiblePublication = (): Extract<ReportRevisionBootstrapResult, { readonly ok: true }> => {
   const { rows: _rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
@@ -185,7 +215,9 @@ describe('report Svelte SSR components', () => {
   it('marks retained output as stale while a refresh is in flight', () => {
     // A range change rescales the Activity chart locally while every figure inside the workspace
     // still describes the previous request. Both must not read as equally definitive.
-    const refreshing = render(reportWorkspace, { props: { hasOutput: true, pending: true } });
+    const refreshing = render(reportRegion, {
+      props: { kind: 'overview', pending: true, onRetry: () => Promise.resolve(), children: () => undefined },
+    });
     expect(refreshing.body).toContain('data-report-stale="true"');
     expect(refreshing.body).toContain('aria-busy="true"');
 
@@ -193,6 +225,9 @@ describe('report Svelte SSR components', () => {
     expect(settled.body).toContain('data-report-complete-output');
     expect(settled.body).not.toContain('data-report-stale');
     expect(settled.body).not.toContain('aria-busy');
+    const workspace = render(reportWorkspace, { props: { hasOutput: true, pending: true } });
+    expect(workspace.body).not.toContain('data-report-stale');
+    expect(workspace.body).not.toContain('aria-busy');
   });
 
   it('keeps refresh failure recoverable without replacing retained output', () => {

@@ -1,6 +1,106 @@
 @import "../styled-system/styles.css";
 
+::view-transition-group(*) {
+  animation-duration: 200ms;
+  animation-timing-function: ease-in-out;
+}
+
+::view-transition-old(root) {
+  animation: workspace-out 180ms ease-out both;
+}
+::view-transition-new(root) {
+  animation: workspace-in 200ms ease-out both;
+}
+::view-transition-old(workspace-topbar),
+::view-transition-new(workspace-topbar),
+::view-transition-group(workspace-topbar),
+::view-transition-old(workspace-desktop-navigation),
+::view-transition-new(workspace-desktop-navigation),
+::view-transition-group(workspace-desktop-navigation),
+::view-transition-old(workspace-mobile-navigation),
+::view-transition-new(workspace-mobile-navigation),
+::view-transition-group(workspace-mobile-navigation) {
+  animation: none;
+}
+
+/* Named descendants are flattened into sibling snapshot groups, not their DOM stacking contexts. */
+::view-transition-group(workspace-atmosphere) {
+  z-index: 1;
+}
+::view-transition-group(workspace-copy),
+::view-transition-group(workspace-actions) {
+  z-index: 2;
+}
+::view-transition-group(workspace-title) {
+  z-index: 3;
+}
+::view-transition-group(workspace-topbar) {
+  z-index: 30;
+}
+::view-transition-group(workspace-desktop-navigation),
+::view-transition-group(workspace-mobile-navigation) {
+  z-index: 40;
+}
+::view-transition-group(nav-indicator) {
+  z-index: 41;
+}
+::view-transition-group(nav-active-content) {
+  z-index: 42;
+}
+
+@keyframes workspace-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes workspace-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@keyframes workspace-back-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes workspace-back-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+:root:active-view-transition-type(backwards)::view-transition-new(root) {
+  animation-name: workspace-back-in;
+}
+:root:active-view-transition-type(backwards)::view-transition-old(root) {
+  animation-name: workspace-back-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
   *,
   *::before,
   *::after {

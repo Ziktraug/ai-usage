@@ -42,6 +42,7 @@ test('opens collection details on hover and keyboard without shifting focus, and
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
   await page.keyboard.press('Enter');
+  await expect(details).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(details.getByRole('link', { name: 'View sources' })).toBeFocused();
   const { violations } = await new AxeBuilder({ page })

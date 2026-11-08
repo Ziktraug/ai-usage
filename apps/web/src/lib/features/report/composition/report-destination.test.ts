@@ -19,7 +19,7 @@ import { QueryObserver } from '@tanstack/svelte-query';
 import { demoReportPayload } from '../../../../report-data';
 import { createWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
-import { reportBootstrapQueryOptions } from '../../../query/options/report';
+import { reportBootstrapQueryOptions, reportOverviewKey } from '../../../query/options/report';
 import {
   type ReportDestinationQueryData,
   refreshReportDestination,
@@ -28,9 +28,14 @@ import {
   reportDestinationQueryOptions,
 } from '../../../query/options/report-destination';
 import { initialSessionWindowIntent } from '../../../query/options/session-window';
+import { resetReportRegionQueries } from '../../../query/report-region-recovery';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow } from '../../sessions/table/session-table.fixtures';
-import { type FocusedReportDestination, FocusedReportRevisionExpiredError } from './report-destination';
+import {
+  type FocusedReportDestination,
+  FocusedReportRevisionExpiredError,
+  overviewRequestFor,
+} from './report-destination';
 
 const { rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
 
@@ -144,6 +149,31 @@ const overviewDependencies = (getFocusedReportOverview: ReportQueryClient['getFo
 });
 
 describe('report destination Query', () => {
+  test('region recovery resets its exact read and composite without discarding unrelated cache data', async () => {
+    let calls = 0;
+    const dependencies = overviewDependencies((request) => {
+      calls += 1;
+      return Promise.resolve(successfulOverview(request));
+    });
+    const destination = overviewDestination();
+    try {
+      const commit = await dependencies.queryClient.query(
+        reportDestinationQueryOptions(dependencies, destination, { browser: true }),
+      );
+      const other = ['web', 'immutable-revision', 'report', 'unrelated-revision', 'unrelated-fingerprint', 'overview'];
+      dependencies.queryClient.setQueryData(other, 'retained');
+      const key = reportOverviewKey(overviewRequestFor(destination, commit.descriptor.revision));
+      expect(dependencies.queryClient.getQueryData(key)).toBeDefined();
+      await resetReportRegionQueries(dependencies, commit, initialSessionWindowIntent(), 'overview');
+      expect(dependencies.queryClient.getQueryData(key)).toBeUndefined();
+      expect(dependencies.queryClient.getQueryData(other)).toBe('retained');
+      await refreshReportDestination(dependencies, destination);
+      expect(calls).toBe(2);
+      expect(dependencies.queryClient.getQueryData(key)).toBeDefined();
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
   test('supersedes a retained Day refresh when its date domain requests Week', async () => {
     const calls: string[] = [];
     const dependencies = overviewDependencies((request) => {

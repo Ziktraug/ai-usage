@@ -34,7 +34,7 @@
   } from '@ai-usage/report-core/session-query';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { createMutation, createQuery, type QueryClient } from '@tanstack/svelte-query';
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     campaignDisplayLabelFor,
     campaignLabelFor,
@@ -79,6 +79,7 @@
     sessionWindowSatisfiesIntent,
     sessionWindowView,
   } from '../../../query/options/session-window';
+  import { resetReportRegionQueries } from '../../../query/report-region-recovery';
   import type { ReportClient } from '../../../rpc/report-client';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { resolveDetailSelection, routeForSelection } from '../../sessions/detail/detail-selection';
@@ -100,12 +101,9 @@
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportFreshness from '../core/report-freshness.svelte';
+  import { installReportIntentResolver } from '../core/report-intent';
   import ReportWarnings from '../core/report-warnings.svelte';
-  import {
-    reportRangeProjection,
-    resolveTimelineGranularity,
-    type TimelineGranularityPreference,
-  } from '../range/report-range-model';
+  import type { TimelineGranularityPreference } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
@@ -117,7 +115,14 @@
     requireFocusedBreakdown,
   } from './report-destination';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
+  import { reportRegionStaleness, reportVisibleRequestPending } from './report-region-staleness';
   import { initialReportTimelineFor, queryForDescriptor, reportDestinationForSearch } from './report-search';
+  import {
+    reportPreservesSessionRevision,
+    reportSessionIntentFor,
+    reportTabTargetFor,
+    reportTimelineForSearch,
+  } from './report-tab-target';
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
@@ -220,11 +225,14 @@
   );
   const projectGroupsMutation = createMutation(() => saveProjectGroupsMutationOptions(reportClient, queryClient));
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
-  const rangeProjection = $derived(
-    reportRangeProjection(search.range, new Date(bootstrapResult.bootstrap.support.generatedAt), knownDateDomain),
+  const timeline = $derived(
+    reportTimelineForSearch(search, bootstrapResult.bootstrap.support.generatedAt, {
+      dimension,
+      granularityPreference,
+      knownDateDomain,
+    }),
   );
-  const granularity = $derived(resolveTimelineGranularity(granularityPreference, rangeProjection.dayCount));
-  const timeline = $derived({ dimension, granularity });
+  const granularity = $derived(timeline.granularity);
   const destination = $derived(
     reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, timeline),
   );
@@ -234,22 +242,28 @@
     }
     return destination.focused;
   });
-  const activeSessionWindowIntent = $derived.by(() => {
-    if (focusedDestination.kind !== 'sessions') {
-      return defaultSessionWindowIntent;
-    }
-    return sessionWindowState.destinationFingerprint === destinationFingerprint(focusedDestination)
-      ? sessionWindowState.intent
-      : defaultSessionWindowIntent;
-  });
+  const activeSessionWindowIntent = $derived.by(() => reportSessionIntentFor(focusedDestination, sessionWindowState));
   const destinationDependencies = untrack(() => ({ queryClient, reportClient, sessionClient }));
   let pendingRevisionApply = $state(false);
   const preserveSessionRevision = $derived(
-    detailRoute !== null ||
-      (pendingRevisionApply && focusedDestination.kind === 'sessions') ||
-      (focusedDestination.kind === 'sessions' &&
-        (activeSessionWindowIntent.topLevelDepth > 1 ||
-          Object.keys(activeSessionWindowIntent.campaignChildrenDepth).length > 0)),
+    reportPreservesSessionRevision(
+      focusedDestination,
+      activeSessionWindowIntent,
+      detailRoute !== null,
+      pendingRevisionApply,
+    ),
+  );
+  onMount(() =>
+    installReportIntentResolver((url) =>
+      reportTabTargetFor(url, {
+        generatedAt: bootstrapResult.bootstrap.support.generatedAt,
+        dimension,
+        granularityPreference,
+        knownDateDomain,
+        sessionWindowState,
+        pendingRevisionApply,
+      }),
+    ),
   );
   const destinationQuery = createQuery(() =>
     reportDestinationQueryOptions(
@@ -487,18 +501,12 @@
   // published while the range and filters are unchanged — revalidates in place: the visible
   // figures still answer the request, so they keep full strength until the fresh commit lands.
   // Only a request the visible commit does not answer (range or filter change) marks it stale.
-  const commitAnswersRequest = $derived(
-    commit !== undefined && destinationFingerprint(focusedDestination) === destinationFingerprint(commit.destination),
-  );
-  const staleForRequest = $derived(destinationQuery.isFetching && !commitAnswersRequest);
-  const workspacePending = (): boolean => {
-    if (visiblePrimary === 'sessions') {
-      return false;
+  const regionStaleness = $derived(reportRegionStaleness(commit?.destination, focusedDestination));
+  const retryReportRegion = async (region: 'overview' | 'panel'): Promise<void> => {
+    if (commit) {
+      await resetReportRegionQueries(destinationDependencies, commit, activeSessionWindowIntent, region);
     }
-    if (commit === undefined) {
-      return destinationQuery.isFetching || destinationQuery.error === null;
-    }
-    return staleForRequest;
+    await retryReportDestination(true);
   };
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
@@ -507,7 +515,7 @@
       sessionsDestinationLoader.start();
     }
   });
-  const retryReportDestination = async (): Promise<void> => {
+  const retryReportDestination = async (throwOnError = false): Promise<void> => {
     if (primary === 'breakdown' && dashboardBreakdownLoadFailed) {
       await dashboardBreakdownLoader.retry();
       return;
@@ -516,7 +524,7 @@
       await sessionsDestinationLoader.retry();
       return;
     }
-    await destinationQuery.refetch();
+    await destinationQuery.refetch({ throwOnError });
   };
   const activeDestinationLoadFailed = $derived(
     (visiblePrimary === 'breakdown' && dashboardBreakdownLoadFailed) ||
@@ -730,9 +738,10 @@
   <ActiveFilters
     hidden={Math.max(0, totalSessions - visibleSessions)}
     {navigation}
-    pending={_filterPending}
+    pending={_filterPending && destinationQuery.isFetching}
     {presentMachineLabel}
     {search}
+    stale={_filterPending}
     total={totalSessions}
     visible={visibleSessions}
   />
@@ -753,7 +762,7 @@
   <p aria-live="polite" role="status">{projectWarningCleanupError}</p>
 {/if}
 {#snippet summary()}
-  {@render activeFilterSummary(staleForRequest)}
+  {@render activeFilterSummary(regionStaleness.overview)}
 {/snippet}
 {#snippet sessions()}
   {#if sessionsDestinationModule}
@@ -829,6 +838,7 @@
   activeView={visiblePrimary}
   breakdown={breakdownDestination}
   breakdownReady={commit?.breakdown !== undefined && dashboardBreakdownModule !== undefined}
+  fetching={destinationQuery.isFetching}
   filters={{
     freshnessStatus: machineFreshnessStatusLabel(machineSnapshot),
     freshnessUnavailable: machineSnapshot.kind === 'unavailable',
@@ -843,6 +853,7 @@
   hasOutput={visiblePrimary === 'sessions' || commit !== undefined}
   loadFailed={activeDestinationLoadFailed}
   onRetry={retryReportDestination}
+  onRetryRegion={retryReportRegion}
   overview={visiblePrimary === 'overview' && commit?.destination.kind === 'overview'
     ? {
         activity: {
@@ -880,7 +891,12 @@
         totalSessionCount: totalSessions,
       }
     : null}
-  pending={workspacePending()}
+  pending={reportVisibleRequestPending(
+    commit !== undefined,
+    destinationQuery.isFetching,
+    destinationQuery.error !== null,
+    regionStaleness,
+  )}
   range={commit?.overview
     ? {
         hidden: false,
@@ -896,6 +912,7 @@
   refreshError={destinationQuery.error?.message ?? null}
   {sessions}
   sessionsReady={sessionsDestinationModule !== undefined}
+  staleRegions={regionStaleness}
   {summary}
 />
 {#if detailSelectionState.kind === 'missing'}

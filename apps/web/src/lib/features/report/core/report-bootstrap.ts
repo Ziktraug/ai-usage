@@ -8,7 +8,10 @@ import type { WebQueryHydrationState } from '../../../query/client';
 import type { WebQueryRuntime, WebQueryRuntimeOptions } from '../../../query/composition';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapQueryOptions } from '../../../query/options/report';
-import { reportDestinationQueryOptions } from '../../../query/options/report-destination';
+import {
+  prefetchReportDestinationIntent,
+  reportDestinationQueryOptions,
+} from '../../../query/options/report-destination';
 import { sessionLookupQueryOptions, sessionPageQueryOptions } from '../../../query/options/session';
 import { initialSessionWindowIntent, sessionWindowView } from '../../../query/options/session-window';
 import { createReportClient } from '../../../rpc/report-client';
@@ -16,8 +19,13 @@ import { createSessionClientAdapter, type SessionClientAdapter } from '../../../
 import { resolveDetailSelection } from '../../sessions/detail/detail-selection';
 import { sessionRouteFor } from '../../sessions/detail/session-route';
 import { dashboardSearchCodec } from '../../shell/navigation';
+import { reportUnexpectedPrefetchFailure } from '../../shell/prefetch-errors';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
 import { campaignSessionSelectionQuery } from '../actions/campaign-session-controls-binding';
+import { ReportBootstrapUnavailableError } from './report-errors';
+
+export { ReportBootstrapUnavailableError } from './report-errors';
+
 import { initialReportTimelineFor, reportDestinationForSearch } from '../composition/report-search';
 
 export interface LiveReportPageData {
@@ -37,15 +45,6 @@ export const deferredLiveReportQueryState = (): WebQueryHydrationState => ({
   dehydratedState: { mutations: [], queries: [] },
 });
 
-export class ReportBootstrapUnavailableError extends Error {
-  readonly status = 503;
-
-  constructor() {
-    super('Report data is temporarily unavailable.');
-    this.name = 'ReportBootstrapUnavailableError';
-  }
-}
-
 const syntheticPayload = toWebReportPayload(demoReportPayload);
 
 export const requireAvailableReportBootstrap = (
@@ -59,8 +58,7 @@ export const requireAvailableReportBootstrap = (
 
 /**
  * Acquires the report cache for one live request: the current-alias bootstrap plus every exact query
- * needed by the requested destination. Server-only by design — the returned state is serialised into
- * the document so hydration and the destination chunk reuse it without another data round trip.
+ * needed by the requested destination. The document serializes the same keys used by intent warming.
  */
 export const acquireLiveReportQueryState = async (
   options: WebQueryRuntimeOptions & { readonly pageUrl: URL },
@@ -70,19 +68,33 @@ export const acquireLiveReportQueryState = async (
   } = {},
 ): Promise<WebQueryHydrationState> => {
   const { pageUrl, ...runtimeOptions } = options;
-  return await createAwaitedRouteQueryState(runtimeOptions, async (runtime) => {
-    const reportClient = dependencies.createClient?.(runtime.rpc) ?? createReportClient(runtime.rpc);
-    const sessionClient =
-      dependencies.createSessionClient?.(runtime.rpc) ?? createSessionClientAdapter(runtime.rpc.session);
-    const result = await runtime.queryClient.query(reportBootstrapQueryOptions(reportClient, { browser: false }));
-    await prefetchInitialDestination(
-      runtime,
-      reportClient,
-      sessionClient,
-      requireAvailableReportBootstrap(result),
-      pageUrl,
-    );
-  });
+  return await createAwaitedRouteQueryState(runtimeOptions, (runtime) =>
+    prefetchReportRoute(runtime, pageUrl, dependencies),
+  );
+};
+
+export const prefetchReportRoute = async (
+  runtime: WebQueryRuntime,
+  pageUrl: URL,
+  dependencies: {
+    readonly createClient?: (rpc: Parameters<typeof createReportClient>[0]) => ReportQueryClient;
+    readonly createSessionClient?: (rpc: WebQueryRuntime['rpc']) => SessionClientAdapter;
+  } = {},
+  intent = false,
+): Promise<void> => {
+  const reportClient = dependencies.createClient?.(runtime.rpc) ?? createReportClient(runtime.rpc);
+  const sessionClient =
+    dependencies.createSessionClient?.(runtime.rpc) ?? createSessionClientAdapter(runtime.rpc.session);
+  // Query applies the alias policy (including invalidation); a stale bootstrap is never reused blindly.
+  const result = await runtime.queryClient.query(reportBootstrapQueryOptions(reportClient, { browser: false }));
+  await prefetchInitialDestination(
+    runtime,
+    reportClient,
+    sessionClient,
+    requireAvailableReportBootstrap(result),
+    pageUrl,
+    intent,
+  );
 };
 
 /**
@@ -109,6 +121,7 @@ const prefetchInitialDestination = async (
   sessionClient: SessionClientAdapter,
   bootstrap: Extract<ReportRevisionBootstrapResult, { readonly ok: true }>,
   pageUrl: URL,
+  intent: boolean,
 ): Promise<void> => {
   try {
     const search = parseDashboardSearchUrl(pageUrl, dashboardSearchCodec);
@@ -121,11 +134,23 @@ const prefetchInitialDestination = async (
     if (focused === null) {
       return;
     }
-    const commit = await runtime.queryClient.query(
-      reportDestinationQueryOptions({ queryClient: runtime.queryClient, reportClient, sessionClient }, focused, {
-        browser: false,
-      }),
-    );
+    // Never publish a hovered destination into the visible current alias. Warm its exact entry;
+    // the mounted destination's normal refresh adopts it atomically after navigation.
+    const commit = await (intent
+      ? prefetchReportDestinationIntent(
+          { queryClient: runtime.queryClient, reportClient, sessionClient },
+          focused,
+          { browser: true },
+          initialSessionWindowIntent(),
+        )
+      : runtime.queryClient.query(
+          reportDestinationQueryOptions({ queryClient: runtime.queryClient, reportClient, sessionClient }, focused, {
+            browser: false,
+          }),
+        ));
+    if (!commit) {
+      return;
+    }
     const route = sessionRouteFor(pageUrl.pathname);
     if (route === null) {
       return;
@@ -167,7 +192,8 @@ const prefetchInitialDestination = async (
         ),
       );
     }
-  } catch {
-    // Prefetching the initial destination is best effort; the page query reports its own failure.
+  } catch (cause) {
+    // Preserve best-effort SSR and browser acquisition, but expose defects rather than hiding them.
+    reportUnexpectedPrefetchFailure(cause);
   }
 };

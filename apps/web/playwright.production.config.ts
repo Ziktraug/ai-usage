@@ -16,6 +16,7 @@ export default defineConfig({
   testDir: './e2e',
   // The review attempt spec needs the fixture that production-server.ts seeds only under this flag.
   testIgnore: [
+    'region-recovery.spec.ts', // Uses Vite-only module fixtures; not a production-route test.
     'work-codex-production.spec.ts',
     'work-codex-native.spec.ts',
     ...(process.env.AI_USAGE_WORK_ATTEMPT_E2E === '1' ? [] : ['work-attempt-production.spec.ts']),

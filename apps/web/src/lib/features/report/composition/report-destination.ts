@@ -12,6 +12,7 @@ import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import type { ReportQueryClient } from '../../../query/options/report';
 import type { SessionQueryScope } from '../../../query/options/session-window';
+import { ReportBootstrapUnavailableError } from '../core/report-errors';
 
 export type FocusedQuerySnapshot = Omit<FocusedReportQueryScope, 'revision'>;
 
@@ -56,7 +57,7 @@ export class FocusedReportRevisionExpiredError extends Error {
 
 const descriptorFromBootstrap = (result: ReportRevisionBootstrapResult): FocusedReportDescriptor => {
   if (!result.ok) {
-    throw new Error(result.error.message);
+    throw new ReportBootstrapUnavailableError();
   }
   const { bootstrap, manifest } = result;
   const expectedSupportFingerprint = focusedRevisionFingerprint('support', { revision: manifest.revision });

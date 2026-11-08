@@ -21,6 +21,9 @@ export interface QuotaQueryExecution {
 export type QuotaQueryClient = Pick<ReportClient, 'getProviderQuotaHistory'>;
 export const quotaRailKey = () => finiteSwrKey('quota', 'rail');
 
+export const resetQuotaRailForRecovery = (queryClient: QueryClient): Promise<void> =>
+  queryClient.resetQueries({ queryKey: quotaRailKey(), exact: true }, { throwOnError: true });
+
 export const quotaRailHistoryRequest = (now: Date): ProviderQuotaHistoryRequest => ({
   from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(),
   maximumPoints: 2,

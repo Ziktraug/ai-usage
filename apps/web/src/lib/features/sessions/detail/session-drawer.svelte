@@ -60,8 +60,10 @@
   import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
+  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  import RecoverableRegion from '../../shell/recoverable-region.svelte';
   import DrawerDetailItem from './drawer-detail-item.svelte';
   import { buildRoundsViewForRevision } from './rounds-model';
   import RoundsReader from './rounds-reader.svelte';
@@ -565,59 +567,66 @@
       </nav>
     </div>
     <div class={drawerBody} data-session-drawer-body bind:this={bodyElement}>
-      <div class={sessionIdentity} data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
-        <div class={sessionProject}>{row.projectLabel}</div>
-        <div class={drawerTitle}>{row.sessionLabel}</div>
-        <div class={muted}>{row.providerDisplay} · {row.modelLabel}</div>
-        {#if campaignScope}
-          <div
-            class={muted}
-            data-session-drawer-campaign-scope
-            title="Values here cover the whole campaign: every session matching the current filters plus its rolled-up automated reviews, including any not listed under Members. Rounds and Timeline read the root session's local history."
-          >
-            {campaignScope}
-          </div>
-        {/if}
-        {#if campaignLabelSlot}
-          {@render campaignLabelSlot()}
-        {/if}
-      </div>
-      <div class={statStrip} data-session-drawer-stats>
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint={apiValuePresentation(row).title}
-          label="API value"
-          value={apiValuePresentation(row).label}
-        />
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint={`Exact token count: ${fmtNum(row.tokenTotal)}`}
-          label="Total tokens"
-          value={fmtCompact(row.tokenTotal)}
-        />
-        <DrawerDetailItem
-          {...detailHintControl}
-          label="Turns"
-          value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)}
-        />
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint={durationSemantics.metricHint}
-          label={durationSemantics.metricLabel}
-          value={fmtDuration(row.durationMs)}
-        />
-      </div>
-      <div class={tabsShell} data-session-drawer-tabs>
-        {#key `${row.rowId}:${target?.kind}`}
-          <Tabs
-            ariaLabel="Session detail views"
-            items={tabItems({ members: membersPane, rounds: roundsPane, summary: summaryPane, timeline: timelinePane })}
-            onValueChange={changeTab}
-            unmountOnExit={false}
-            value={selectedTab}
+      <RecoverableRegion label="Session details" onRetry={controller.retryAnalysis}>
+        <div class={sessionIdentity} data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
+          <div class={sessionProject}>{row.projectLabel}</div>
+          <div class={drawerTitle} title={row.sessionLabel}>{sessionDisplayTitle(row)}</div>
+          <div class={muted}>{row.providerDisplay} · {row.modelLabel}</div>
+          {#if campaignScope}
+            <div
+              class={muted}
+              data-session-drawer-campaign-scope
+              title="Values here cover the whole campaign: every session matching the current filters plus its rolled-up automated reviews, including any not listed under Members. Rounds and Timeline read the root session's local history."
+            >
+              {campaignScope}
+            </div>
+          {/if}
+          {#if campaignLabelSlot}
+            {@render campaignLabelSlot()}
+          {/if}
+        </div>
+        <div class={statStrip} data-session-drawer-stats>
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint={apiValuePresentation(row).title}
+            label="API value"
+            value={apiValuePresentation(row).label}
           />
-        {/key}
-      </div>
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint={`Exact token count: ${fmtNum(row.tokenTotal)}`}
+            label="Total tokens"
+            value={fmtCompact(row.tokenTotal)}
+          />
+          <DrawerDetailItem
+            {...detailHintControl}
+            label="Turns"
+            value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)}
+          />
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint={durationSemantics.metricHint}
+            label={durationSemantics.metricLabel}
+            value={fmtDuration(row.durationMs)}
+          />
+        </div>
+        <div class={tabsShell} data-session-drawer-tabs>
+          {#key `${row.rowId}:${target?.kind}`}
+            <Tabs
+              ariaLabel="Session detail views"
+              items={tabItems({
+                members: membersPane,
+                rounds: roundsPane,
+                summary: summaryPane,
+                timeline: timelinePane,
+              })}
+              onValueChange={changeTab}
+              unmountOnExit={false}
+              value={selectedTab}
+            />
+          {/key}
+        </div>
+      </RecoverableRegion>
     </div>
   {/if}
 </Drawer>

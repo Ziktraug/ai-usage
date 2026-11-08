@@ -167,16 +167,6 @@
   </div>
   <div class="wt-filters">
     <label class="wt-switch"><input type="checkbox" bind:checked={groupByProject}>Group by project</label>
-    <label class="wt-sr" for="work-task-search">Search tasks</label>
-    <input
-      class="wt-input"
-      id="work-task-search"
-      maxlength="200"
-      oninput={(event) => onFilter({ search: event.currentTarget.value || null })}
-      placeholder="Task, PR, ticket, branch…"
-      type="search"
-      value={query.search ?? ''}
-    >
     <label class="wt-sr" for="work-task-project">Project</label>
     <select
       class="wt-input"
@@ -189,6 +179,16 @@
         <option value={project}>{project}</option>
       {/each}
     </select>
+    <label class="wt-sr" for="work-task-search">Search tasks</label>
+    <input
+      class="wt-input"
+      id="work-task-search"
+      maxlength="200"
+      oninput={(event) => onFilter({ search: event.currentTarget.value || null })}
+      placeholder="Task, PR, ticket, branch…"
+      type="search"
+      value={query.search ?? ''}
+    >
   </div>
 </div>
 <WorkThreadSources now={dataset.generatedAt} sources={dataset.sources} {timeZone} />

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { QueryClientProvider } from '@tanstack/svelte-query';
-  import { type Snippet, untrack } from 'svelte';
+  import { onMount, type Snippet, untrack } from 'svelte';
   import { createBrowserWebRpcClient, createWebRpcQueryUtils } from '../rpc/client';
+  import { installBrowserQueryRuntime } from './browser-runtime';
   import {
     createHydratedWebQueryClient,
     createWebQueryClient,
@@ -28,10 +29,12 @@
 
   if (typeof window !== 'undefined') {
     const rpc = untrack(() => createBrowserWebRpcClient('web-query-browser'));
+    const orpc = createWebRpcQueryUtils(rpc);
     installWebQueryRpcContext({
-      orpc: createWebRpcQueryUtils(rpc),
+      orpc,
       rpc,
     });
+    onMount(() => installBrowserQueryRuntime({ queryClient, rpc, orpc }));
   }
 
   $effect(() => {

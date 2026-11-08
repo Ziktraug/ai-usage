@@ -152,7 +152,8 @@ describe('Svelte application shell navigation', () => {
     expect(shellSource).toContain('{value}');
     expect(shellSource).toContain('await onRetry();');
     expect(routeSource).toContain('<ErrorRouteOwner />');
-    expect(ownerSource).toContain('window.location.reload();');
+    expect(ownerSource).toContain('await goto(new URL(page.url.href), { refreshAll: true, replace: true });');
+    expect(ownerSource).not.toContain('location.reload');
     expect(ownerSource).toContain('retryHref=');
     expect(ownerSource).toContain('page.url.pathname');
     expect(ownerSource).toContain('page.url.search');

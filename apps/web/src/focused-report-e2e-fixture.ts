@@ -1,4 +1,7 @@
 import { calculateAnalytics } from '@ai-usage/report-core/analytics';
+import { ORPCError } from '@orpc/client';
+export const FOCUSED_REPORT_E2E_FAILURE_KEY = '__aiUsageE2EFocusedReportFailure';
+
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
@@ -349,6 +352,12 @@ export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undef
         return success(data);
       },
     },
-    waitForResponse: gate.waitForResponse,
+    waitForResponse: async () => {
+      await gate.waitForResponse();
+      if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_FAILURE_KEY) === true) {
+        Reflect.deleteProperty(globalThis, FOCUSED_REPORT_E2E_FAILURE_KEY);
+        throw new ORPCError('Unavailable', { message: 'The report request is temporarily unavailable.' });
+      }
+    },
   };
 };
