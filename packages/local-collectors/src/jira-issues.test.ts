@@ -56,7 +56,7 @@ const installFakeAcli = (scenario: unknown, install = true): FakeAcli => {
         .filter((line) => line.length > 0)
         .map((line) => JSON.parse(line) as FakeCall);
     },
-    run: (options) => runBoundedProcess({ ...options, env: { ...options.env, PATH: searchPath } }),
+    run: (options) => runBoundedProcess({ ...options, cwd: binDirectory, env: { ...options.env, PATH: searchPath } }),
   };
 };
 
@@ -403,4 +403,31 @@ test('Atlassian internal REST URLs use the public CLI site, read once per batch'
   ]);
   expect(fake.calls().filter((call) => call.args.join(' ') === 'jira auth status')).toHaveLength(1);
   expect(JSON.stringify(result)).not.toContain('private@example.test');
+});
+
+test('parallel Jira details are capped at three and halt after an authentication failure', async () => {
+  let active = 0;
+  let peak = 0;
+  let calls = 0;
+  const result = await Effect.runPromise(
+    observeJiraIssues({
+      keys: Array.from({ length: 20 }, (_, i) => `DEMO-${i + 1}`),
+      concurrency: 3,
+      machineId: 'machine-a',
+      now: () => NOW,
+      run: () =>
+        Effect.gen(function* () {
+          active++;
+          calls++;
+          peak = Math.max(peak, active);
+          yield* Effect.sleep('10 millis');
+          active--;
+          return { exitCode: 1, durationMs: 10, stdout: '{"status":401}' };
+        }),
+    }),
+  );
+  expect(peak).toBe(3);
+  expect(calls).toBe(3);
+  expect(result.observations).toHaveLength(20);
+  expect(result.observations.every((row) => row.outcome === 'unauthenticated')).toBe(true);
 });

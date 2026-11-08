@@ -43,6 +43,7 @@ export const JIRA_SIGN_IN_ACTION = 'sign in to Jira (acli jira auth login)';
 export const JIRA_VIEW_COMMAND = ['jira', 'workitem', 'view'] as const;
 
 export interface ObserveJiraIssuesOptions {
+  readonly concurrency?: number;
   readonly keys: readonly string[];
   readonly machineId: string;
   readonly maxKeys?: number;
@@ -583,23 +584,26 @@ export const observeJiraIssues = (options: ObserveJiraIssuesOptions): Effect.Eff
       now: options.now,
       run: options.run ?? runBoundedProcess,
     };
-    const observations: JiraIssueObservation[] = [];
     let halt: Classification | null = null;
-    for (const key of selected) {
-      if (halt !== null) {
-        observations.push(
-          failedObservation(
-            { machineId: options.machineId, observedAt: canonicalInstantFromDate(options.now()) },
-            key,
-            halt.outcome,
-            `not attempted: ${halt.message}`,
-          ),
-        );
-        continue;
-      }
-      const result = yield* observeKey(context, key);
-      observations.push(result.observation);
-      halt = result.halt;
-    }
+    const observations = yield* Effect.forEach(
+      selected,
+      (key) =>
+        Effect.gen(function* () {
+          if (halt !== null) {
+            return failedObservation(
+              { machineId: options.machineId, observedAt: canonicalInstantFromDate(options.now()) },
+              key,
+              halt.outcome,
+              `not attempted: ${halt.message}`,
+            );
+          }
+          const result = yield* observeKey(context, key);
+          if (result.halt !== null) {
+            halt = result.halt;
+          }
+          return result.observation;
+        }),
+      { concurrency: Math.max(1, Math.min(3, Math.floor(options.concurrency ?? 1))) },
+    );
     return { observations, rejected, truncated };
   });

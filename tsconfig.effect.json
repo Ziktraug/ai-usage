@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "includeSuggestionsInTsc": false,
+        "ignoreEffectWarningsInTscExitCode": true,
+        "ignoreEffectErrorsInTscExitCode": false,
+        "diagnosticSeverity": {
+          "classSelfMismatch": "warning",
+          "effectFnImplicitAny": "warning",
+          "effectSucceedWithUndefined": "warning",
+          "effectTryWithoutCatch": "warning",
+          "experimentalApiUsage": "off",
+          "floatingEffect": "warning",
+          "floatingEffectInVitest": "warning",
+          "globalErrorInEffectCatch": "off",
+          "globalErrorInEffectFailure": "off",
+          "globalJsonInEffect": "warning",
+          "mapConstToAs": "warning",
+          "missingEffectContext": "warning",
+          "missingEffectError": "warning",
+          "missingLayerContext": "warning",
+          "missingReturnYieldStar": "warning",
+          "missingStarInYieldEffectGen": "warning",
+          "nonObjectEffectServiceType": "warning",
+          "overriddenSchemaConstructor": "warning",
+          "provideMergeAllToArray": "warning",
+          "returnEffectInGen": "warning",
+          "schemaLiteralNonFinite": "warning",
+          "schemaOpaqueInstanceMember": "warning",
+          "unknownInEffectCatch": "off",
+          "unknownRuleName": "error",
+          "unsafeEffectTypeAssertion": "warning",
+          "unstableApiUsage": "off"
+        }
+      }
+    ]
+  },
+  "include": [
+    "packages/effect-runtime/src/**/*.ts",
+    "packages/local-machine/src/**/*.ts",
+    "packages/local-collectors/src/**/*.ts",
+    "packages/usage-engine-runtime/src/**/*.ts"
+  ],
+  "exclude": ["**/*.test.ts", "**/test-fixtures/**"]
+}
