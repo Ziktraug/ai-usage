@@ -3,8 +3,8 @@
 ## Owns
 
 Collection-only adapters for Claude, Codex, OpenCode, Cursor, Cursor CSV,
-Codex and experimental Claude usage-limit observations, RTK savings, and Cursor
-commit attribution. It also owns collector-private Codex rollout/cache writes
+Codex and experimental Claude/OpenCode usage-limit observations, RTK savings,
+and local Work facts. It also owns collector-private Codex rollout/cache writes
 and conversion into normalized contributions.
 
 ## Does not own
@@ -16,7 +16,7 @@ HTTP, or final output.
 ## Public interface
 
 The root exposes collection orchestration. Focused exports cover Codex
-collector history, per-harness collectors, datasets, facets, and RTK
+collector history, per-harness collectors, datasets, and RTK
 enrichment. Neutral history/config/fact exports were moved to
 `@ai-usage/local-machine` and are not compatibility-reexported.
 

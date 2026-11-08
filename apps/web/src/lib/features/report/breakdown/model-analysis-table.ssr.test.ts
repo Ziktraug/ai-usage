@@ -151,13 +151,11 @@ describe('responsive Models analysis', () => {
     const { body } = render(dashboard, {
       props: {
         data: {
-          cursorRows: [],
           generatedAt: '2026-08-09T12:00:00.000Z',
           harnesses: [],
           harnessProviders: [],
           models: [group('measured')],
           projects: [],
-          range: { from: null, to: null },
         },
         navigation: {
           onSortChange: () => undefined,

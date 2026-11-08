@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { isCursorCommitAttributionRow, parseReportDatasets, type ReportDatasets } from './datasets';
+import { parseReportDatasets, type ReportDatasets, withoutRetiredCursorFacet } from './datasets';
 import { assertPortableUsageByteLength, assertPortableUsageRowCount, MAX_PORTABLE_USAGE_BYTES } from './portable-usage';
 import { mergeProviderStatusDatasets, type ProviderStatusDataset, parseProviderStatusDataset } from './provider-status';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
@@ -98,6 +98,8 @@ export const createUsageSnapshot = (input: {
 }): UsageSnapshot => {
   assertPortableUsageRowCount(input.rows, 'Snapshot');
   const generatedAt = input.generatedAt ?? new Date();
+  const datasets = parseReportDatasets(input.datasets);
+  const facets = withoutRetiredCursorFacet(input.facets);
   return {
     schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
     snapshotId: crypto.randomUUID(),
@@ -110,8 +112,8 @@ export const createUsageSnapshot = (input: {
     },
     rows: input.rows.map((row) => toSnapshotRow(row, input.machine)),
     ...(input.warnings?.length ? { warnings: input.warnings } : {}),
-    ...(input.datasets && Object.keys(input.datasets).length ? { datasets: input.datasets } : {}),
-    ...(input.facets && Object.keys(input.facets).length ? { facets: input.facets } : {}),
+    ...(datasets && Object.keys(datasets).length ? { datasets } : {}),
+    ...(facets && Object.keys(facets).length ? { facets } : {}),
   };
 };
 
@@ -200,6 +202,8 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   if (value.facets !== undefined && !isJsonSafeObject(value.facets)) {
     throw new Error('Snapshot contains invalid facets');
   }
+  const datasets = parseReportDatasets(value.datasets);
+  const facets = withoutRetiredCursorFacet(value.facets);
   return {
     schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
     snapshotId: value.snapshotId,
@@ -208,8 +212,8 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
     source: value.source,
     rows: value.rows,
     ...(value.warnings === undefined ? {} : { warnings: value.warnings }),
-    ...(value.datasets === undefined ? {} : { datasets: value.datasets }),
-    ...(value.facets === undefined ? {} : { facets: value.facets }),
+    ...(datasets === undefined ? {} : { datasets }),
+    ...(facets === undefined ? {} : { facets }),
   };
 };
 
@@ -236,12 +240,6 @@ const isSnapshotRow = (value: unknown): value is SnapshotUsageRow => isSerialize
 
 const isUsageSnapshotDatasets = (value: unknown): value is ReportDatasets => {
   if (!isJsonSafeObject(value)) {
-    return false;
-  }
-  if (
-    value.cursorCommitAttribution !== undefined &&
-    !(Array.isArray(value.cursorCommitAttribution) && value.cursorCommitAttribution.every(isCursorCommitAttributionRow))
-  ) {
     return false;
   }
   return value.providerStatus === undefined || parseProviderStatusDataset(value.providerStatus) !== null;

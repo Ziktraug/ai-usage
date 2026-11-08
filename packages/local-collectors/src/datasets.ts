@@ -1,11 +1,6 @@
-import { createHash } from 'node:crypto';
-import {
-  type LocalHistoryError,
-  type LocalHistoryWarning,
-  localHistoryWarningFromError,
-} from '@ai-usage/local-machine/errors';
+import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '@ai-usage/local-machine/local-history';
-import type { CursorCommitAttributionRow, NormalizedDatasetItem, ReportDatasets } from '@ai-usage/report-core/datasets';
+import type { ReportDatasets } from '@ai-usage/report-core/datasets';
 import {
   createProviderStatusDataset,
   type ProviderStatus,
@@ -13,17 +8,14 @@ import {
 } from '@ai-usage/report-core/provider-status';
 import { Effect } from 'effect';
 import { findLatestCodexProviderStatus } from './codex-history';
-import { collectCursorCommitAttributionResult, type HarnessFacets } from './facets';
 
 export interface HarnessDatasetSelection {
-  includeCursor: boolean;
   includeProviderStatus?: boolean;
   machineId?: string;
   machineLabel?: string;
 }
 
 export interface HarnessDatasets extends ReportDatasets {
-  cursorCommitAttribution?: CursorCommitAttributionRow[];
   providerStatus?: ProviderStatusDataset;
 }
 
@@ -31,35 +23,6 @@ export interface HarnessDatasetsResult {
   datasets: HarnessDatasets;
   warnings: LocalHistoryWarning[];
 }
-
-export const cursorCommitAttributionItemKey = (row: Pick<CursorCommitAttributionRow, 'branchName' | 'commitHash'>) =>
-  createHash('sha256')
-    .update(JSON.stringify([row.commitHash, row.branchName]))
-    .digest('hex');
-
-export const normalizeCursorCommitAttributionItems = (
-  machineId: string,
-  rows: readonly CursorCommitAttributionRow[],
-): NormalizedDatasetItem[] =>
-  rows.map((payload) => ({
-    datasetKey: 'cursor.commit-attribution',
-    itemKey: cursorCommitAttributionItemKey(payload),
-    machineId,
-    payload,
-    schemaVersion: 1,
-    sourceId: 'cursor.commit-attribution',
-  }));
-
-export const mirrorDatasetsToLegacyFacets = (datasets: ReportDatasets | undefined): HarnessFacets | undefined => {
-  if (!datasets?.cursorCommitAttribution?.length) {
-    return;
-  }
-  return {
-    cursor: {
-      commitAttribution: datasets.cursorCommitAttribution,
-    },
-  };
-};
 
 const codexCollectionErrorStatus = (selection: HarnessDatasetSelection): ProviderStatus => ({
   generatedAt: new Date().toISOString(),
@@ -79,25 +42,6 @@ export const collectHarnessDatasetsResult = (
   Effect.gen(function* () {
     const datasets: HarnessDatasets = {};
     const warnings: LocalHistoryWarning[] = [];
-    if (selection.includeCursor) {
-      const result = yield* collectCursorCommitAttributionResult.pipe(
-        Effect.catch((error: LocalHistoryError) =>
-          Effect.succeed({
-            rows: [],
-            warnings: [
-              localHistoryWarningFromError(error, {
-                harness: 'cursor',
-                message: 'Failed to collect Cursor commit attribution',
-              }),
-            ],
-          }),
-        ),
-      );
-      warnings.push(...result.warnings);
-      if (result.rows.length) {
-        datasets.cursorCommitAttribution = result.rows;
-      }
-    }
     if (selection.includeProviderStatus) {
       const codex = yield* findLatestCodexProviderStatus({
         ...(selection.machineId === undefined ? {} : { machineId: selection.machineId }),

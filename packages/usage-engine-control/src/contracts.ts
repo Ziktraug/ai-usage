@@ -493,11 +493,7 @@ export const usageEngineReportSourceIdsFor = (
   if (cursorIsSelected && selection.harness === null) {
     sessionSourceIds.push('cursor.sessions');
   }
-  return [
-    ...sessionSourceIds,
-    ...(sessionSourceIds.length === 0 ? [] : (['rtk.savings'] as const)),
-    ...(cursorIsSelected ? (['cursor.commit-attribution'] as const) : []),
-  ];
+  return [...sessionSourceIds, ...(sessionSourceIds.length === 0 ? [] : (['rtk.savings'] as const))];
 };
 
 type UsageEngineFileCommand = Extract<UsageEngineCommand, { readonly input: UsageEngineFileInput }>;

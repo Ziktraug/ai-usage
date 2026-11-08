@@ -523,14 +523,12 @@
     {@const DashboardBreakdown = dashboardBreakdownModule.default}
     <DashboardBreakdown
       data={{
-        cursorRows: breakdown.context.cursorCommitAttribution,
         generatedAt: reportSupport.generatedAt,
         harnesses: breakdown.groups.harnesses,
         harnessProviders: breakdown.groups.harnessProviders,
         machineCount: machineOptions.length,
         models: breakdown.groups.models,
         projects: breakdown.groups.projects,
-        range: focusedQuery.range,
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,

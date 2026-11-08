@@ -1,4 +1,4 @@
-import type { ReportDatasets } from '@ai-usage/report-core/datasets';
+import { parseReportDatasets, withoutRetiredCursorFacet } from '@ai-usage/report-core/datasets';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
 import {
@@ -52,9 +52,6 @@ export interface CliSourceExecutionOutcome {
   readonly warnings: readonly SourceControlEntryView['warnings'][number][];
 }
 
-const cursorSelected = (selection: UsageSelection): boolean =>
-  selection.includeCursor && (selection.harness === null || selection.harness === 'cursor');
-
 const rowMatchesSelection = (row: SerializedRow, selection: UsageSelection): boolean => {
   const harnessKey = row.source?.harnessKey;
   if (selection.harness !== null && harnessKey !== selection.harness) {
@@ -65,37 +62,6 @@ const rowMatchesSelection = (row: SerializedRow, selection: UsageSelection): boo
 
 export const selectServedRows = (rows: readonly SerializedRow[], selection: UsageSelection): SerializedRow[] =>
   rows.filter((row) => rowMatchesSelection(row, selection));
-
-const selectDatasets = (
-  datasets: FocusedReportSupport['datasets'],
-  selection: UsageSelection,
-): ReportDatasets | undefined => {
-  if (!datasets) {
-    return;
-  }
-  const { cursorCommitAttribution: _cursorCommitAttribution, ...datasetsWithoutCursor } = datasets;
-  const selected: ReportDatasets = cursorSelected(selection) ? { ...datasets } : datasetsWithoutCursor;
-  return Object.keys(selected).length > 0 ? selected : undefined;
-};
-
-const selectFacets = (
-  support: FocusedReportSupport,
-  datasets: ReportDatasets | undefined,
-  selection: UsageSelection,
-): Record<string, unknown> | undefined => {
-  const { cursor: _cursor, ...facetsWithoutCursor } = support.facets ?? {};
-  const selected: Record<string, unknown> = cursorSelected(selection)
-    ? { ...(support.facets ?? {}) }
-    : facetsWithoutCursor;
-  if (datasets?.cursorCommitAttribution?.length) {
-    const cursorFacet =
-      typeof selected.cursor === 'object' && selected.cursor !== null && !Array.isArray(selected.cursor)
-        ? selected.cursor
-        : {};
-    selected.cursor = { ...cursorFacet, commitAttribution: datasets.cursorCommitAttribution };
-  }
-  return Object.keys(selected).length > 0 ? selected : undefined;
-};
 
 const selectWarnings = (warnings: readonly UsageReportWarning[], selection: UsageSelection): UsageReportWarning[] =>
   warnings.filter((warning) => {
@@ -191,8 +157,8 @@ export const createServedUsageReport = (input: {
 }): Omit<ServedUsageReport, 'revision'> => {
   const selectedRows = selectServedRows(input.rows, input.selection).map(deserializeProjectedUsageRow);
   const report = prepareUsageReport(selectedRows, input.args);
-  const datasets = selectDatasets(input.support.datasets, input.selection);
-  const facets = selectFacets(input.support, datasets, input.selection);
+  const datasets = parseReportDatasets(input.support.datasets);
+  const facets = withoutRetiredCursorFacet(input.support.facets);
   const warnings = selectWarnings([...(input.support.warnings ?? []), ...(input.warnings ?? [])], input.selection);
   return {
     payload: createUsageReportPayload(
@@ -217,8 +183,8 @@ export const createServedUsageSnapshot = (input: {
   readonly support: FocusedReportSupport;
   readonly warnings?: readonly UsageReportWarning[];
 }): UsageSnapshot => {
-  const datasets = selectDatasets(input.support.datasets, input.selection);
-  const facets = selectFacets(input.support, datasets, input.selection);
+  const datasets = parseReportDatasets(input.support.datasets);
+  const facets = withoutRetiredCursorFacet(input.support.facets);
   const warnings = selectWarnings([...(input.support.warnings ?? []), ...(input.warnings ?? [])], input.selection);
   const rows = selectServedRows(input.rows, input.selection).map((row) => {
     const deserialized = deserializeUsageRow(row);
