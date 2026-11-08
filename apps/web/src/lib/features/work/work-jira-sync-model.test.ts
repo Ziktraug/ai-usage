@@ -80,4 +80,9 @@ test('a retry backlog never hides a failed search', () => {
       }),
     ),
   ).toMatchObject({ label: 'Jira sync incomplete — 1 Jira ticket awaiting details.', checked: false });
+  // The next complete run replaces warnings once departed or terminal keys are acknowledged.
+  expect(presentJiraSync(state({ warnings: [], lastOutcome: 'success' }))).toMatchObject({
+    label: 'Jira checked',
+    checked: true,
+  });
 });

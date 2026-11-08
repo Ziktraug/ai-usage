@@ -1,9 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { CursorCommitAttributionRow, NormalizedDatasetItem } from '@ai-usage/report-core/datasets';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
@@ -12,7 +10,6 @@ import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import {
   importLocalRows,
-  importNormalizedDatasetItems,
   importPeerMergeBundle,
   importProviderQuotaBatch,
   initializeUsageStore,
@@ -26,7 +23,6 @@ import {
   createStoredReportCapture,
   createStoredReportPayload,
   parseGitConfigRemote,
-  readStoredCursorCommitAttribution,
   readStoredReportSourceFingerprint,
   toStoredReportPublicationCapture,
 } from './index';
@@ -40,20 +36,6 @@ const defaultOptions = {
 };
 
 const testMachine: UsageMachine = { id: 'machine-1', label: 'Test Machine' };
-
-const cursorCommitAttributionItem = (
-  machineId: string,
-  payload: CursorCommitAttributionRow,
-): NormalizedDatasetItem => ({
-  datasetKey: 'cursor.commit-attribution',
-  itemKey: createHash('sha256')
-    .update(JSON.stringify([payload.commitHash, payload.branchName]))
-    .digest('hex'),
-  machineId,
-  payload,
-  schemaVersion: 1,
-  sourceId: 'cursor.commit-attribution',
-});
 
 const makeSourcedRow = (input: {
   parentSessionId?: string;
@@ -210,35 +192,30 @@ describe('stored reporting', () => {
     }
   });
 
-  test('round-trips Cursor attribution through normalized dataset storage', async () => {
+  test('leaves retired dataset rows unread and unchanged across report reads and store reopen', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'plan052-reporting-cursor-dataset-'));
     try {
       const dbPath = usageStorePath(root);
-      const row: CursorCommitAttributionRow = {
-        blankLinesAdded: 0,
-        blankLinesDeleted: 0,
-        branchName: 'main',
-        commitDate: null,
-        commitHash: 'abc123',
-        commitMessage: 'Add source control',
-        composerLinesAdded: 3,
-        composerLinesDeleted: 0,
-        humanLinesAdded: 2,
-        humanLinesDeleted: 0,
-        linesAdded: 5,
-        linesDeleted: 0,
-        scoredAt: '2026-07-16T10:00:00.000Z',
-        tabLinesAdded: 0,
-        tabLinesDeleted: 0,
-        v1AiPercentage: 60,
-        v2AiPercentage: 60,
-      };
-
-      expect(
-        await Effect.runPromise(
-          importNormalizedDatasetItems({ dbPath, items: [cursorCommitAttributionItem(testMachine.id, row)] }),
-        ),
-      ).toMatchObject({ inserted: 1, unchanged: 0, updated: 0 });
+      await Effect.runPromise(initializeUsageStore({ dbPath }));
+      const { Database } = await import('bun:sqlite');
+      const db = new Database(dbPath);
+      // Even an opaque payload is not decoded: the retired data has no current reader.
+      db.query('INSERT INTO collected_dataset_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        'cursor.commit-attribution',
+        testMachine.id,
+        'cursor.commit-attribution',
+        1,
+        'old-item',
+        'old-hash',
+        'opaque retired payload',
+        'old-first',
+        'old-last',
+        'old-updated',
+      );
+      const before = db.query('SELECT * FROM collected_dataset_items').all();
+      const schema = db.query('PRAGMA user_version').get();
+      db.close();
+      await Effect.runPromise(initializeUsageStore({ dbPath }));
       const payload = await Effect.runPromise(
         createStoredReportPayload({
           config: {},
@@ -252,13 +229,13 @@ describe('stored reporting', () => {
         }),
       );
 
-      expect(await Effect.runPromise(readStoredCursorCommitAttribution({ dbPath }))).toEqual({
-        rows: [row],
-        skipped: 0,
-        truncated: false,
-      });
-      expect(payload.datasets?.cursorCommitAttribution).toEqual([row]);
+      expect(payload.datasets?.cursorCommitAttribution).toBeUndefined();
+      expect(payload.facets?.cursor).toBeUndefined();
       expect(payload.warnings ?? []).toHaveLength(0);
+      const after = new Database(dbPath, { readonly: true });
+      expect(after.query('SELECT * FROM collected_dataset_items').all()).toEqual(before);
+      expect(after.query('PRAGMA user_version').get()).toEqual(schema);
+      after.close();
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

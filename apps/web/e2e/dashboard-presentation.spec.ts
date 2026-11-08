@@ -310,14 +310,14 @@ test('renders Token anatomy as four exact definition rows without a segmented ba
   expect(boxes.map((box) => box.top)).toEqual([...boxes.map((box) => box.top)].sort((left, right) => left - right));
 });
 
-test('keeps every Analysis choice and the directly selected Cursor AI label visible on mobile', async ({ page }) => {
+test('keeps every Analysis choice and the directly selected Projects label visible on mobile', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await openHydratedReport(page, '/?tab=cursor-ai');
+  await openHydratedReport(page, '/?tab=projects');
 
   const choices = page.getByRole('tablist', { name: 'Analysis dimension' });
-  const selected = choices.getByRole('tab', { name: 'Cursor AI', exact: true });
+  const selected = choices.getByRole('tab', { name: 'Projects', exact: true });
   await expect(selected).toHaveAttribute('aria-selected', 'true');
-  await expect(choices.getByRole('tab')).toHaveText(['Models', 'Harnesses & providers', 'Projects', 'Cursor AI']);
+  await expect(choices.getByRole('tab')).toHaveText(['Models', 'Harnesses & providers', 'Projects']);
 
   const geometry = await choices.evaluate((element) => {
     const list = element.getBoundingClientRect();
@@ -340,34 +340,11 @@ test('keeps every Analysis choice and the directly selected Cursor AI label visi
 
   await selected.focus();
   await page.keyboard.press('ArrowLeft');
-  await expect(choices.getByRole('tab', { name: 'Projects', exact: true })).toBeFocused();
-  await expect(choices.getByRole('tab', { name: 'Projects', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('[data-projects-panel]')).toBeVisible();
-});
-
-test('lets keyboard users scroll the Cursor attribution table on narrow screens', async ({ page }) => {
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await openHydratedReport(page, '/?tab=cursor-ai');
-  await page
-    .getByRole('region', { name: 'Report period' })
-    .getByRole('button', { name: 'All time', exact: true })
-    .click();
-  await waitForFocusedReportSettled(page);
-
-  const region = page.getByRole('region', { name: 'Cursor commit attribution table', exact: true });
-  await expect(region).toBeVisible();
-  await expect(region.getByRole('table')).toBeVisible();
-  await expect(region.getByRole('columnheader')).toHaveCount(8);
-  expect(await region.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
-    true,
+  await expect(choices.getByRole('tab', { name: 'Harnesses & providers', exact: true })).toBeFocused();
+  await expect(choices.getByRole('tab', { name: 'Harnesses & providers', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
   );
-
-  await region.focus();
-  await expect(region).toBeFocused();
-  await region.press('ArrowRight');
-  await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-  await expect(region).toBeFocused();
 });
 
 test('renders secondary status only on Overview and puts Projects before closed group management', async ({ page }) => {

@@ -4,6 +4,7 @@ import {
   campaignIndexAt,
   campaignOffsets,
   campaignRestoreAnchor,
+  campaignViewportHeight,
   campaignVirtualWindow,
   createCampaignAcquisitionBudget,
 } from './campaign-virtual-window';
@@ -145,5 +146,24 @@ describe('campaign automatic acquisition budget', () => {
       budget.run(acquire, { viewport: 800, total });
     }
     expect(acquisitions).toBe(2);
+  });
+});
+
+describe('campaign list viewport height', () => {
+  test('fills the viewport below the list top', () => {
+    expect(campaignViewportHeight({ hostTop: 300, innerHeight: 1000, innerWidth: 1440 })).toBe(660);
+  });
+
+  test('never exceeds the viewport once the window scrolls the list above it', () => {
+    // Scrolled down to the replay below the list: an unbounded height grew on every sizing pass,
+    // scroll anchoring then scrolled further, and the page ran away until it painted blank.
+    const scrolledAbove = campaignViewportHeight({ hostTop: -2600, innerHeight: 1000, innerWidth: 1440 });
+    expect(scrolledAbove).toBe(960);
+    expect(campaignViewportHeight({ hostTop: -40_000, innerHeight: 1000, innerWidth: 1440 })).toBe(scrolledAbove);
+  });
+
+  test('keeps the mobile navigation reserve and the minimum height', () => {
+    expect(campaignViewportHeight({ hostTop: 100, innerHeight: 800, innerWidth: 390 })).toBe(612);
+    expect(campaignViewportHeight({ hostTop: 1200, innerHeight: 800, innerWidth: 1440 })).toBe(220);
   });
 });

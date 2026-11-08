@@ -12,7 +12,6 @@ export const collectionSourceIds = [
   'claude.usage-limits',
   'opencode.usage-limits',
   'rtk.savings',
-  'cursor.commit-attribution',
   // The Desktop registry names the checkouts and pull requests the two fact producers read, so it
   // precedes them: the single worker runs the startup jobs in catalogue order, and a first cycle
   // that read the producers before the registry observed nothing for up to ten minutes.
@@ -130,17 +129,9 @@ export const collectionSourceDefinitions = [
   {
     cadenceMs: oneMinuteMs,
     defaultEnabled: true,
-    group: 'enrichments',
-    id: 'cursor.commit-attribution',
-    kind: 'dataset-producer',
-    label: 'Cursor commit attribution',
-  },
-  {
-    cadenceMs: oneMinuteMs,
-    defaultEnabled: true,
     // Claude Desktop's per-session registry: declared turn outcomes, proposals and declared pull
-    // requests (ADR 0050). An auxiliary fact family like the Cursor attribution dataset, hence the
-    // same kind; it carries no `harnessKey` because it produces no Session rows and must not join
+    // requests (ADR 0050). An auxiliary fact family; it carries no `harnessKey` because it produces
+    // no Session rows and must not join
     // the session harness roster. Listed before the fact producers it feeds (see the id list).
     group: 'enrichments',
     id: 'claude.desktop-sessions',
@@ -231,7 +222,9 @@ export const isSourcePolicyOverrides = (value: unknown): value is SourcePolicyOv
     return false;
   }
   return Object.entries(value).every(
-    ([sourceId, policy]) => isCollectionSourceId(sourceId) && isSourcePolicyOverride(policy),
+    // Old home configurations may retain this inert policy; it is never scheduled or listed.
+    ([sourceId, policy]) =>
+      (isCollectionSourceId(sourceId) || sourceId === 'cursor.commit-attribution') && isSourcePolicyOverride(policy),
   );
 };
 

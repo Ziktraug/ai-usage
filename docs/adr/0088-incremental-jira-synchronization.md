@@ -1,4 +1,4 @@
-# ADR 0086: Incremental Jira synchronization with durable pending reads
+# ADR 0088: Incremental Jira synchronization with durable pending reads
 
 - **Status**: Accepted
 - **Date**: 2026-10-28
@@ -30,7 +30,10 @@ the scan cursor, full verification date, known keys and pending detail keys.
 The bounded pending list is committed with the cursor **before** details run.
 Details and their wait effects are persisted before acknowledging those keys.
 A crash can repeat a read, but cannot lose a pending change. Partial searches
-keep the old cursor. Failed keys remain pending without blocking future scans;
+keep the old cursor. Retryable failures remain pending without blocking future scans;
+persisted not-found observations complete a detail read, while invalid output remains
+retryable because it can also indicate a transient output-read failure. A complete
+candidate discovery drops pending keys that have left the scope;
 incomplete discovery retains the preceding known scope. Limits stay visible.
 
 Each run reads at most twenty details with at most three concurrent processes.

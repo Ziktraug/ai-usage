@@ -438,8 +438,8 @@ chmodded or otherwise normalized by a reader.
 ### `@ai-usage/local-collectors`
 
 Owns collection-only adapters for Claude, Codex, OpenCode, Cursor, Cursor CSV,
-Codex and experimental Claude quota batches, RTK savings, and Cursor commit
-attribution. It may use collector-private caches and the neutral fact parsers
+Codex and experimental Claude/OpenCode quota batches, RTK savings, and local
+Work facts. It may use collector-private caches and the neutral fact parsers
 from `local-machine`, but it does not own machine configuration, report
 assembly, usage-store access, scheduling, commands, or output rendering.
 Production apps never import it; only `usage-engine-runtime` composes it.
@@ -693,8 +693,7 @@ file sink. CLI event delivery and loss summaries remain file-only/silent.
 Scheduler investigations group `source.run` by bounded source ID/trigger and
 compare queue delay with boundary/source execution duration. The 2026-07-22
 audit observed queue delay on 147 records; 40 exceeded one second, the maximum
-was 5,054 ms, and `cursor.commit-attribution` had roughly 3,043 ms median queue
-delay for roughly 7.8 ms median execution. Those aggregate values intentionally
+was 5,054 ms. Those aggregate values intentionally
 omit event IDs, revisions, fingerprints, paths, and payload data. They motivate
 a separate scheduler performance plan and do not change worker count,
 admission, cadence, dependencies, or publication ordering here.
@@ -702,13 +701,13 @@ admission, cadence, dependencies, or publication ordering here.
 ## Preserved domain invariants
 
 - Stable sources are `claude.sessions`, `codex.sessions`,
-  `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
-  and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
+  `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, and `rtk.savings`.
+  `claude.usage-limits` is a
   default-enabled experimental source whose upstream API may change, and
   `opencode.usage-limits` is another on the same terms: it runs
   `opencode api --standalone experimental.usage.limits` and needs OpenCode
   2.2.0 or later.
-  `executors.capabilities` is a ninth, default-enabled source that runs
+  `executors.capabilities` is a default-enabled source that runs
   harness CLI metadata commands every fifteen minutes and never changes the
   served report.
   `checkouts.status` and `github.pull-requests` (ADR 0051) are two further

@@ -2,11 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
-import {
-  createClaudeAgentSdkBatchSource,
-  createOpenCodeUsageLimitsBatchSource,
-  normalizeCursorCommitAttributionItems,
-} from '@ai-usage/local-collectors';
+import { createClaudeAgentSdkBatchSource, createOpenCodeUsageLimitsBatchSource } from '@ai-usage/local-collectors';
 import { CHECKOUT_STATUS_DEFAULTS, observeCheckoutStatus } from '@ai-usage/local-collectors/checkout-status';
 import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-desktop-sessions';
 import {
@@ -15,7 +11,6 @@ import {
   selectedHarnessAdapters,
 } from '@ai-usage/local-collectors/collectors';
 import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
-import { collectCursorCommitAttributionResult } from '@ai-usage/local-collectors/facets';
 import { discoverPullRequests } from '@ai-usage/local-collectors/github-pull-request-discovery';
 import {
   GITHUB_PULL_REQUEST_DEFAULTS,
@@ -76,7 +71,6 @@ import {
   importExecutorObservations,
   importJiraIssueObservations,
   importLocalRows,
-  importNormalizedDatasetItems,
   importPullRequestObservations,
   importSkillObservations,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
@@ -194,16 +188,6 @@ const sourceFailure = (sourceId: CollectionSourceId, cause: unknown): SourceRunE
     cause,
     message: 'The source failed while reading or persisting local data.',
     sourceId,
-  });
-
-const persistCursorCommitAttribution = (input: {
-  readonly dbPath: string;
-  readonly machineId: string;
-  readonly rows: Parameters<typeof normalizeCursorCommitAttributionItems>[1];
-}) =>
-  importNormalizedDatasetItems({
-    dbPath: input.dbPath,
-    items: normalizeCursorCommitAttributionItems(input.machineId, input.rows),
   });
 
 const reportProgress = (context: SourceRunContext, progress: SourceProgress): Effect.Effect<void> =>
@@ -597,46 +581,6 @@ const createRtkSource = (input: {
         inputCount: stored.rows.length,
         outputCount: imported.inserted + imported.updated + imported.unchanged,
         warnings: sanitizeSourceWarnings('RTK savings', enriched.warnings),
-      };
-    }),
-});
-
-const createCursorAttributionSource = (input: {
-  dbPath: string;
-  detect: Effect.Effect<SourceDetectionResult>;
-  machine: UsageMachine;
-  storage: LocalHistoryStorageService;
-}): ScheduledSource => ({
-  cadence: Duration.millis(getCollectionSourceDefinition('cursor.commit-attribution').cadenceMs),
-  detect: input.detect,
-  id: 'cursor.commit-attribution',
-  run: (context) =>
-    Effect.gen(function* () {
-      yield* reportProgress(context, { phase: 'reading' });
-      const availability = yield* input.detect;
-      if (availability.availability !== 'detected') {
-        return sourceUnavailableResult();
-      }
-      const collection = yield* collectCursorCommitAttributionResult.pipe(
-        Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.mapError((cause) => sourceFailure('cursor.commit-attribution', cause)),
-      );
-      yield* reportProgress(context, {
-        completed: collection.rows.length,
-        phase: 'normalizing',
-        total: collection.rows.length,
-      });
-      yield* abortIfRequested(context.signal);
-      const imported = yield* persistCursorCommitAttribution({
-        dbPath: input.dbPath,
-        machineId: input.machine.id,
-        rows: collection.rows,
-      }).pipe(Effect.mapError((cause) => sourceFailure('cursor.commit-attribution', cause)));
-      return {
-        changed: imported.inserted > 0 || imported.updated > 0,
-        inputCount: collection.rows.length,
-        outputCount: collection.rows.length,
-        warnings: sanitizeSourceWarnings('Cursor commit attribution', collection.warnings),
       };
     }),
 });
@@ -1738,14 +1682,17 @@ const createJiraIssueSource = (input: {
       yield* importJiraIssueObservations({ dbPath: input.dbPath, observations }).pipe(
         Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
       );
-      const succeeded = new Set(
-        observations.filter((observation) => observation.outcome === 'observed').map((observation) => observation.key),
+      const completed = new Set(
+        observations
+          .filter((observation) => observation.outcome === 'observed' || observation.outcome === 'not-found')
+          .map((observation) => observation.key),
       );
-      // Failed keys move behind the unattempted ones; they remain durable and retry at normal cadence.
+      // A persisted 404 completes this read. Other failures (including unreadable output)
+      // move behind unattempted keys and remain durable for retry at normal cadence.
       const attempted = new Set(keys);
       const pendingKeys = [
         ...sync.state.pendingKeys.filter((key) => !attempted.has(key)),
-        ...keys.filter((key) => !succeeded.has(key)),
+        ...keys.filter((key) => !completed.has(key)),
       ];
 
       const waitResult =
@@ -1794,7 +1741,7 @@ const createJiraIssueSource = (input: {
       }
       const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
       const detailFailures = batch.observations.filter(
-        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled',
+        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled' && outcome !== 'not-found',
       ).length;
       const detailWarnings =
         detailFailures > 0
@@ -1880,7 +1827,6 @@ export const createScheduledSourceRegistry = (
       claudeDesktop: detectPathCandidates(storage, candidates.claude.desktopSessionsDir),
       codex: detectPathCandidates(storage, [...candidates.codex.sessionsDir, ...candidates.codex.sessionIndexFile]),
       cursor: detectConfiguredCursorInputs(storage, options.configCwd),
-      cursorAttribution: detectPathCandidates(storage, candidates.cursor.aiTrackingDb),
       opencode: detectPathCandidates(storage, [...candidates.opencode.liveDb, ...candidates.opencode.stableDb]),
       rtk: detectPathCandidates(storage, candidates.rtk.historyDb),
     };
@@ -2032,12 +1978,6 @@ export const createScheduledSourceRegistry = (
       createRtkSource({
         dbPath,
         detect: detections.rtk,
-        machine,
-        storage,
-      }),
-      createCursorAttributionSource({
-        dbPath,
-        detect: detections.cursorAttribution,
         machine,
         storage,
       }),

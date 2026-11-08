@@ -130,7 +130,6 @@ restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
   model and policy qualification; owned interruption and partial-result evidence.
 - `./collectors`: per-harness normalized collectors.
 - `./datasets`: collected report datasets.
-- `./facets`: Cursor commit-attribution collection.
 - `./rtk-enrichment`: RTK enrichment collection.
 
 Only `usage-engine-runtime` may compose these production seams. Exact local

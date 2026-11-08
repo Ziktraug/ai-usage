@@ -437,7 +437,7 @@ it were missing.
 
 ## Incremental Jira synchronization (2026-10-28)
 
-ADR 0086 adds `jira_sync_state` at usage version 5. Its one row per machine
+ADR 0088 adds `jira_sync_state` at usage version 5. Its one row per machine
 holds a validated, bounded JSON checkpoint: scan start, full verification date,
 known keys and pending detail keys. The engine creates the table when absent;
 there is no backfill and no existing fact changes. The first run performs a full

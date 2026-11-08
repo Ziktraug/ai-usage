@@ -52,6 +52,28 @@ const detectedState = (...sourceIds: Parameters<typeof initialSourceControlState
 };
 
 describe('source control state transitions', () => {
+  test('omits retired source state and outcomes from the Sources status projection', () => {
+    const initial = initialSourceControlState('instance-a', ['cursor.sessions'], {}, 0);
+    const legacyState = {
+      ...initial,
+      sources: {
+        ...initial.sources,
+        'cursor.commit-attribution': {
+          ...initial.sources['cursor.sessions'],
+          lastOutcome: 'success',
+          lastFinishedAt: '2026-07-16T10:00:00.000Z',
+          running: true,
+        },
+      },
+    };
+    // Status is catalogue-driven, never an enumeration/decoder of historical source IDs.
+    const view = sourceControlView(legacyState);
+    expect(view.sources.some(({ id }) => String(id) === 'cursor.commit-attribution')).toBe(false);
+    expect(view.sources.find(({ id }) => id === 'cursor.sessions')?.policy).toBe('enabled');
+    expect(view.runningCount).toBe(0);
+    expect(legacyState.sources['cursor.commit-attribution'].lastOutcome).toBe('success');
+  });
+
   test('projects monotonic publication demand and independent RTK watermarks', () => {
     const initial = initialSourceControlState('instance-a', ['claude.sessions'], {}, 0);
     const state = {

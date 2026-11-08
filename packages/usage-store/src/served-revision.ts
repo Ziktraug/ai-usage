@@ -676,7 +676,6 @@ export const createServedRevisionQueryDatabase = (
 };
 
 const REQUIRED_SERVED_TABLES = [
-  'collected_dataset_items',
   'provider_quota_latest_heads',
   'provider_quota_observations',
   'provider_quota_streams',

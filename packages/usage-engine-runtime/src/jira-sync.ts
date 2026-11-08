@@ -29,7 +29,7 @@ export const prepareJiraSync = (input: {
     );
     const allCandidates = [
       ...new Set([
-        ...(previous?.pendingKeys ?? []),
+        ...(previous?.pendingKeys.filter((key) => !input.completeCandidates || input.candidates.includes(key)) ?? []),
         ...input.candidates,
         ...(input.completeCandidates ? [] : (previous?.knownKeys ?? [])),
       ]),
@@ -44,12 +44,14 @@ export const prepareJiraSync = (input: {
             keys: candidates,
             limit: MAX_WORK_FACT_QUERY_LIMIT,
           });
-    const observed = new Set(
-      latest.items.filter((item) => item.latest.outcome === 'observed').map((item) => item.latest.key),
+    const settled = new Set(
+      latest.items
+        .filter((item) => item.latest.outcome === 'observed' || item.latest.outcome === 'not-found')
+        .map((item) => item.latest.key),
     );
-    const missing = candidates.filter((key) => !(observed.has(key) && previous?.knownKeys.includes(key)));
+    const missing = candidates.filter((key) => !(settled.has(key) && previous?.knownKeys.includes(key)));
     const failedKeys = new Set(
-      latest.items.filter((item) => item.latest.outcome !== 'observed').map((item) => item.latest.key),
+      latest.items.filter((item) => !settled.has(item.latest.key)).map((item) => item.latest.key),
     );
     const unattempted = previous?.pendingKeys.filter((key) => !failedKeys.has(key)) ?? [];
 
@@ -69,7 +71,11 @@ export const prepareJiraSync = (input: {
       input.now.getTime() >= Date.parse(previous.checkedThrough) &&
       input.now.getTime() - Date.parse(previous.checkedThrough) < getCollectionSourceDefinition('jira.issues').cadenceMs
     ) {
-      state = { ...previous, knownKeys: candidates, pendingKeys: [...new Set([...previous.pendingKeys, ...missing])] };
+      state = {
+        ...previous,
+        knownKeys: candidates,
+        pendingKeys: [...new Set([...previous.pendingKeys, ...missing])].filter((key) => candidates.includes(key)),
+      };
     } else {
       const now = input.now.toISOString();
       const full =
@@ -78,6 +84,7 @@ export const prepareJiraSync = (input: {
         input.now.getTime() < Date.parse(previous.fullScanAt) ||
         input.now.getTime() - Date.parse(previous.fullScanAt) >= FULL_CHECK_INTERVAL_MS;
       const changed: string[] = [];
+      let changeSearchIncomplete = false;
       if (!full) {
         for (let start = 0; start < candidates.length; start += JIRA_CHANGE_SEARCH_KEYS) {
           const result = yield* discoverChangedJiraIssues({
@@ -88,6 +95,7 @@ export const prepareJiraSync = (input: {
             ...(input.signal ? { signal: input.signal } : {}),
           });
           if (result.outcome !== 'observed' || result.truncated) {
+            changeSearchIncomplete = true;
             warnings.push({
               code: `jira-changes-${result.truncated ? 'truncated' : result.outcome}`,
               message:
@@ -100,7 +108,7 @@ export const prepareJiraSync = (input: {
       }
       state = {
         knownKeys: candidates,
-        checkedThrough: warnings.length === 0 ? now : (previous?.checkedThrough ?? now),
+        checkedThrough: changeSearchIncomplete ? (previous?.checkedThrough ?? now) : now,
         fullScanAt: full ? now : (previous?.fullScanAt ?? now),
         pendingKeys: [
           ...new Set([

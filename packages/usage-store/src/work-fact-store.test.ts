@@ -1119,6 +1119,9 @@ test('an existing schema-5 store gains only the Jira checkpoint table and retain
   const db = new Database(dbPath);
   db.exec('DROP TABLE jira_sync_state');
   db.close();
+  // A query-only open validates the served schema too, without requiring this engine-only table.
+  expect(await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }))).toEqual(before);
+  expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBeGreaterThanOrEqual(0);
   await Effect.runPromise(initializeUsageStore({ dbPath }));
   expect(await Effect.runPromise(queryJiraSyncState({ dbPath, machineId: 'machine-a' }))).toBeNull();
   expect(await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }))).toEqual(before);

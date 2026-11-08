@@ -61,6 +61,99 @@ const search =
     return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: JSON.stringify(keys.map((key) => ({ key }))) });
   };
 
+const settledNotFound = async () => {
+  const input = await fixture(['DEMO-1']);
+  const prepared = await Effect.runPromise(prepareJiraSync({ ...input, run: search(['DEMO-1']) }));
+  const batch = await Effect.runPromise(
+    observeJiraIssues({
+      keys: prepared.keys,
+      machineId: input.machineId,
+      now: () => input.now,
+      run: () => Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '{"status":404}' }),
+    }),
+  );
+  await Effect.runPromise(importJiraIssueObservations({ ...input, observations: batch.observations }));
+  await Effect.runPromise(recordJiraSyncState({ ...input, state: { ...prepared.state, pendingKeys: [] } }));
+  return { input, prepared };
+};
+
+test('a settled not-found ticket costs no detail reads on the next unchanged poll', async () => {
+  const { input, prepared } = await settledNotFound();
+  expect(prepared.keys).toEqual(['DEMO-1']);
+  const next = await Effect.runPromise(
+    prepareJiraSync({
+      ...input,
+      now: new Date('2026-10-28T10:04:00.000Z'),
+      run: search([]),
+    }),
+  );
+  expect(next.keys).toEqual([]);
+  const calls: BoundedProcessOptions[] = [];
+  const batch = await Effect.runPromise(
+    observeJiraIssues({
+      keys: next.keys,
+      machineId: input.machineId,
+      now: () => input.now,
+      run: search([], calls),
+    }),
+  );
+  expect(batch.observations).toEqual([]);
+  expect(calls).toHaveLength(0);
+  expect(await Effect.runPromise(queryJiraSyncState(input))).toMatchObject({ pendingKeys: [] });
+});
+
+test.each(['change search', 'full scan'])('a settled not-found ticket is re-read by a later %s', async (reason) => {
+  const { input, prepared } = await settledNotFound();
+  expect(prepared.keys).toEqual(['DEMO-1']);
+  const full = reason === 'full scan';
+  const next = await Effect.runPromise(
+    prepareJiraSync({
+      ...input,
+      now: new Date(full ? '2026-10-28T16:00:00.000Z' : '2026-10-28T10:04:00.000Z'),
+      run: full ? () => Effect.die('full scans must not search') : search(['DEMO-1']),
+    }),
+  );
+  expect(next.keys).toEqual(['DEMO-1']);
+  const calls: BoundedProcessOptions[] = [];
+  const batch = await Effect.runPromise(
+    observeJiraIssues({
+      keys: next.keys,
+      machineId: input.machineId,
+      now: () => input.now,
+      run: (options) => {
+        calls.push(options);
+        return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '{"status":404}' });
+      },
+    }),
+  );
+  expect(batch.observations).toHaveLength(1);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.args).toContain('view');
+});
+
+test('scope truncation stays visible without freezing the cursor after complete change searches', async () => {
+  const keys = Array.from({ length: 500 }, (_, i) => `DEMO-${i + 1}`);
+  const input = await fixture(keys);
+  const calls: BoundedProcessOptions[] = [];
+  const next = await Effect.runPromise(
+    prepareJiraSync({
+      ...input,
+      candidates: [...keys, 'DEMO-501'],
+      run: search([], calls),
+    }),
+  );
+  expect(calls).toHaveLength(13);
+  expect(next.keys).toEqual([]);
+  expect(next.warnings).toEqual([{ code: 'jira-scope-truncated', message: expect.stringContaining('500') }]);
+  expect(next.state.checkedThrough).toBe(input.now.toISOString());
+  expect(next.state.fullScanAt).toBe(start);
+  expect(await Effect.runPromise(queryJiraSyncState(input))).toMatchObject({
+    checkedThrough: input.now.toISOString(),
+    knownKeys: keys,
+    pendingKeys: [],
+  });
+});
+
 test('unchanged tickets cost no detail reads; changed tickets survive a restart before details', async () => {
   const input = await fixture();
   const unchanged = await Effect.runPromise(prepareJiraSync({ ...input, run: search([]) }));
@@ -140,6 +233,34 @@ test('failed assignment discovery cannot discard a pending ticket or its known s
   expect(result.keys).toEqual(['DEMO-2']);
 });
 
+test.each(['2026-10-28T10:00:30.000Z', '2026-10-28T10:02:00.000Z'])(
+  'complete candidate scope drops departed pending keys at %s',
+  async (now) => {
+    const input = await fixture();
+    await Effect.runPromise(
+      recordJiraSyncState({
+        ...input,
+        state: {
+          checkedThrough: start,
+          fullScanAt: start,
+          knownKeys: input.candidates,
+          pendingKeys: ['DEMO-2'],
+        },
+      }),
+    );
+    const result = await Effect.runPromise(
+      prepareJiraSync({ ...input, now: new Date(now), candidates: ['DEMO-1'], run: search([]) }),
+    );
+    expect(result.keys).toEqual([]);
+    expect(result.state.knownKeys).toEqual(['DEMO-1']);
+    expect(result.warnings).toEqual([]);
+    expect(await Effect.runPromise(queryJiraSyncState(input))).toMatchObject({
+      pendingKeys: [],
+      knownKeys: ['DEMO-1'],
+    });
+  },
+);
+
 test('one permanently unreadable ticket cannot stop later incremental polls', async () => {
   const input = await fixture();
   const failed = await Effect.runPromise(
@@ -147,7 +268,7 @@ test('one permanently unreadable ticket cannot stop later incremental polls', as
       keys: ['DEMO-1'],
       machineId: input.machineId,
       now: () => new Date('2026-10-28T10:01:00.000Z'),
-      run: () => Effect.succeed({ exitCode: 1, durationMs: 1, stdout: '{"status":404}' }),
+      run: () => Effect.succeed({ exitCode: 1, durationMs: 1, stdout: '{"status":503}' }),
     }),
   );
   await Effect.runPromise(importJiraIssueObservations({ ...input, observations: failed.observations }));

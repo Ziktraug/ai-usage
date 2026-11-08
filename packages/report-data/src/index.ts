@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parseReportDatasets, withoutRetiredCursorFacet } from '@ai-usage/report-core/datasets';
 import {
   type FocusedMachineFreshness,
   type FocusedReportSupport,
@@ -20,7 +21,6 @@ import { systemReportTimeZone } from '@ai-usage/report-core/time-zone';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import {
   queryLatestProviderQuotaObservations,
-  queryNormalizedDatasetItems,
   queryReportRows,
   queryStoredReportCapture,
   queryUsageStoreGenerations,
@@ -30,7 +30,7 @@ import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
 import { type AuthorizedSourceRow, buildProjectProjection, type SourceAuthority } from './project-projection';
 import { assembleReport } from './report-assembly';
-import { mergeReportDatasets, mirrorDatasetsToLegacyFacets } from './report-datasets';
+import { mergeReportDatasets } from './report-datasets';
 
 export {
   assembleMergedUsageReport,
@@ -50,7 +50,6 @@ export {
 } from './report-assembly';
 
 export interface ReportDatasetSelection {
-  readonly includeCursorCommitAttribution?: boolean;
   readonly includeProviderStatus?: boolean;
 }
 
@@ -76,12 +75,6 @@ export interface StoredUsageSnapshotRequest {
   readonly includeFacets?: boolean;
   readonly machine: UsageMachine;
   readonly warnings?: UsageReportWarning[];
-}
-
-export interface ReadStoredCursorCommitAttributionInput {
-  readonly dbPath: string;
-  readonly machineId?: string;
-  readonly maximumItems?: number;
 }
 
 export interface StoredReportSourceFingerprint {
@@ -139,25 +132,6 @@ const isStoredReportJsonRecord = (value: unknown): value is Record<string, Store
   !Array.isArray(value) &&
   Object.values(value).every(isStoredReportJsonValue);
 
-const withoutLegacyCursorAttribution = (
-  datasets: Record<string, StoredReportJsonValue> | undefined,
-  facets: Record<string, StoredReportJsonValue> | undefined,
-): Record<string, StoredReportJsonValue> | undefined => {
-  if (!(Array.isArray(datasets?.cursorCommitAttribution) && facets)) {
-    return facets;
-  }
-  const cursor = facets.cursor;
-  if (!(isStoredReportJsonRecord(cursor) && Object.hasOwn(cursor, 'commitAttribution'))) {
-    return facets;
-  }
-  const { commitAttribution: _legacyCommitAttribution, ...cursorWithoutAttribution } = cursor;
-  if (Object.keys(cursorWithoutAttribution).length > 0) {
-    return { ...facets, cursor: cursorWithoutAttribution };
-  }
-  const { cursor: _legacyCursorFacet, ...facetsWithoutCursor } = facets;
-  return Object.keys(facetsWithoutCursor).length > 0 ? facetsWithoutCursor : undefined;
-};
-
 export const toStoredReportPublicationCapture = (
   capture: StoredReportCapture,
   configFingerprint: string,
@@ -169,7 +143,7 @@ export const toStoredReportPublicationCapture = (
   if (facets !== undefined && !isStoredReportJsonRecord(facets)) {
     throw new Error('Stored report facets must contain only JSON-serializable values.');
   }
-  const servedFacets = withoutLegacyCursorAttribution(datasets, facets);
+  const servedFacets = withoutRetiredCursorFacet(facets);
   return {
     configFingerprint,
     generatedAt: capture.payload.generatedAt,
@@ -180,7 +154,7 @@ export const toStoredReportPublicationCapture = (
     support: parseFocusedReportSupport({
       ...support,
       machineFreshness: capture.machineFreshness,
-      ...(datasets === undefined ? {} : { datasets }),
+      ...(datasets === undefined ? {} : { datasets: parseReportDatasets(datasets) }),
       ...(servedFacets === undefined ? {} : { facets: servedFacets }),
     }),
   };
@@ -207,21 +181,6 @@ const fingerprintConfig = (config: AiUsageConfig): string =>
   createHash('sha256')
     .update(JSON.stringify(canonicalJsonValue(config)))
     .digest('hex');
-
-export const readStoredCursorCommitAttribution = (input: ReadStoredCursorCommitAttributionInput) =>
-  queryNormalizedDatasetItems({
-    datasetKey: 'cursor.commit-attribution',
-    dbPath: input.dbPath,
-    sourceId: 'cursor.commit-attribution',
-    ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
-    ...(input.maximumItems === undefined ? {} : { maximumItems: input.maximumItems }),
-  }).pipe(
-    Effect.map((result) => ({
-      rows: result.items.map(({ payload }) => payload),
-      skipped: result.skipped,
-      truncated: result.truncated,
-    })),
-  );
 
 const authorizeStoredRows = (stored: {
   readonly rows: SourcedRow[];
@@ -252,7 +211,6 @@ const datasetSelectionFor = (request: {
     return;
   }
   return {
-    includeCursorCommitAttribution: request.includeCursor && (!request.harness || request.harness === 'cursor'),
     includeProviderStatus: true,
   };
 };
@@ -270,24 +228,6 @@ const readStoredDatasets = (input: {
   Effect.gen(function* () {
     const selection = datasetSelectionFor(input.request);
     const warnings: UsageReportWarning[] = [];
-    const storedCursor = selection?.includeCursorCommitAttribution
-      ? yield* readStoredCursorCommitAttribution({ dbPath: input.dbPath })
-      : undefined;
-    if (storedCursor?.skipped) {
-      warnings.push({
-        harness: 'cursor',
-        message: `Skipped ${storedCursor.skipped} invalid stored Cursor attribution item(s).`,
-        operation: 'usageStore.queryNormalizedDatasetItems',
-      });
-    }
-    if (storedCursor?.truncated) {
-      warnings.push({
-        harness: 'cursor',
-        message: 'Stored Cursor attribution exceeded the bounded report read.',
-        operation: 'usageStore.queryNormalizedDatasetItems',
-      });
-    }
-    const storedCursorDataset = storedCursor?.rows.length ? { cursorCommitAttribution: storedCursor.rows } : undefined;
     const storedQuota = selection?.includeProviderStatus
       ? yield* queryLatestProviderQuotaObservations({
           dbPath: input.dbPath,
@@ -302,7 +242,7 @@ const readStoredDatasets = (input: {
         }
       : undefined;
     return {
-      datasets: mergeReportDatasets(storedCursorDataset, storedQuotaDataset),
+      datasets: mergeReportDatasets(storedQuotaDataset),
       warnings,
     };
   });
@@ -355,14 +295,12 @@ export const createStoredReportCapture = (request: StoredReportPayloadRequest) =
         (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
       const { datasets } = datasetResult;
-      const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
         Effect.sync(() => {
           const assembly = assembleReport({
             configuredProjectGroups: request.config.projectGroups ?? [],
             datasets,
-            facets,
             generatedAt: request.generatedAt ?? new Date(),
             options: request.options,
             projectGroups: projection.projectGroups,
@@ -444,7 +382,6 @@ export const createStoredUsageSnapshot = (request: StoredUsageSnapshotRequest) =
     });
     const datasetResult = yield* readStoredDatasets({ dbPath: request.dbPath, machine: request.machine, request });
     const datasets = datasetResult.datasets;
-    const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
     const warnings = [...(request.warnings ?? []), ...datasetResult.warnings];
     return createUsageSnapshot({
       machine: request.machine,
@@ -453,6 +390,5 @@ export const createStoredUsageSnapshot = (request: StoredUsageSnapshotRequest) =
       ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
       ...(warnings.length ? { warnings } : {}),
       ...(datasets === undefined ? {} : { datasets }),
-      ...(facets === undefined ? {} : { facets }),
     });
   });

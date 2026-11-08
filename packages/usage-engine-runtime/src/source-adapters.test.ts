@@ -24,7 +24,6 @@ import {
   queryClaudeDesktopSessions,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
-  queryNormalizedDatasetItems,
   queryReportRows,
   querySkillObservations,
   queryWorkThreadLinks,
@@ -35,6 +34,7 @@ import {
   importPullRequestObservations,
   publishServedReportRevision,
   queryJiraIntake,
+  queryJiraSyncState,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
@@ -563,77 +563,6 @@ describe('scheduled source adapters', () => {
       await Effect.runPromise(registry.get('claude.sessions')?.run(progressContext([])) ?? Effect.die('missing'));
       const afterBaseReimports = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
       expect(afterBaseReimports.rows[0]).toMatchObject({ rtkSavedTokens: 9, tokIn: 11 });
-    } finally {
-      rmSync(home, { force: true, recursive: true });
-    }
-  });
-
-  test('persists Cursor attribution as versioned normalized items', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-source-cursor-attribution-'));
-    try {
-      const attributionPath = path.join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db');
-      mkdirSync(path.dirname(attributionPath), { recursive: true });
-      const { Database } = await import('bun:sqlite');
-      const db = new Database(attributionPath);
-      db.exec(`
-        CREATE TABLE scored_commits (
-          commitHash TEXT,
-          branchName TEXT,
-          scoredAt INTEGER,
-          linesAdded INTEGER,
-          linesDeleted INTEGER,
-          tabLinesAdded INTEGER,
-          tabLinesDeleted INTEGER,
-          composerLinesAdded INTEGER,
-          composerLinesDeleted INTEGER,
-          humanLinesAdded INTEGER,
-          humanLinesDeleted INTEGER,
-          blankLinesAdded INTEGER,
-          blankLinesDeleted INTEGER,
-          commitMessage TEXT,
-          commitDate TEXT,
-          v1AiPercentage REAL,
-          v2AiPercentage REAL
-        )
-      `);
-      db.query('INSERT INTO scored_commits VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-        'abc123',
-        'main',
-        Date.parse('2026-07-16T10:00:00.000Z'),
-        5,
-        1,
-        0,
-        0,
-        3,
-        1,
-        2,
-        0,
-        0,
-        0,
-        null,
-        null,
-        60,
-        60,
-      );
-      db.close();
-
-      const registry = await createRegistry(home);
-      const result = await Effect.runPromise(
-        registry.get('cursor.commit-attribution')?.run(progressContext([])) ?? Effect.die('missing'),
-      );
-      const stored = await Effect.runPromise(
-        queryNormalizedDatasetItems({
-          datasetKey: 'cursor.commit-attribution',
-          dbPath: usageStorePath(home),
-        }),
-      );
-
-      expect(result).toMatchObject({ changed: true, inputCount: 1, outputCount: 1 });
-      expect(stored.items[0]).toMatchObject({
-        machineId: machine.id,
-        payload: { branchName: 'main', commitHash: 'abc123' },
-        schemaVersion: 1,
-      });
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
@@ -3035,7 +2964,7 @@ test('one unreadable Jira issue retains its retry while healthy remaining batche
           });
         }
         if (options.args[3] === 'XLB-2091') {
-          return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: '{"status":404}' });
+          return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: 'unreadable' });
         }
         return fakeJiraRunner(calls)(options);
       },
@@ -3059,3 +2988,46 @@ test('one unreadable Jira issue retains its retry while healthy remaining batche
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  ['not-found', 1, '{"status":404}', []],
+  ['invalid', 0, 'unreadable', ['LINKED-1']],
+  ['network', 1, '{"status":503}', ['LINKED-1']],
+  ['unauthenticated', 1, '{"status":401}', ['LINKED-1']],
+] as const)(
+  'Jira detail acknowledgement handles %s without losing retryable work',
+  async (_, exitCode, stdout, pendingKeys) => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-ack-'));
+    try {
+      await createLinkedThread(home, [{ kind: 'jira-issue', key: 'jira:default/LINKED-1' }]);
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        now: () => new Date('2026-10-28T10:00:00.000Z'),
+        workFactProcessRunner: (options) =>
+          Effect.succeed({
+            durationMs: 1,
+            exitCode: options.args[2] === 'search' ? 0 : exitCode,
+            stdout: options.args[2] === 'search' ? '[]' : stdout,
+          }),
+      });
+      const result = await Effect.runPromise(registry.get('jira.issues')!.run(progressContext([])));
+      expect(
+        await Effect.runPromise(queryJiraSyncState({ dbPath: usageStorePath(home), machineId: machine.id })),
+      ).toMatchObject({ pendingKeys });
+      if (pendingKeys.length === 0) {
+        expect(result.warnings).toEqual([]);
+        expect(
+          (await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }))).items[0]?.latest
+            .outcome,
+        ).toBe('not-found');
+      } else {
+        expect(result.warnings).toContainEqual({
+          code: 'jira-sync-pending',
+          message: '1 Jira ticket awaiting details.',
+        });
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
