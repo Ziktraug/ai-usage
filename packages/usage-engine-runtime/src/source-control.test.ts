@@ -974,10 +974,7 @@ describe('source control plane', () => {
           policyStore: store,
           publication: publication.port,
           sources: new Map([
-            [
-              'cursor.commit-attribution',
-              fakeSource('cursor.commit-attribution', () => Effect.succeed(successResult(true))),
-            ],
+            ['cursor.sessions', fakeSource('cursor.sessions', () => Effect.succeed(successResult(true)))],
           ]),
         });
         yield* waitFor(control, (view) => view.publication.revision === 'revision-1');
@@ -990,7 +987,7 @@ describe('source control plane', () => {
     const publicationEvent = boundaryEvents(capture.events(), 'publication')[0];
     expect(sourceEvent?.annotations).toMatchObject({
       publicationDataGeneration: 1,
-      sourceId: 'cursor.commit-attribution',
+      sourceId: 'cursor.sessions',
       trigger: 'detection',
     });
     expect(publicationEvent?.annotations).toMatchObject({

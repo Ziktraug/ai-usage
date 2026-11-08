@@ -376,13 +376,13 @@ test('matches the mobile light session drawer at 390x844', async ({ page }) => {
 });
 
 test('matches the hydrated Skills workspace', async ({ page }) => {
-  // Keep the August observations in the baseline's aging bucket as the calendar advances.
-  await page.clock.setFixedTime(new Date('2026-10-28T12:00:00.000Z'));
+  // Keep the August observations in the baseline's stale bucket as the calendar advances.
+  await page.clock.setFixedTime(new Date('2026-11-08T12:00:00.000Z'));
   await page.setExtraHTTPHeaders({ [E2E_SKILLS_FIXTURE_HEADER]: 'visual' });
   await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
   const alphaRow = page.getByRole('row').filter({ has: page.getByRole('link', { exact: true, name: 'alpha-skill' }) });
-  await expect(alphaRow.locator('[data-observation-recency]')).toHaveAttribute('data-observation-recency', 'aging');
+  await expect(alphaRow.locator('[data-observation-recency]')).toHaveAttribute('data-observation-recency', 'stale');
   await waitForFonts(page);
 
   await expect(page).toHaveScreenshot('skills-desktop.png', {

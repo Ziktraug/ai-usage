@@ -20,7 +20,7 @@ test('mobile demo opens Campaigns through Manage without exposing business desti
     if (
       browserRequest.resourceType() === 'fetch' &&
       browserRequest.method() === 'GET' &&
-      new URL(browserRequest.url()).pathname === '/campaigns/__data.json'
+      ['/campaigns/__data.json', '/observatory/__data.json'].includes(new URL(browserRequest.url()).pathname)
     ) {
       return;
     }
@@ -38,7 +38,7 @@ test('mobile demo opens Campaigns through Manage without exposing business desti
   await manage.focus();
   await page.keyboard.press('Enter');
   const destinations = page.getByRole('navigation', { name: 'Manage destinations', exact: true });
-  await expect(destinations.getByRole('link')).toHaveText(['Campaigns']);
+  await expect(destinations.getByRole('link')).toHaveText(['Campaigns', 'Observatory']);
   const campaigns = destinations.getByRole('link', { name: 'Campaigns', exact: true });
   await expect(campaigns).toHaveAttribute('href', `/campaigns${new URL(page.url()).search}`);
   await campaigns.click();
@@ -49,10 +49,16 @@ test('mobile demo opens Campaigns through Manage without exposing business desti
   await expect(manage).toHaveAttribute('aria-expanded', 'false');
   await manage.click();
   await expect(campaigns).toHaveAttribute('aria-current', 'page');
-  await expect(destinations.getByRole('link')).toHaveText(['Campaigns']);
+  await expect(destinations.getByRole('link')).toHaveText(['Campaigns', 'Observatory']);
   await page.keyboard.press('Escape');
   await expect(manage).toBeFocused();
   await expect(destinations).toHaveCount(0);
+  await manage.click();
+  await destinations.getByRole('link', { name: 'Observatory', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Observatory', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Token flow', exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('range')).toBe('all');
+  expect(new URL(page.url()).searchParams.get('q')).toBe('Build report UI');
   expect(businessRequests).toEqual([]);
 });
 
@@ -150,7 +156,7 @@ test('isolates the synthetic demo from every local data and control capability',
 
   for (const pathname of ['/skills', '/sources', '/sync', '/delegation']) {
     await page.goto(pathname);
-    await expect(page).toHaveURL('http://127.0.0.1:4176/');
+    await expect(page).toHaveURL('/');
     await expect(page.getByRole('banner').getByText('Demo data', { exact: true })).toBeVisible();
   }
   expect(businessRequests).toEqual([]);

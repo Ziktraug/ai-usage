@@ -122,10 +122,10 @@ bun run cli -- --stored
 ```
 
 The dedicated usage engine runs collection independently from browser
-visibility. Its nine collection sources are Claude, Codex, OpenCode, and
-Cursor sessions; Codex and experimental Claude usage limits; RTK savings;
-Cursor commit attribution; and executor capabilities (which harness CLIs this
-machine can run, for the Work view's review routing).
+visibility. Collection sources include Claude, Codex, OpenCode, and Cursor
+sessions; Codex, experimental Claude and OpenCode usage limits; RTK savings;
+Claude Desktop sessions; executor capabilities; checkout status; pull requests;
+and Jira issues.
 Each source has separate policy, detection, lifecycle, outcome, and cadence
 state on `/sources`. Sparse policy overrides live only in
 `~/.config/ai-usage/config.json`; repository config cannot enable background
@@ -526,7 +526,7 @@ bun run cli -- --csv
 
 The web report opens on Overview and lets you:
 
-- switch between **Overview, Sessions, and Analysis**; Analysis keeps the existing breakdown dimensions for Models, Providers, Harnesses, Projects, and Cursor AI;
+- switch between **Overview, Sessions, and Analysis**; Analysis offers Models, Harnesses & providers, and Projects;
 - open **Campaigns** to explore related agent sessions as a temporal hierarchy, collapse descendants, compare recorded overlap, and open any node in the existing session drawer;
 - switch Campaigns to **Project timeline** to compare projects and campaigns on one UTC scale, expand one campaign's sessions, or collapse a project;
 - filter by date range with presets or a custom range, and read the activity timeline;
@@ -577,7 +577,7 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 
 - `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, and snapshots
 - `packages/local-machine` (`@ai-usage/local-machine`): collector-independent hardened local reads, exact Session analysis, machine/config transactions, and test homes
-- `packages/local-collectors` (`@ai-usage/local-collectors`): collection-only adapters for Claude, Codex, OpenCode, Cursor, quota, RTK, and commit attribution
+- `packages/local-collectors` (`@ai-usage/local-collectors`): collection-only adapters for Claude, Codex, OpenCode, Cursor, quota, RTK, and local Work facts
 - `packages/report-data` (`@ai-usage/report-data`): stored-only and pure report, portable, quota-history, and exact-revision query assembly
 - `packages/usage-store` (`@ai-usage/usage-store`): separate read-only/query-only and writer exports over durable SQLite facts and served projections
 - `packages/usage-engine-control` (`@ai-usage/usage-engine-control`): strict authenticated loopback commands, status, bounded events, rendezvous, and handoffs
@@ -622,7 +622,9 @@ bun run check:effect
 
 This advisory pilot uses pinned `@effect/tsgo` 0.64.1 and its bundled TypeScript
 7.0.2 compiler. It does not patch `node_modules`, replace TypeScript 6, or change
-the Biome, Svelte, CI, and `verify` gates. The command uses Bun for its launcher
+the Biome or Svelte gates. The diagnostics stay advisory and are not a `verify`
+gate, but their compiler-fixture tests run via `bun test tools` and are part of
+`verify`. The command uses Bun for its launcher
 and never downloads a missing executable; run `bun install --frozen-lockfile`
 first. It also runs in the repository's `nix develop` shell.
 

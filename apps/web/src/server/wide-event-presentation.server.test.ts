@@ -40,11 +40,11 @@ describe('web wide-event presentation', () => {
             inputCount: 38,
             outputCount: 38,
             queueDelayMs: 293,
-            sourceId: 'cursor.commit-attribution',
+            sourceId: 'cursor.sessions',
           },
         }),
       ),
-    ).toBe('10:18:33.342Z  ✓  cursor.commit-attribution  5.0ms  unchanged  38→38  queue=293ms  event=bd0aa8a8');
+    ).toBe('10:18:33.342Z  ✓  cursor.sessions  5.0ms  unchanged  38→38  queue=293ms  event=bd0aa8a8');
 
     expect(
       header(
@@ -100,7 +100,7 @@ describe('web wide-event presentation', () => {
           inputCount: 999_999,
           outputCount: 999_999,
           queueDelayMs: 5054,
-          sourceId: 'cursor.commit-attribution',
+          sourceId: 'cursor.sessions',
         },
       }),
     );

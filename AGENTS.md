@@ -52,7 +52,7 @@ and external systems; reuse authorization already granted for the current scope.
 - `bun run demo` — isolated synthetic runtime (safe, no local history)
 - `bun run build` / `bun run start` — production build and supervised start
 - `bun run check` — fast Ultracite formatting and static checks
-- `bun run check:effect` — optional advisory Effect diagnostics on selected TS packages; compiler/tool failures still fail
+- `bun run check:effect` — optional advisory Effect diagnostics on selected TS packages; compiler/tool failures still fail. Compiler-fixture tests run via `bun test tools` as part of `verify`.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)

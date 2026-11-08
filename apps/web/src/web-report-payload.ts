@@ -1,3 +1,4 @@
+import { parseReportDatasets, withoutRetiredCursorFacet } from '@ai-usage/report-core/datasets';
 import type { FocusedMachineFreshness, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { parseServedRevision, type ServedRevision } from '@ai-usage/report-core/served-revision';
@@ -209,26 +210,6 @@ const isJsonValue = (value: unknown): value is JsonValue => {
 const isJsonRecord = (value: unknown): value is Record<string, JsonValue> =>
   typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every(isJsonValue);
 
-const withoutLegacyCursorAttribution = (
-  datasets: Record<string, JsonValue> | undefined,
-  facets: Record<string, JsonValue> | undefined,
-): Record<string, JsonValue> | undefined => {
-  if (!(Array.isArray(datasets?.cursorCommitAttribution) && facets)) {
-    return facets;
-  }
-  const cursor = facets.cursor;
-  if (!(isJsonRecord(cursor) && Object.hasOwn(cursor, 'commitAttribution'))) {
-    return facets;
-  }
-
-  const { commitAttribution: _legacyCommitAttribution, ...cursorWithoutAttribution } = cursor;
-  if (Object.keys(cursorWithoutAttribution).length > 0) {
-    return { ...facets, cursor: cursorWithoutAttribution };
-  }
-  const { cursor: _legacyCursorFacet, ...facetsWithoutCursor } = facets;
-  return Object.keys(facetsWithoutCursor).length > 0 ? facetsWithoutCursor : undefined;
-};
-
 export const toWebReportPayload = (payload: UsageReportPayload): WebReportPayload => {
   const { datasets, facets, tableRows: _tableRows, ...webPayload } = payload;
   if (datasets !== undefined && !isJsonRecord(datasets)) {
@@ -237,10 +218,17 @@ export const toWebReportPayload = (payload: UsageReportPayload): WebReportPayloa
   if (facets !== undefined && !isJsonRecord(facets)) {
     throw new Error('Report facets must contain only JSON-serializable values');
   }
-  const webFacets = withoutLegacyCursorAttribution(datasets, facets);
+  const webFacets = withoutRetiredCursorFacet(facets);
+  const webDatasets = parseReportDatasets(datasets);
+  if (webFacets !== undefined && !isJsonRecord(webFacets)) {
+    throw new Error('Report facets must contain only JSON-serializable values');
+  }
+  if (webDatasets !== undefined && !isJsonRecord(webDatasets)) {
+    throw new Error('Report datasets must contain only JSON-serializable values');
+  }
   return {
     ...webPayload,
-    ...(datasets === undefined ? {} : { datasets }),
+    ...(webDatasets === undefined ? {} : { datasets: webDatasets }),
     ...(webFacets === undefined ? {} : { facets: webFacets }),
   };
 };

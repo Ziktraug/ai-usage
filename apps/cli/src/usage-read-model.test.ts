@@ -63,7 +63,7 @@ const row = (harness: 'Codex' | 'Cursor', harnessKey: 'codex' | 'cursor', name: 
 
 const generatedAt = new Date('2026-01-02T00:00:00.000Z');
 
-test('assembles an exact served revision while filtering Cursor rows and datasets together', () => {
+test('assembles an exact served revision while filtering Cursor sessions and dropping retired datasets', () => {
   const rows = [row('Codex', 'codex', 'codex-row'), row('Cursor', 'cursor', 'cursor-row')];
   const base = createUsageReportPayload(prepareUsageReport(rows, args()), args(), generatedAt, undefined, [
     { harness: 'codex', message: 'durable warning', operation: 'fixture' },
@@ -71,27 +71,7 @@ test('assembles an exact served revision while filtering Cursor rows and dataset
   const support: FocusedReportSupport = {
     ...base,
     datasets: {
-      cursorCommitAttribution: [
-        {
-          blankLinesAdded: 0,
-          blankLinesDeleted: 0,
-          branchName: 'main',
-          commitDate: '2026-01-01T00:00:00.000Z',
-          commitHash: 'a'.repeat(40),
-          commitMessage: 'fixture',
-          composerLinesAdded: 0,
-          composerLinesDeleted: 0,
-          humanLinesAdded: 0,
-          humanLinesDeleted: 0,
-          linesAdded: 0,
-          linesDeleted: 0,
-          scoredAt: null,
-          tabLinesAdded: 0,
-          tabLinesDeleted: 0,
-          v1AiPercentage: null,
-          v2AiPercentage: null,
-        },
-      ],
+      cursorCommitAttribution: [{ commitHash: 'old' }],
     },
     warnings: [
       { harness: 'codex', message: 'durable warning', operation: 'fixture' },
@@ -192,11 +172,7 @@ test('uses the same canonical source ordering as the engine batch', () => {
     'rtk.savings',
   ]);
   expect(reportSourceIdsFor({ harness: 'cursor', includeCursor: false })).toEqual([]);
-  expect(reportSourceIdsFor({ harness: 'cursor', includeCursor: true })).toEqual([
-    'cursor.sessions',
-    'rtk.savings',
-    'cursor.commit-attribution',
-  ]);
+  expect(reportSourceIdsFor({ harness: 'cursor', includeCursor: true })).toEqual(['cursor.sessions', 'rtk.savings']);
 });
 
 const historyPoint = (

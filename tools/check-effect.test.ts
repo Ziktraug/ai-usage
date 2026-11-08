@@ -5,6 +5,8 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dir, '..');
 const temporaryDirectories: string[] = [];
+// Each fixture starts a real compiler, including cold initialization on CI.
+const COMPILER_FIXTURE_TIMEOUT_MS = 30_000;
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -39,66 +41,96 @@ const checkFixture = async (source: string, compilerOptions: Record<string, unkn
 };
 
 describe('advisory Effect diagnostics', () => {
-  test('checks a valid Effect program without diagnostics', async () => {
-    const result = await checkFixture('import { Effect } from "effect"; export const program = Effect.succeed("ok");');
-    expect(result.exitCode).toBe(0);
-    expect(result.output).not.toContain('TS377');
-  });
+  test(
+    'checks a valid Effect program without diagnostics',
+    async () => {
+      const result = await checkFixture(
+        'import { Effect } from "effect"; export const program = Effect.succeed("ok");',
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.output).not.toContain('TS377');
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 
-  test('reports an unused Effect without making the advisory check fail', async () => {
-    const result = await checkFixture('import { Effect } from "effect"; Effect.succeed("forgotten");');
-    expect(result.output).toContain('floatingEffect');
-    expect(result.exitCode).toBe(0);
-  });
+  test(
+    'reports an unused Effect without making the advisory check fail',
+    async () => {
+      const result = await checkFixture('import { Effect } from "effect"; Effect.succeed("forgotten");');
+      expect(result.output).toContain('floatingEffect');
+      expect(result.exitCode).toBe(0);
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 
-  test('enables typed-error and selected simplification diagnostics', async () => {
-    const result = await checkFixture(`
+  test(
+    'enables typed-error and selected simplification diagnostics',
+    async () => {
+      const result = await checkFixture(`
       import { Effect } from "effect";
       export const parsed = Effect.try(() => JSON.parse("{}"));
       export const empty = Effect.succeed(undefined);
     `);
-    expect(result.output).toContain('effectTryWithoutCatch');
-    expect(result.output).toContain('globalJsonInEffect');
-    expect(result.output).toContain('effectSucceedWithUndefined');
-    expect(result.exitCode).toBe(0);
-  });
+      expect(result.output).toContain('effectTryWithoutCatch');
+      expect(result.output).toContain('globalJsonInEffect');
+      expect(result.output).toContain('effectSucceedWithUndefined');
+      expect(result.exitCode).toBe(0);
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 
-  test('omits unselected style suggestions', async () => {
-    const result = await checkFixture(`
+  test(
+    'omits unselected style suggestions',
+    async () => {
+      const result = await checkFixture(`
       import { Effect } from "effect";
       export const program = Effect.succeed(1).pipe(Effect.map(() => undefined));
     `);
-    expect(result.output).not.toContain('effectMapVoid');
-    expect(result.exitCode).toBe(0);
-  });
+      expect(result.output).not.toContain('effectMapVoid');
+      expect(result.exitCode).toBe(0);
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 
-  test('retains the compiler failure when a TypeScript error accompanies an Effect diagnostic', async () => {
-    const result = await checkFixture(`
+  test(
+    'retains the compiler failure when a TypeScript error accompanies an Effect diagnostic',
+    async () => {
+      const result = await checkFixture(`
       import { Effect } from "effect";
       Effect.succeed("forgotten");
       export const value: string = 1;
     `);
-    expect(result.output).toContain('floatingEffect');
-    expect(result.output).toContain('TS2322');
-    expect(result.exitCode).not.toBe(0);
-  });
+      expect(result.output).toContain('floatingEffect');
+      expect(result.output).toContain('TS2322');
+      expect(result.exitCode).not.toBe(0);
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 
-  test('fails on an invalid compiler configuration', async () => {
-    const result = await checkFixture('export {};', { invalidEffectPilotOption: true });
-    expect(result.output).toContain('invalidEffectPilotOption');
-    expect(result.exitCode).not.toBe(0);
-  });
+  test(
+    'fails on an invalid compiler configuration',
+    async () => {
+      const result = await checkFixture('export {};', { invalidEffectPilotOption: true });
+      expect(result.output).toContain('invalidEffectPilotOption');
+      expect(result.exitCode).not.toBe(0);
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 
-  test('fails on an unknown Effect rule instead of silently disabling the requested check', async () => {
-    const config: { compilerOptions: { plugins: { diagnosticSeverity: Record<string, string> }[] } } = await Bun.file(
-      path.join(root, 'tsconfig.effect.json'),
-    ).json();
-    const plugin = config.compilerOptions.plugins[0]!;
-    const result = await checkFixture('export {};', {
-      plugins: [{ ...plugin, diagnosticSeverity: { ...plugin.diagnosticSeverity, misspelledEffectRule: 'warning' } }],
-    });
-    expect(result.output).toContain('unknownRuleName');
-    expect(result.output).toContain('misspelledEffectRule');
-    expect(result.exitCode).not.toBe(0);
-  });
+  test(
+    'fails on an unknown Effect rule instead of silently disabling the requested check',
+    async () => {
+      const config: { compilerOptions: { plugins: { diagnosticSeverity: Record<string, string> }[] } } = await Bun.file(
+        path.join(root, 'tsconfig.effect.json'),
+      ).json();
+      const plugin = config.compilerOptions.plugins[0]!;
+      const result = await checkFixture('export {};', {
+        plugins: [{ ...plugin, diagnosticSeverity: { ...plugin.diagnosticSeverity, misspelledEffectRule: 'warning' } }],
+      });
+      expect(result.output).toContain('unknownRuleName');
+      expect(result.output).toContain('misspelledEffectRule');
+      expect(result.exitCode).not.toBe(0);
+    },
+    COMPILER_FIXTURE_TIMEOUT_MS,
+  );
 });

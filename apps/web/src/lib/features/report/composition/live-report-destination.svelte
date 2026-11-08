@@ -787,14 +787,12 @@
     {@const DashboardBreakdown = dashboardBreakdownModule.default}
     <DashboardBreakdown
       data={{
-        cursorRows: commit.breakdown.context.cursorCommitAttribution,
         generatedAt: bootstrap.support.generatedAt,
         harnesses: commit.breakdown.groups.harnesses,
         harnessProviders: commit.breakdown.groups.harnessProviders,
         machineCount: bootstrap.filterOptions.truncated ? null : bootstrap.filterOptions.machine.length,
         models: commit.breakdown.groups.models,
         projects: commit.breakdown.groups.projects,
-        range: commit.destination.query.range,
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,

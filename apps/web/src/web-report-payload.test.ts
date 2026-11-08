@@ -32,8 +32,8 @@ test('preserves JSON datasets at the server-function boundary', () => {
   expect(JSON.stringify(payload.datasets)).toBe(JSON.stringify(demoReportPayload.datasets));
 });
 
-test('drops legacy Cursor attribution when the canonical dataset is present', () => {
-  const cursorCommitAttribution = [...(demoReportPayload.datasets?.cursorCommitAttribution ?? [])];
+test('drops retired Cursor attribution in both forms while retaining other JSON data', () => {
+  const cursorCommitAttribution = [{ commitHash: 'old' }];
   const payload = toWebReportPayload({
     ...demoReportPayload,
     datasets: { cursorCommitAttribution },
@@ -43,7 +43,7 @@ test('drops legacy Cursor attribution when the canonical dataset is present', ()
     },
   });
 
-  expect(JSON.stringify(payload.datasets?.cursorCommitAttribution)).toBe(JSON.stringify(cursorCommitAttribution));
+  expect(payload.datasets?.cursorCommitAttribution).toBeUndefined();
   expect(payload.facets).toEqual({ retained: { value: 'keep me' } });
 });
 
@@ -54,6 +54,15 @@ test('rejects non-JSON dataset values at the server-function boundary', () => {
       datasets: { generatedAt: new Date() },
     }),
   ).toThrow('Report datasets must contain only JSON-serializable values');
+});
+
+test('drops legacy-only Cursor attribution without removing other Cursor facet fields', () => {
+  const payload = toWebReportPayload({
+    ...demoReportPayload,
+    facets: { cursor: { commitAttribution: [{ commitHash: 'old' }], retained: 'keep' } },
+  });
+  expect(payload.facets).toEqual({ cursor: { retained: 'keep' } });
+  expect(payload.datasets).toBeUndefined();
 });
 
 test('validates opaque report revisions without normalizing their identity', () => {

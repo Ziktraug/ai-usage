@@ -44,6 +44,25 @@ export const campaignVirtualWindow = (offsets: readonly number[], top: number, h
   end: Math.min(offsets.length - 1, campaignIndexAt(offsets, top + height) + 5),
 });
 
+/**
+ * Height of the campaign scroller: the viewport below its top, less the navigation reserve, and
+ * never more than the viewport. Once the window scrolls the list above the viewport its top goes
+ * negative; without the bound every sizing pass grew the list by the scrolled distance and scroll
+ * anchoring on content below the list (the replay) scrolled further, so the page never settled.
+ */
+export const campaignViewportHeight = ({
+  hostTop,
+  innerHeight,
+  innerWidth,
+}: {
+  readonly hostTop: number;
+  readonly innerHeight: number;
+  readonly innerWidth: number;
+}): number => {
+  const reserve = innerWidth < 768 ? 88 : 40;
+  return Math.max(220, Math.floor(innerHeight - Math.max(0, hostTop) - reserve));
+};
+
 export const campaignAnchorFor = (
   keys: readonly string[],
   offsets: readonly number[],
