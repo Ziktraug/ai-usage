@@ -289,9 +289,7 @@ test('ignores a partial SSE snapshot after a complete catalogue', async ({ page 
   }
 });
 
-test('describes report publishing in plain language in both the waiting and the up-to-date states', async ({
-  page,
-}) => {
+test('makes a publish failure visible ahead of enrichment waiting and opens diagnostic details', async ({ page }) => {
   const sources = collectionSourceDefinitions.map((definition) => ({
     availability: 'detected' as const,
     cadenceMs: definition.cadenceMs,
@@ -340,9 +338,10 @@ test('describes report publishing in plain language in both the waiting and the 
   await openHydratedSources(page);
   await expect(page.getByRole('heading', { level: 2, name: 'Report publishing' })).toBeVisible();
   await expect(page.locator('[data-publication-status]')).toHaveText(
-    'New data is waiting to be published once RTK savings enrichment catches up.',
+    'The last publish failed. Run all enabled to retry publishing the collected data.',
   );
-  await page.locator('[data-publication-details] > summary').click();
+  await expect(page.locator('[data-publication-treatment="prominent"]')).toBeVisible();
+  await expect(page.locator('[data-publication-details]')).toHaveAttribute('open', '');
   await expect(page.getByText('Pending publish requests', { exact: true })).toBeVisible();
   await expect(page.locator('[data-publication-pending-requests]')).toHaveText('2');
   await expect(page.locator('[data-publication-rtk="behind"]')).toHaveText('Behind — publishing waits for it');
@@ -496,7 +495,7 @@ test('answers the first run when no session source has detected input', async ({
   const detectAll = guidance.getByRole('button', { name: 'Detect all' });
   await expect(detectAll).toHaveCount(1);
   await expect(detectAll).toBeDisabled();
-  await expect(page.getByRole('status')).toContainText('Connection interrupted');
+  await expect(page.getByRole('main').getByRole('status')).toContainText('Connection interrupted');
 
   // The alternative path for usage that lives on another machine has to be reachable, not just described.
   await expect(guidance.getByRole('link', { name: 'Open Sync' })).toHaveAttribute('href', '/sync');

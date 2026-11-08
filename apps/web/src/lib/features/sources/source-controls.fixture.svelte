@@ -8,9 +8,11 @@
   import type { SourceControlClientState } from '../../../source-control-client';
   import { provideSourceControl } from './context.svelte';
   import SourceActions from './source-actions.svelte';
+  import SourceCard from './source-card.svelte';
   import SourceControlSummary from './source-control-summary.svelte';
+  import SourcesPage from './sources-page.svelte';
 
-  let { pending = false }: { pending?: boolean } = $props();
+  let { pending = false, unhealthy = false }: { pending?: boolean; unhealthy?: boolean } = $props();
 
   const definition = collectionSourceDefinitions[0];
   if (definition === undefined) {
@@ -25,9 +27,12 @@
     lifecycle: 'scheduled',
     policy: 'enabled',
     reason: { code: 'none' },
-    warnings: [],
+    warnings: [
+      { code: 'testWarning', message: 'Repeated local warning.' },
+      { code: 'testWarning', message: 'Repeated local warning.' },
+    ],
   };
-  const snapshot: SourceControlView = {
+  const snapshot = $derived<SourceControlView>({
     generatedAt: '2026-08-03T10:00:00.000Z',
     generation: 1,
     instanceId: 'synthetic-source-controls',
@@ -35,8 +40,8 @@
       acknowledgedRequestGeneration: 1,
       dirty: false,
       dirtyGeneration: 0,
-      lastOutcome: 'success',
-      pendingDemand: false,
+      lastOutcome: unhealthy ? 'failed' : 'success',
+      pendingDemand: unhealthy,
       publishedGeneration: 1,
       queued: false,
       requestedGeneration: 1,
@@ -47,7 +52,7 @@
     queueDepth: 0,
     runningCount: 0,
     sources: [source],
-  };
+  });
   const state = $derived<SourceControlClientState>({
     commandError: null,
     connection: 'live',
@@ -65,4 +70,8 @@
 </div>
 <div data-source-summary-fixture>
   <SourceControlSummary />
+</div>
+<div data-source-page-fixture>
+  <SourcesPage />
+  <SourceCard available {execute} {pending} {source} />
 </div>

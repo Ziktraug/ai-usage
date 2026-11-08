@@ -6,6 +6,7 @@
   import { presentSourceProgress, presentSourceState, sourceToneClass } from './presentation';
   import SourceActions from './source-actions.svelte';
   import { statusPill } from './styles';
+  import { summarizeWarnings } from './warning-summary';
 
   let {
     available,
@@ -20,6 +21,7 @@
   } = $props();
 
   const presentation = $derived(presentSourceState(source));
+  const srOnly = css({ srOnly: true });
   const progress = $derived(presentSourceProgress(source));
 
   const sourceCard = css({
@@ -112,10 +114,13 @@
     {#if source.reason.code !== 'none'}
       <p>Reason: {source.reason.message ?? source.reason.code}</p>
     {/if}
-    {#each source.warnings as warning (`${warning.code}:${warning.message ?? ''}`)}
+    {#each summarizeWarnings(source.warnings) as warning (`${warning.label}:${warning.message}`)}
       <p>
-        {warning.code === 'historicalMetricValidation' ? 'Historical note' : 'Warning'}:
-        {warning.message ?? warning.code}
+        {warning.label}: {warning.message}
+        {#if warning.count > 1}
+          <span aria-hidden="true"> (×{warning.count})</span
+          ><span class={srOnly}> (repeated {warning.count} times)</span>
+        {/if}
       </p>
     {/each}
   </div>
@@ -123,6 +128,9 @@
     <details class={runDetails} data-source-run-details>
       <summary>Run details</summary>
       <div class={detailList}>
+        {#each source.warnings as warning, index (index)}
+          <p>{warning.code}: {warning.message ?? warning.code}</p>
+        {/each}
         <p>Next due {fmtDate(source.nextDueAt ?? null)}</p>
         {#if source.inputCount !== undefined || source.outputCount !== undefined}
           <p>Last run: {fmtNum(source.inputCount ?? 0)} inputs · {fmtNum(source.outputCount ?? 0)} outputs</p>

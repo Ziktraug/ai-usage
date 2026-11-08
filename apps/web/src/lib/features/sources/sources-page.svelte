@@ -19,6 +19,7 @@
   import { presentSourceState, sourceToneClass } from './presentation';
   import {
     pendingPublishRequests,
+    publicationHealthy,
     publicationOutcomeLabel,
     publicationStatus,
     rtkDependencyStatus,
@@ -79,6 +80,14 @@
   });
   const sourceCard = css.raw({ display: 'grid', gap: '14px', minW: 0, p: { base: '18px', md: '22px 24px' } });
   const publicationCard = css.raw({ borderLeft: '2px solid token(colors.accent)', bg: 'accentTint' });
+  const publicationCompact = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    gap: '8px 16px',
+    '& > details': { flexBasis: '100%' },
+    '& > details:not([open])': { flexBasis: 'auto', marginInlineStart: 'auto' },
+  });
   const statusLine = css({
     display: 'flex',
     flexWrap: 'wrap',
@@ -129,6 +138,7 @@
     '& + &': { borderTop: '1px solid token(colors.line)' },
   });
   const healthyName = css({ display: 'grid', gap: '3px', minW: 0 });
+  const statusMeta = css({ color: 'muted', fontSize: '11px', lineHeight: 1.5 });
   const sourceName = css({ fontSize: '14px', fontWeight: 700, overflowWrap: 'anywhere' });
   const sourceId = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', overflowWrap: 'anywhere' });
   const detailsSummary = css({ color: 'muted', fontSize: '12px', fontWeight: 650, cursor: 'pointer' });
@@ -155,10 +165,12 @@
           Run all enabled
         </button>
       {/snippet}
+      {#snippet meta()}
+        <div aria-atomic="true" aria-live="polite" class={statusMeta} role="status">
+          {conciseSourceStatus(controlState)}
+        </div>
+      {/snippet}
     </WorkspaceHeader>
-    <div aria-atomic="true" aria-live="polite" class={cx(meta, css({ mb: '16px' }))} role="status">
-      {conciseSourceStatus(controlState)}
-    </div>
     <div class={pageStack}>
       {#if controlState.connection === 'disconnected'}
         <div class={banner}>Connection interrupted. Showing the last server snapshot while reconnecting.</div>
@@ -174,10 +186,15 @@
           <span><strong class={statusCount}>{fmtNum(healthy.length)}</strong> healthy sources</span>
           <span>Snapshot {fmtDate(snapshot.generatedAt)}</span>
         </section>
-        <section class={css(panelStyle, sourceCard, publicationCard)}>
+        <section
+          class={publicationHealthy(snapshot.publication)
+            ? publicationCompact
+            : css(panelStyle, sourceCard, publicationCard)}
+          data-publication-treatment={publicationHealthy(snapshot.publication) ? 'compact' : 'prominent'}
+        >
           <h2 class={groupTitle}>Report publishing</h2>
           <p class={meta} data-publication-status>{publicationStatus(snapshot.publication)}</p>
-          <details data-publication-details>
+          <details data-publication-details open={!publicationHealthy(snapshot.publication)}>
             <summary class={detailsSummary}>Details</summary>
             <div class={axes}>
               <div class={axis}>

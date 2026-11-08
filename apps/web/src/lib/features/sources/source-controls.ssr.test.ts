@@ -6,6 +6,8 @@ import { createServer } from 'vite';
 
 const DISABLED_ATTRIBUTE_PATTERN = /\sdisabled(?:[\s=>])/u;
 const STATUS_LABEL_PATTERN = /data-source-summary-status="">Up to date<\/span>/u;
+const OPEN_PUBLICATION_DETAILS = /<details[^>]*data-publication-details[^>]*open/u;
+const HIDDEN_WARNING_COUNT = /aria-hidden="true">\s*\(×2\)/u;
 
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -30,7 +32,10 @@ const fixtureBlock = (html: string, fixtureKind: 'actions' | 'summary'): string 
   if (start < 0) {
     throw new Error(`Rendered source ${fixtureKind} fixture is missing.`);
   }
-  const nextFixture = fixtureKind === 'actions' ? html.indexOf('data-source-summary-fixture', start + 1) : -1;
+  const nextFixture = html.indexOf(
+    fixtureKind === 'actions' ? 'data-source-summary-fixture' : 'data-source-page-fixture',
+    start + 1,
+  );
   return html.slice(start, nextFixture < 0 ? undefined : nextFixture);
 };
 
@@ -64,6 +69,24 @@ const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(svelteServerModule);
 
 describe('rendered source-control pending semantics', () => {
+  test('warning summary counts repeats while run details retain each original warning', () => {
+    const html = render(fixture).body;
+    expect(html).toMatch(HIDDEN_WARNING_COUNT);
+    expect(html).toContain('(repeated 2 times)');
+    const details = html.slice(html.lastIndexOf('data-source-run-details'));
+    expect(details.split('testWarning: Repeated local warning.')).toHaveLength(3);
+  });
+  test('healthy publishing is compact and unhealthy publishing remains prominent with details', () => {
+    const healthy = render(fixture).body;
+    expect(healthy).toContain('data-publication-treatment="compact"');
+    expect(healthy).toContain('data-publication-details');
+    const unhealthy = render(fixture, { props: { unhealthy: true } }).body;
+    expect(unhealthy).toContain('data-publication-treatment="prominent"');
+    expect(unhealthy).toContain('data-publication-details');
+    expect(unhealthy).toContain('The last publish failed. Run all enabled to retry publishing the collected data.');
+    expect(unhealthy).toMatch(OPEN_PUBLICATION_DETAILS);
+    expect(unhealthy).not.toContain('The report is up to date with everything collected.');
+  });
   test('renders aria-busy on the run action while a command is pending', () => {
     const html = render(fixture, { props: { pending: true } }).body;
     const actions = fixtureBlock(html, 'actions');

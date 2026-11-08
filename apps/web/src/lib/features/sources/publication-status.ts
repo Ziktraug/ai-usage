@@ -18,6 +18,15 @@ export const rtkDependencyStatus = (publication: SourcePublicationView): RtkDepe
 export const pendingPublishRequests = (publication: SourcePublicationView): number =>
   Math.max(0, publication.requestedGeneration - publication.acknowledgedRequestGeneration);
 
+export const publicationHealthy = (publication: SourcePublicationView): boolean =>
+  publication.lastOutcome === 'success' &&
+  !publication.running &&
+  !publication.queued &&
+  !publication.pendingDemand &&
+  !publication.dirty &&
+  pendingPublishRequests(publication) === 0 &&
+  !rtkDependencyStatus(publication).behind;
+
 export const publicationOutcomeLabel = (publication: SourcePublicationView): string => {
   if (publication.lastOutcome === 'success') {
     return 'Succeeded';
@@ -32,10 +41,17 @@ export const publicationStatus = (publication: SourcePublicationView): string =>
   if (publication.queued) {
     return 'Publishing is queued.';
   }
-  if (!publication.pendingDemand) {
-    return 'The report is up to date with everything collected.';
+  if (publication.lastOutcome === 'failed') {
+    return 'The last publish failed. Run all enabled to retry publishing the collected data.';
   }
-  return rtkDependencyStatus(publication).behind
-    ? 'New data is waiting to be published once RTK savings enrichment catches up.'
-    : 'New data is waiting to be published.';
+  if (publication.lastOutcome === 'not-run') {
+    return 'The report has not been published yet. Run all enabled to collect and publish local history.';
+  }
+  if (rtkDependencyStatus(publication).behind) {
+    return 'New data is waiting to be published once RTK savings enrichment catches up.';
+  }
+  if (publication.dirty || publication.pendingDemand || pendingPublishRequests(publication) > 0) {
+    return 'New data is waiting to be published.';
+  }
+  return 'The report is up to date with everything collected.';
 };

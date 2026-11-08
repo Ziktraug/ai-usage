@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SourcePublicationView } from '@ai-usage/report-core/source-control';
 import {
   pendingPublishRequests,
+  publicationHealthy,
   publicationOutcomeLabel,
   publicationStatus,
   rtkDependencyStatus,
@@ -25,6 +26,22 @@ const publication = (overrides: Partial<SourcePublicationView> = {}): SourcePubl
 });
 
 describe('publication status presentation', () => {
+  test('only successful, idle, fully caught-up publication uses the compact treatment', () => {
+    expect(publicationHealthy(publication())).toBe(true);
+    const unhealthy: readonly Partial<SourcePublicationView>[] = [
+      { running: true },
+      { queued: true },
+      { pendingDemand: true },
+      { dirty: true },
+      { lastOutcome: 'failed' },
+      { lastOutcome: 'not-run' },
+      { requestedGeneration: 2 },
+      { rtkRequiredGeneration: 2 },
+    ];
+    for (const state of unhealthy) {
+      expect(publicationHealthy(publication(state))).toBe(false);
+    }
+  });
   test('describes every publication state in plain reader-facing language', () => {
     expect(publicationStatus(publication({ running: true }))).toBe('Publishing stored data now.');
     expect(publicationStatus(publication({ queued: true }))).toBe('Publishing is queued.');
@@ -33,6 +50,29 @@ describe('publication status presentation', () => {
     ).toBe('New data is waiting to be published once RTK savings enrichment catches up.');
     expect(publicationStatus(publication({ pendingDemand: true }))).toBe('New data is waiting to be published.');
     expect(publicationStatus(publication())).toBe('The report is up to date with everything collected.');
+  });
+  test('state precedence never presents an unhealthy publication as up to date', () => {
+    const cases: readonly (readonly [Partial<SourcePublicationView>, string])[] = [
+      [{ running: true, queued: true, lastOutcome: 'failed' }, 'Publishing stored data now.'],
+      [{ queued: true, lastOutcome: 'failed' }, 'Publishing is queued.'],
+      [{ lastOutcome: 'failed' }, 'The last publish failed. Run all enabled to retry publishing the collected data.'],
+      [
+        { lastOutcome: 'failed', dirty: true, pendingDemand: true },
+        'The last publish failed. Run all enabled to retry publishing the collected data.',
+      ],
+      [
+        { lastOutcome: 'not-run' },
+        'The report has not been published yet. Run all enabled to collect and publish local history.',
+      ],
+      [{ dirty: true }, 'New data is waiting to be published.'],
+      [{ pendingDemand: true }, 'New data is waiting to be published.'],
+      [{ requestedGeneration: 2 }, 'New data is waiting to be published.'],
+      [{ rtkRequiredGeneration: 2 }, 'New data is waiting to be published once RTK savings enrichment catches up.'],
+      [{}, 'The report is up to date with everything collected.'],
+    ];
+    for (const [state, message] of cases) {
+      expect(publicationStatus(publication(state))).toBe(message);
+    }
   });
 
   test('presents outcomes, pending requests, and RTK progress without engine jargon', () => {
