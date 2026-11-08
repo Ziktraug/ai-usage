@@ -4,6 +4,7 @@
   import { ghostButton } from '@ai-usage/design-system/report';
   import { type CampaignMap, type CampaignMapNode, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { barForInterval, type CampaignTimeline, type CampaignTimelineBar } from './campaign-timeline-model';
   import { campaignProjectSegments } from './campaign-timeline-projection';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
@@ -530,7 +531,7 @@
             <span class={sessionLabel} style:padding-left={`${Math.min(node.depth + 1, 7) * 10}px`}>
               <span class={title}
                 ><span class={screenReader}>Open session </span><span aria-hidden="true">{nodePrefix(node)}</span>
-                {node.title}</span
+                {displayTitle(node.title)}</span
               >
               <span class={meta}>{nodeRole(node)} ·{node.row.modelLabel || node.row.harness}</span>
               <span class={meta}

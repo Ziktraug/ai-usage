@@ -11,6 +11,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { browser } from '$app/env';
   import { page } from '$app/state';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { reportBootstrapQueryOptions } from '../../query/options/report';
   import { workSessionsOptions } from '../../query/options/work';
   import {
@@ -229,7 +230,7 @@
             machineId: row.source.machineId,
             sessionId: row.source.sourceSessionId,
           }),
-          title: row.sessionLabel || row.name || 'Untitled session',
+          title: displayTitle(row.sessionLabel || row.name || 'Untitled session'),
           caption: `${harnessName(row.harness)} · ${row.projectLabel}`,
         },
       ];

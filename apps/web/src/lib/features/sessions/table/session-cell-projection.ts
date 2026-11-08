@@ -11,6 +11,7 @@ import { rtkSavedTitle } from '../../../../dashboard-sort';
 import { sessionDurationSemantics } from '../../../../session-analysis-model';
 import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../../../../session-list-label';
 import type { SessionColumnId } from '../../../../session-table-schema';
+import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
 import { fmtCompactColumn, fmtNum } from '../../../foundation/presentation/format';
 import {
   aggregateApiValuePresentation,
@@ -92,6 +93,8 @@ export const applySessionFieldFilter = (
 };
 
 const highlightedSegments = (text: string, query: string): readonly SessionHighlightSegment[] => {
+  // The read model searches source text (session-query.ts searchText), not this
+  // display-only title. A raw-markup match can therefore have no visible mark.
   const bounded = boundedSessionListLabel(text, query);
   const matches = caseInsensitiveLiteralMatches(bounded, query);
   if (matches.length === 0) {
@@ -301,7 +304,7 @@ export const projectSessionCell = (
       kind: 'session',
       originLabel: row.origin === 'classifier' ? sessionOriginLabel(row.origin) : null,
       provenanceFacts: provenanceFacts(row, 'title'),
-      segments: highlightedSegments(row.sessionLabel, query),
+      segments: highlightedSegments(sessionDisplayTitle(row), query),
     };
   }
   return valueProjection(row, id);

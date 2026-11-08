@@ -28,6 +28,7 @@
 <script lang="ts">
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { onMount } from 'svelte';
+  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { fmtCompact, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import CampaignVirtualList from '../../campaigns/campaign-virtual-list.svelte';
@@ -151,7 +152,7 @@
           title="Select campaign session"
           type="button"
         >
-          <div>{_member.row.sessionLabel}</div>
+          <div title={_member.row.sessionLabel}>{sessionDisplayTitle(_member.row)}</div>
           <div>{sessionSummary(_member.row)}</div>
         </button>
       {/snippet}

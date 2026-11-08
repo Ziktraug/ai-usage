@@ -26,7 +26,8 @@ describe('campaign label presentation', () => {
     const index = indexCampaignLabelOverrides([{ campaignKey: row.campaignKey, label: 'Release' }]);
     const presented = presentServedCampaignDisplayRow(row, index);
     expect(presented).not.toBe(row);
-    expect(presented).toEqual({ ...row, sessionLabel: 'Release' });
+    expect(presented).toEqual({ ...row, sessionLabel: 'Release', displayTitleOverride: 'Release' });
+    expect(row.sessionLabel).toBe(baseRow.sessionLabel);
     expect(presentServedCampaignDisplayRow(row, new Map())).toBe(row);
   });
 

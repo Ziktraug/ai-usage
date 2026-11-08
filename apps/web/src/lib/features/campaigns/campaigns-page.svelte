@@ -21,10 +21,11 @@
   import { browser } from '$app/env';
   import { afterNavigate, beforeNavigate, snapshot } from '$app/navigation';
   import { page } from '$app/state';
-  import { campaignLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
+  import { campaignDisplayLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
   import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
   import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../../dashboard-search';
   import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { fmtCompact } from '../../foundation/presentation/format';
   import {
     loadNextCampaignPage,
@@ -248,7 +249,9 @@
       : null,
   );
   const rows = $derived(map?.nodes.map((node) => node.row) ?? []);
-  const presentedMap = $derived(map ? { ...map, title: campaignLabelFor(labels, selectedKey, map.title) } : null);
+  const presentedMap = $derived(
+    map ? { ...map, title: campaignDisplayLabelFor(labels, selectedKey, map.title) } : null,
+  );
   const timelineMap = $derived(mapRevision === visibleRevision ? presentedMap : null);
   const hasMoreCampaigns = $derived(Boolean(listPages.at(-1)?.nextCursor));
   const hasMoreSessions = $derived(Boolean(memberPages.at(-1)?.nextCursor));
@@ -840,6 +843,7 @@
           class={input}
           name="q"
           placeholder="Title, project, model…"
+          title="Search matches source title text, project and model. Display titles omit some Markdown formatting."
           type="search"
           value={search.q}
         ></label
@@ -979,7 +983,7 @@
         {#if !searchExpanded}
           {#each matchedRows.slice(0, 3) as row (row.rowId)}
             <button class={ghostButton} data-matching-row-id={row.rowId} onclick={() => openSession(row)} type="button">
-              Open matching session {row.name || row.sessionLabel}
+              Open matching session {displayTitle(row.name || row.sessionLabel)}
             </button>
           {/each}
         {/if}
@@ -1014,7 +1018,7 @@
             onclick={() => openSession(_entry.row)}
             type="button"
           >
-            Open matching session {_entry.row.name || _entry.row.sessionLabel}
+            Open matching session {displayTitle(_entry.row.name || _entry.row.sessionLabel)}
           </button>
         {/snippet}
         {#snippet footer()}
@@ -1048,7 +1052,7 @@
         campaignPages={listPages.map((entry) => entry.items.map((item) => item.campaignKey))}
         footer={listFooter}
         {hasMoreSessions}
-        labelFor={(key, label) => campaignLabelFor(labels, key, label)}
+        labelFor={(key, label) => campaignDisplayLabelFor(labels, key, label)}
         map={timelineMap}
         mapError={exploration.error?.message ?? null}
         mapLoading={isRefreshing}
@@ -1114,7 +1118,9 @@
                 onclick={() => selectCampaign(item.campaignKey)}
                 type="button"
               >
-                <span class={title}>{campaignLabelFor(labels, item.campaignKey, campaignMapTitle(item.row))}</span>
+                <span class={title}
+                  >{campaignDisplayLabelFor(labels, item.campaignKey, campaignMapTitle(item.row))}</span
+                >
                 <span class={muted}>{item.row.projectLabel} · {item.row.harness}</span>
                 <span class={muted} title="Last recorded activity">{recordedAt(item.row)}</span>
                 <span class={muted}

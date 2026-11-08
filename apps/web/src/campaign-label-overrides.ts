@@ -1,6 +1,11 @@
 import type { CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
 import type { FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
 import { sessionCampaignIdentityForRow } from '@ai-usage/report-core/session-query';
+import {
+  displayTitle,
+  sessionDisplayTitle,
+  withSessionDisplayTitle,
+} from './lib/foundation/presentation/display-title';
 import type { DashboardRow } from './lib/foundation/presentation/report-value';
 
 export interface CampaignLabelContext {
@@ -23,12 +28,19 @@ export const campaignLabelOverrideFor = (index: CampaignLabelIndex, campaignKey:
 export const campaignLabelFor = (index: CampaignLabelIndex, campaignKey: string, derivedLabel: string): string =>
   campaignLabelOverrideFor(index, campaignKey) ?? derivedLabel;
 
-export const presentServedCampaignDisplayRow = (row: DashboardRow, index: CampaignLabelIndex): DashboardRow => {
+/** Operator labels are literal; only the native/first-prompt fallback is cleaned. */
+export const campaignDisplayLabelFor = (index: CampaignLabelIndex, campaignKey: string, derivedLabel: string): string =>
+  campaignLabelOverrideFor(index, campaignKey) ?? displayTitle(derivedLabel);
+
+export const presentServedCampaignDisplayRow = (
+  row: DashboardRow,
+  index: CampaignLabelIndex,
+): DashboardRow & { readonly displayTitleOverride?: string } => {
   const campaignKey = row.campaignKey;
   if (!(campaignKey && index.has(campaignKey))) {
     return row;
   }
-  return { ...row, sessionLabel: campaignLabelFor(index, campaignKey, row.sessionLabel) };
+  return withSessionDisplayTitle(row, campaignLabelFor(index, campaignKey, row.sessionLabel));
 };
 
 export const presentCampaignTimelineSeries = <Series extends { key: string; label: string }>(
@@ -40,10 +52,8 @@ export const presentCampaignTimelineSeries = <Series extends { key: string; labe
     return series;
   }
   const campaignKey = series.key.slice(campaignPrefix.length);
-  if (!index.has(campaignKey)) {
-    return series;
-  }
-  return { ...series, label: campaignLabelFor(index, campaignKey, series.label) };
+  const label = campaignDisplayLabelFor(index, campaignKey, series.label);
+  return label === series.label ? series : { ...series, label };
 };
 
 export const focusedCampaignLabelContext = (
@@ -67,7 +77,7 @@ export const presentFocusedOverviewSessionItem = <Item extends FocusedOverviewSe
 ): PresentedFocusedOverviewSessionItem<Item> => {
   const context = focusedCampaignLabelContext(item);
   if (!context) {
-    return item;
+    return { ...item, label: sessionDisplayTitle(item.row) };
   }
   return {
     ...item,

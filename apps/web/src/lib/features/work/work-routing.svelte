@@ -17,6 +17,7 @@
   import { untrack } from 'svelte';
   import { browser } from '$app/env';
   import type { RuntimeMode } from '../../../runtime-mode';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { workAttemptsKey, workAttemptsQueryOptions } from '../../query/options/work-attempts';
   import { workRoutingContextKey, workRoutingContextQueryOptions } from '../../query/options/work-routing';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
@@ -382,8 +383,8 @@
 
 <div class={workStack}>
   <p class={workMuted}>
-    Target: {target.sessionLabel || target.name}. Requested action and required capability: read-only review. Minimum
-    declared quality: review-capable. Simulation starts no harness and changes no session.
+    Target: {displayTitle(target.sessionLabel || target.name)}. Requested action and required capability: read-only
+    review. Minimum declared quality: review-capable. Simulation starts no harness and changes no session.
   </p>
   {#if mode === 'live'}
     <p class={workMuted}>

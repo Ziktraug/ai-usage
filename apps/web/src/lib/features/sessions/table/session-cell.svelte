@@ -13,6 +13,7 @@
   } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { SessionColumnId } from '../../../../session-table-schema';
+  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import {
     applySessionFieldFilter,
     projectSessionCell,
@@ -57,7 +58,7 @@
     {#if canExpand}
       <button
         aria-expanded={expanded ? 'true' : 'false'}
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} campaign ${row.sessionLabel}`}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} campaign ${sessionDisplayTitle(row)}`}
         class={filterTextButton}
         onclick={(event) => {
           event.stopPropagation();

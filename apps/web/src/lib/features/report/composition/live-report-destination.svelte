@@ -36,6 +36,7 @@
   import { createMutation, createQuery, type QueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import {
+    campaignDisplayLabelFor,
     campaignLabelFor,
     indexCampaignLabelOverrides,
     presentCampaignTimelineSeries,
@@ -617,7 +618,7 @@
     presentCampaignTimelineSeries(series, campaignIndex);
   const presentSessionItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem =>
     presentFocusedOverviewSessionItem(item, (campaignKey, derivedLabel) =>
-      campaignLabelFor(campaignIndex, campaignKey, derivedLabel),
+      campaignDisplayLabelFor(campaignIndex, campaignKey, derivedLabel),
     );
   const presentSessionRow = (row: SessionPresentationRow): SessionPresentationRow =>
     presentServedCampaignDisplayRow(row, campaignIndex);
