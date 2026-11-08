@@ -10,6 +10,7 @@ import {
   focusedTimelineDimensions,
   parseFocusedOverviewRequest,
   parseFocusedReportQueryResult,
+  parseFocusedReportSupport,
   projectFocusedBreakdown,
   projectFocusedOverview,
   projectFocusedSupport,
@@ -109,29 +110,6 @@ const support: FocusedReportSupport = {
     totalCost: 0,
     turns: 0,
     unpricedCount: 0,
-  },
-  datasets: {
-    cursorCommitAttribution: [
-      {
-        blankLinesAdded: 0,
-        blankLinesDeleted: 0,
-        branchName: 'main',
-        commitDate: 'Mon Jul 13 10:00:00 2026 +0200',
-        commitHash: 'a'.repeat(40),
-        commitMessage: 'test',
-        composerLinesAdded: 1,
-        composerLinesDeleted: 0,
-        humanLinesAdded: 1,
-        humanLinesDeleted: 0,
-        linesAdded: 2,
-        linesDeleted: 0,
-        scoredAt: '2026-07-13T08:00:00.000Z',
-        tabLinesAdded: 0,
-        tabLinesDeleted: 0,
-        v1AiPercentage: null,
-        v2AiPercentage: 50,
-      },
-    ],
   },
   filters: { limit: 2, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-13T12:00:00.000Z',
@@ -1380,13 +1358,23 @@ describe('focused report query contracts', () => {
     ).toThrow('unknown or missing');
   });
 
-  test('projects breakdown groups with Cursor and project-editor context', () => {
+  test('drops retired attribution from previously published served support', () => {
+    const parsed = parseFocusedReportSupport({
+      ...support,
+      datasets: { cursorCommitAttribution: [{ commitHash: 'old' }], retained: { ok: true } },
+      facets: { cursor: { commitAttribution: [{ commitHash: 'old' }] }, retained: { ok: true } },
+    });
+    expect(parsed.datasets).toEqual({ retained: { ok: true } });
+    expect(parsed.facets).toEqual({ retained: { ok: true } });
+    expect(parsed.analytics).toEqual(support.analytics);
+  });
+
+  test('projects breakdown groups with project-editor context', () => {
     const result = projectFocusedBreakdown(rows, support, { query: overviewRequest.query });
 
     expect(result.groups.projects.map(({ key }) => key)).toEqual(['ai usage', 'side']);
     expect(result.groups.projects.map(({ label }) => label)).toEqual(['ai-usage', 'side']);
     expect(result.groups.models.reduce((sum, group) => sum + group.sessions, 0)).toBe(3);
-    expect(result.context.cursorCommitAttribution).toEqual(support.datasets?.cursorCommitAttribution ?? []);
     expect(result.context.projectGroupConfigs).toEqual(support.projectGroupConfigs);
     expect(result.context.warnings).toEqual(support.warnings);
     expect(
@@ -1583,13 +1571,13 @@ describe('focused report query contracts', () => {
         request,
       ),
     ).toThrow();
-    expect(() =>
+    expect(
       parseFocusedReportQueryResult(
         'breakdown',
         { ...result, context: { ...result.context, cursorCommitAttribution: [{ commitHash: 'incomplete' }] } },
         request,
       ),
-    ).toThrow('cursorCommitAttribution');
+    ).toEqual(result);
   });
 
   test('prunes large destination-only context from bootstrap support', () => {

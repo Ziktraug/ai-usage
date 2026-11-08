@@ -191,7 +191,7 @@ The normalized per-session record consumed by table, CSV, JSON, and analytics ou
 _Avoid_: raw event, database row
 
 **Collected dataset**:
-A named set of collected and enriched report data transported alongside usage rows, such as provider status or Cursor commit attribution. Skill inventory is a separate local control-plane query, not a collected report dataset.
+A named set of collected and enriched report data transported alongside usage rows, such as provider status. Skill inventory is a separate local control-plane query, not a collected report dataset.
 _Avoid_: facet, metadata blob, app state
 
 **Report payload**:

@@ -76,7 +76,7 @@ describe('Usage row report lifecycle', () => {
       [row('a'), row('b')],
       args({ format: 'payload', limit: 1 }),
       {
-        cursor: { commitAttribution: [{ commitHash: 'abc123' }] },
+        example: { rows: [{ key: 'abc123' }] },
       },
       [{ harness: 'opencode', operation: 'sqlite.all', message: 'Failed to read OpenCode history' }],
     );
@@ -88,7 +88,7 @@ describe('Usage row report lifecycle', () => {
     expect(typeof payload.generatedAt).toBe('string');
     expect(payload.analytics.sessionCount).toBe(2);
     expect(payload.warnings[0].message).toBe('Failed to read OpenCode history');
-    expect(payload.facets.cursor.commitAttribution[0].commitHash).toBe('abc123');
+    expect(payload.facets.example.rows[0].key).toBe('abc123');
   });
 
   test('limit affects table rows while analytics rows remain complete', () => {

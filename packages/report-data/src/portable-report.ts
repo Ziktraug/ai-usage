@@ -27,7 +27,7 @@ import {
   type SourceAuthority,
 } from './project-projection';
 import { assembleReport } from './report-assembly';
-import { mergeReportDatasets, mirrorDatasetsToLegacyFacets } from './report-datasets';
+import { mergeReportDatasets } from './report-datasets';
 
 export type { ProjectedRow, ProjectSource, ReadGitFile } from './project-projection';
 
@@ -38,7 +38,6 @@ export interface LocalUsageSelection {
 }
 
 export interface ReportDatasetSelection {
-  readonly includeCursorCommitAttribution?: boolean;
   readonly includeProviderStatus?: boolean;
 }
 
@@ -132,7 +131,6 @@ export const assembleMergedUsageReport = (request: ProjectedMergedUsageReportReq
   const assembly = assembleReport({
     configuredProjectGroups: [...(request.projectGroupConfigs ?? [])],
     datasets,
-    ...(request.includeFacets ? { facets: mirrorDatasetsToLegacyFacets(datasets) } : {}),
     generatedAt: request.generatedAt ?? new Date(),
     options: request.options,
     projectGroups: projection.projectGroups,

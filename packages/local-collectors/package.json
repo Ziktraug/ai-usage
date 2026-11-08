@@ -20,7 +20,6 @@
     "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
     "./executor-observations": "./src/executor-observations.ts",
-    "./facets": "./src/facets.ts",
     "./review-worker": "./src/review-worker.ts",
     "./rtk-enrichment": "./src/rtk-enrichment.ts",
     "./codex-review-launcher": "./src/codex-review-launcher.ts",

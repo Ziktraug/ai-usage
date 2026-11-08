@@ -3,7 +3,6 @@
   import { Tabs } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
-  import type { SessionQueryRange } from '@ai-usage/report-core/session-query';
   import type { ProjectGroup } from '../../../../dashboard-analytics';
   import {
     type BreakdownSort,
@@ -12,9 +11,7 @@
     type DashboardTab,
     type FieldFilterKey,
   } from '../../../../dashboard-search';
-  import type { CursorCommitAttributionFacet } from '../../../../report-data';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
-  import CursorAttributionPanel from './cursor-attribution-panel.svelte';
   import HarnessProviderPanel from './harness-provider-panel.svelte';
   import ModelAnalysisTable from './model-analysis-table.svelte';
   import ProjectsPanel from './projects-panel.svelte';
@@ -30,7 +27,6 @@
     projectEditor,
   }: {
     data: {
-      cursorRows: readonly CursorCommitAttributionFacet[];
       generatedAt: string;
       harnesses: readonly AnalyticsGroup[];
       harnessProviders: readonly AnalyticsGroup[];
@@ -38,7 +34,6 @@
       machineCount?: number | null;
       models: readonly AnalyticsGroup[];
       projects: readonly ProjectGroup[];
-      range: SessionQueryRange;
     };
     navigation: {
       onSortChange: (sort: BreakdownSort) => void;
@@ -57,10 +52,7 @@
 
   const selectedTab = $derived(breakdownTabFor(navigation.tab));
   const changeTab = (value: string): void => {
-    if (
-      value !== selectedTab &&
-      (value === 'models' || value === 'harness-providers' || value === 'projects' || value === 'cursor-ai')
-    ) {
+    if (value !== selectedTab && (value === 'models' || value === 'harness-providers' || value === 'projects')) {
       navigation.onTabChange(value);
     }
   };
@@ -106,10 +98,6 @@
   </section>
 {/snippet}
 
-{#snippet cursorPanel()}
-  <section class={section}><CursorAttributionPanel range={data.range} rows={data.cursorRows} /></section>
-{/snippet}
-
 <div class={analysisTabs}>
   <Tabs
     ariaLabel="Analysis dimension"
@@ -117,7 +105,6 @@
       { content: modelsPanel, label: 'Models', value: 'models' },
       { content: harnessesPanel, label: 'Harnesses & providers', value: 'harness-providers' },
       { content: projectsPanel, label: 'Projects', value: 'projects' },
-      { content: cursorPanel, label: 'Cursor AI', value: 'cursor-ai' },
     ]}
     onValueChange={changeTab}
     value={selectedTab}

@@ -6,7 +6,6 @@ import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './col
 import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
-import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
@@ -23,7 +22,6 @@ const OPENCODE_TURN_SQL = { includes: ['count(DISTINCT m.id)', 'FROM message m J
 const OPENCODE_MESSAGE_SQL = { includes: ['SELECT session_id, data, time_created FROM message'] } as const;
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
-const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';
 const CURSOR_COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
 const CURSOR_TOKEN_SQL =
   "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
@@ -900,38 +898,5 @@ describe('DB-backed Harness collectors', () => {
     expect(result.rows[0]?.costActual).toBe(0.4);
     expect(cursor?.status).toBe('warning');
     expect(cursor?.warnings[0]?.message).toContain('Failed to read Cursor database');
-  });
-
-  test('collects Cursor commit attribution as a separate facet', () => {
-    const storage = new TestMemoryStorage();
-    storage.writeDatabaseRows(CURSOR_AI_TRACKING_DB, CURSOR_COMMIT_ATTRIBUTION_SQL, [
-      {
-        commitHash: 'abc123',
-        branchName: 'main',
-        scoredAt: Date.parse('2026-03-10T00:00:00.000Z'),
-        linesAdded: 10,
-        linesDeleted: 2,
-        tabLinesAdded: 1,
-        tabLinesDeleted: 0,
-        composerLinesAdded: 3,
-        composerLinesDeleted: 1,
-        humanLinesAdded: 4,
-        humanLinesDeleted: 1,
-        blankLinesAdded: 2,
-        blankLinesDeleted: 0,
-        commitMessage: 'add cursor facet',
-        commitDate: 'Tue Mar 10 01:00:00 2026 +0100',
-        v1AiPercentage: '33.33',
-        v2AiPercentage: '41.67',
-      },
-    ]);
-
-    const rows = runWithStorage(collectCursorCommitAttribution, storage);
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.commitHash).toBe('abc123');
-    expect(rows[0]?.composerLinesAdded).toBe(3);
-    expect(rows[0]?.v2AiPercentage).toBe(41.67);
-    expect(rows[0]?.scoredAt).toBe('2026-03-10T00:00:00.000Z');
   });
 });

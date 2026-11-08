@@ -1,4 +1,4 @@
-import type { ReportDatasets } from '@ai-usage/report-core/datasets';
+import { parseReportDatasets, type ReportDatasets, withoutRetiredCursorFacet } from '@ai-usage/report-core/datasets';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import {
   createUsageReportPayload,
@@ -49,25 +49,6 @@ const canonicalJson = (value: unknown): unknown => {
   );
 };
 
-const reportVisibleFacets = (
-  datasets: ReportDatasets | undefined,
-  facets: UsageReportPayload['facets'] | undefined,
-): UsageReportPayload['facets'] | undefined => {
-  if (!(Array.isArray(datasets?.cursorCommitAttribution) && facets)) {
-    return facets;
-  }
-  const cursor = facets.cursor;
-  if (!(typeof cursor === 'object' && cursor !== null && !Array.isArray(cursor))) {
-    return facets;
-  }
-  const { commitAttribution: _legacyAttribution, ...cursorWithoutAttribution } = cursor as Record<string, unknown>;
-  if (Object.keys(cursorWithoutAttribution).length > 0) {
-    return { ...facets, cursor: cursorWithoutAttribution };
-  }
-  const { cursor: _legacyCursor, ...facetsWithoutCursor } = facets;
-  return Object.keys(facetsWithoutCursor).length > 0 ? facetsWithoutCursor : undefined;
-};
-
 /** Fingerprints exactly the client-visible semantic payload, excluding observation time and duplicate table rows. */
 export const reportCaptureFingerprint = (payload: UsageReportPayload): string => {
   const { datasets, facets, generatedAt: _generatedAt, tableRows: _tableRows, ...visiblePayload } = payload;
@@ -76,10 +57,10 @@ export const reportCaptureFingerprint = (payload: UsageReportPayload): string =>
       JSON.stringify(
         canonicalJson({
           ...visiblePayload,
-          ...(datasets === undefined ? {} : { datasets }),
-          ...((reportVisibleFacets(datasets, facets) ?? undefined) === undefined
+          ...(datasets === undefined ? {} : { datasets: parseReportDatasets(datasets) }),
+          ...((withoutRetiredCursorFacet(facets) ?? undefined) === undefined
             ? {}
-            : { facets: reportVisibleFacets(datasets, facets) }),
+            : { facets: withoutRetiredCursorFacet(facets) }),
         }),
       ),
     )
@@ -119,11 +100,11 @@ export const assembleReport = <ReportRow extends Row>(
       report,
       input.options,
       input.generatedAt,
-      input.facets,
+      withoutRetiredCursorFacet(input.facets),
       input.warnings,
       input.projectGroups,
       input.configuredProjectGroups,
-      input.datasets,
+      parseReportDatasets(input.datasets),
       input.timeZone,
     ),
     report,

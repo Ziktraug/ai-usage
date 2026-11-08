@@ -2,12 +2,6 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import {
-  isNormalizedDatasetIdentity,
-  isNormalizedDatasetItem,
-  type NormalizedDatasetItem,
-  type NormalizedDatasetKey,
-} from '@ai-usage/report-core/datasets';
 import type { FocusedReportSupport, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import {
   createUsageMergeBundle,
@@ -262,35 +256,20 @@ export interface QueryUsageStoreGenerationInput {
   dbPath: string;
 }
 
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
 export interface UsageStoreGenerations {
   machineFleetGeneration: number;
   usageStoreGeneration: number;
-}
-
-export interface ImportNormalizedDatasetItemsInput {
-  dbPath: string;
-  importedAt?: Date;
-  items: readonly NormalizedDatasetItem[];
-}
-
-export interface NormalizedDatasetImportResult {
-  inserted: number;
-  unchanged: number;
-  updated: number;
-}
-
-export interface QueryNormalizedDatasetItemsInput {
-  datasetKey?: NormalizedDatasetKey;
-  dbPath: string;
-  machineId?: string;
-  maximumItems?: number;
-  sourceId?: NormalizedDatasetItem['sourceId'];
-}
-
-export interface QueryNormalizedDatasetItemsResult {
-  items: NormalizedDatasetItem[];
-  skipped: number;
-  truncated: boolean;
 }
 
 export interface ProviderQuotaCheckpointUpdate {
@@ -831,9 +810,6 @@ export interface UsageStore {
   confirmPeerMergeBundle: (input: ConfirmPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
   exportLocalMergeBundle: (input: ExportLocalMergeBundleInput) => Effect.Effect<UsageMergeBundle, UsageStoreError>;
   importLocalRows: (input: ImportLocalRowsInput) => Effect.Effect<ImportResult, UsageStoreError>;
-  importNormalizedDatasetItems: (
-    input: ImportNormalizedDatasetItemsInput,
-  ) => Effect.Effect<NormalizedDatasetImportResult, UsageStoreError>;
   importPeerMergeBundle: (input: ImportPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
   previewPeerMergeBundle: (
     input: PreviewPeerMergeBundleInput,
@@ -841,9 +817,6 @@ export interface UsageStore {
   queryEnrichableUsageRows: (
     input?: QueryEnrichableUsageRowsInput,
   ) => Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError>;
-  queryNormalizedDatasetItems: (
-    input?: QueryNormalizedDatasetItemsInput,
-  ) => Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
   queryReportRows: (input?: QueryReportRowsInput) => Effect.Effect<QueryRowsResult, UsageStoreError>;
   queryStoredReportCapture: (
     input?: QueryStoredReportCaptureInput,
@@ -983,15 +956,6 @@ interface StoredEnrichmentRecord {
 
 interface UsageStoreGenerationRecord {
   value: number;
-}
-
-interface StoredNormalizedDatasetItemRecord {
-  dataset_key: string;
-  item_key: string;
-  machine_id: string;
-  payload_json: string;
-  schema_version: number;
-  source_id: string;
 }
 
 type MergeRowClassification = 'inserted' | 'updated' | 'unchanged' | 'superseded' | 'deleted';
@@ -1477,6 +1441,7 @@ const migrate = (db: SqliteDatabase): boolean => {
     CREATE INDEX IF NOT EXISTS idx_usage_row_enrichments_source
       ON usage_row_enrichments(source_id, row_key);
 
+    -- Retired dataset storage is retained unchanged for compatibility; no current reader uses it.
     CREATE TABLE IF NOT EXISTS collected_dataset_items (
       source_id TEXT NOT NULL,
       machine_id TEXT NOT NULL,
@@ -3639,196 +3604,6 @@ export const {
   withUsageStoreWriter,
 });
 
-const maximumNormalizedDatasetItems = 50_000;
-
-const canonicalJson = (value: unknown): string => {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
-  }
-  if (typeof value === 'object' && value !== null) {
-    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
-};
-
-const normalizedDatasetContentHash = (item: NormalizedDatasetItem): string =>
-  createHash('sha256').update(canonicalJson(item.payload)).digest('hex');
-
-const invalidNormalizedDatasetInput = (operation: string, message: string): UsageStoreError =>
-  new UsageStoreError({
-    message,
-    operation,
-    reason: 'invalid-input',
-  });
-
-export const importNormalizedDatasetItems = (
-  input: ImportNormalizedDatasetItemsInput,
-): Effect.Effect<NormalizedDatasetImportResult, UsageStoreError> => {
-  if (input.items.length > maximumNormalizedDatasetItems) {
-    return Effect.fail(
-      invalidNormalizedDatasetInput(
-        'importNormalizedDatasetItems',
-        `A normalized dataset import cannot exceed ${maximumNormalizedDatasetItems} items.`,
-      ),
-    );
-  }
-  if (!input.items.every(isNormalizedDatasetItem)) {
-    return Effect.fail(
-      invalidNormalizedDatasetInput(
-        'importNormalizedDatasetItems',
-        'A normalized dataset item failed strict validation.',
-      ),
-    );
-  }
-
-  return withUsageStoreWriter(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const result: NormalizedDatasetImportResult = { inserted: 0, unchanged: 0, updated: 0 };
-        const observedAt = (input.importedAt ?? new Date()).toISOString();
-        const selectExisting = db.query(`
-          SELECT content_hash
-          FROM collected_dataset_items
-          WHERE source_id = ? AND machine_id = ? AND dataset_key = ? AND schema_version = ? AND item_key = ?
-        `);
-        const insertItem = db.query(`
-          INSERT INTO collected_dataset_items (
-            source_id, machine_id, dataset_key, schema_version, item_key, content_hash,
-            payload_json, first_seen_at, last_seen_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        const touchItem = db.query(`
-          UPDATE collected_dataset_items
-          SET last_seen_at = ?
-          WHERE source_id = ? AND machine_id = ? AND dataset_key = ? AND schema_version = ? AND item_key = ?
-        `);
-        const updateItem = db.query(`
-          UPDATE collected_dataset_items
-          SET content_hash = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
-          WHERE source_id = ? AND machine_id = ? AND dataset_key = ? AND schema_version = ? AND item_key = ?
-        `);
-
-        db.exec('BEGIN IMMEDIATE');
-        try {
-          for (const item of input.items) {
-            const identity = [
-              item.sourceId,
-              item.machineId,
-              item.datasetKey,
-              item.schemaVersion,
-              item.itemKey,
-            ] as const;
-            const payloadJson = canonicalJson(item.payload);
-            const contentHash = normalizedDatasetContentHash(item);
-            const existing = selectExisting.get(...identity) as { content_hash: string } | null;
-            if (!existing) {
-              insertItem.run(...identity, contentHash, payloadJson, observedAt, observedAt, observedAt);
-              result.inserted++;
-              continue;
-            }
-            if (existing.content_hash === contentHash) {
-              touchItem.run(observedAt, ...identity);
-              result.unchanged++;
-              continue;
-            }
-            updateItem.run(contentHash, payloadJson, observedAt, observedAt, ...identity);
-            result.updated++;
-          }
-          if (result.inserted > 0 || result.updated > 0) {
-            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
-          }
-          db.exec('COMMIT');
-        } catch (error) {
-          db.exec('ROLLBACK');
-          throw error;
-        }
-        return result;
-      },
-      catch: (cause) => usageStoreError('importNormalizedDatasetItems', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
-};
-
-export const queryNormalizedDatasetItems = (
-  input: QueryNormalizedDatasetItemsInput,
-): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError> => {
-  const maximumItems = input.maximumItems ?? maximumNormalizedDatasetItems;
-  if (!(Number.isSafeInteger(maximumItems) && maximumItems > 0 && maximumItems <= maximumNormalizedDatasetItems)) {
-    return Effect.fail(
-      invalidNormalizedDatasetInput(
-        'queryNormalizedDatasetItems',
-        `maximumItems must be an integer from 1 through ${maximumNormalizedDatasetItems}.`,
-      ),
-    );
-  }
-
-  return withUsageStoreReader(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const filters: string[] = [];
-        const params: unknown[] = [];
-        if (input.sourceId !== undefined) {
-          filters.push('source_id = ?');
-          params.push(input.sourceId);
-        }
-        if (input.machineId !== undefined) {
-          filters.push('machine_id = ?');
-          params.push(input.machineId);
-        }
-        if (input.datasetKey !== undefined) {
-          filters.push('dataset_key = ?');
-          params.push(input.datasetKey);
-        }
-        const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
-        const records = db
-          .query(`
-            SELECT source_id, machine_id, dataset_key, schema_version, item_key, payload_json
-            FROM collected_dataset_items
-            ${where}
-            ORDER BY dataset_key, machine_id, source_id, item_key
-            LIMIT ?
-          `)
-          .all(...params, maximumItems + 1) as StoredNormalizedDatasetItemRecord[];
-        const truncated = records.length > maximumItems;
-        const items: NormalizedDatasetItem[] = [];
-        let skipped = 0;
-        for (const record of records.slice(0, maximumItems)) {
-          try {
-            if (
-              !isNormalizedDatasetIdentity({
-                datasetKey: record.dataset_key,
-                schemaVersion: record.schema_version,
-                sourceId: record.source_id,
-              })
-            ) {
-              skipped++;
-              continue;
-            }
-            const item = {
-              datasetKey: record.dataset_key,
-              itemKey: record.item_key,
-              machineId: record.machine_id,
-              payload: JSON.parse(record.payload_json) as unknown,
-              schemaVersion: record.schema_version,
-              sourceId: record.source_id,
-            };
-            if (!isNormalizedDatasetItem(item)) {
-              skipped++;
-              continue;
-            }
-            items.push(item);
-          } catch {
-            skipped++;
-          }
-        }
-        return { items, skipped, truncated };
-      },
-      catch: (cause) => usageStoreReadError('queryNormalizedDatasetItems', input.dbPath, cause),
-    }),
-  );
-};
-
 export const {
   importProviderQuotaBatch,
   queryProviderQuotaObservations,
@@ -4014,15 +3789,12 @@ export const exportLocalMergeBundle = (
 export const createUsageStore = (dbPath: string): UsageStore => ({
   exportLocalMergeBundle: (input) => exportLocalMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   importLocalRows: (input) => importLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
-  importNormalizedDatasetItems: (input) => importNormalizedDatasetItems({ ...input, dbPath: input.dbPath ?? dbPath }),
   importPeerMergeBundle: (input) => importPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   previewPeerMergeBundle: (input) => previewPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   confirmPeerMergeBundle: (input) => confirmPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryStoredReportCapture: (input) => queryStoredReportCapture({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryEnrichableUsageRows: (input) => queryEnrichableUsageRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  queryNormalizedDatasetItems: (input) =>
-    queryNormalizedDatasetItems({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageMachineFleet: (input) => queryUsageMachineFleet({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGenerations: (input) =>
     queryUsageStoreGenerations({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
