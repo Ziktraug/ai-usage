@@ -17,6 +17,7 @@ import {
   type WorkRoot,
   workSessionKeyString,
 } from '@ai-usage/report-core/work-attention';
+import { displayTitle } from '../../foundation/presentation/display-title';
 
 /**
  * Pure presentation model for the Work resume surface: grouping, search, ordering, URL state and
@@ -51,10 +52,6 @@ const ROW_TITLE_MAX = 90;
 const ROW_TITLE_WORD_FLOOR = 60;
 const CODE_FENCE = /```[\w-]*/g;
 const MARKDOWN_LINK = /!?\[([^\]]*)\]\([^)]*\)/g;
-const STRONG = /(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g;
-const EMPHASIS_STAR = /\*(?=\S)([^*]+?)(?<=\S)\*/g;
-const EMPHASIS_UNDERSCORE = /(^|[^\w])_(?=\S)([^_]+?)(?<=\S)_(?!\w)/g;
-const INLINE_CODE = /(`+)([^`]+?)\1/g;
 const LINE_MARKERS = /^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)/gm;
 const LOCAL_PATH = /(?<![:\w/~.])(?:~\/|\/)(?:[\w.@-]+\/)+([\w.@-]+\/[\w.@-]+)/g;
 const SENTENCE_END = /[.!?](?=\s)/;
@@ -126,14 +123,7 @@ export const workRootId = (root: WorkRoot): string => root.desktopSessionId ?? w
 
 /** Markdown read as plain text: marks dropped, links reduced to their words, long local paths to their tail. */
 const plainTitleText = (title: string): string =>
-  title
-    .replace(CODE_FENCE, ' ')
-    .replace(MARKDOWN_LINK, '$1')
-    .replace(LINE_MARKERS, '')
-    .replace(INLINE_CODE, '$2')
-    .replace(STRONG, '$2')
-    .replace(EMPHASIS_STAR, '$1')
-    .replace(EMPHASIS_UNDERSCORE, '$1$2')
+  displayTitle(title.replace(CODE_FENCE, ' ').replace(MARKDOWN_LINK, '$1').replace(LINE_MARKERS, ''))
     .replace(LOCAL_PATH, '…/$1')
     .replace(WHITESPACE_RUNS, ' ')
     .trim();

@@ -152,7 +152,8 @@ describe('Work attention for a harness that declares no wait (ADR 0059)', () => 
   test('a Codex row reads a plain title: no markdown marks, one line, the first sentence or about 90 characters', () => {
     const titled = (title: string) => workRootRowTitle({ ...codex, title });
     expect(titled('**Fix** the `parseRollout` reader')).toBe('Fix the parseRollout reader');
-    expect(titled('Review   the\n\n__collector__  and *its* tests')).toBe('Review the collector and its tests');
+    expect(titled('Review   the\n\n__collector__  and *its* tests')).toBe('Review the __collector__ and its tests');
+    expect(titled('Fix glob *.ts and *.svelte in __init__.py')).toBe('Fix glob *.ts and *.svelte in __init__.py');
     expect(titled('# Plan\n- run `bun test`\n- read [the ADR](https://example.test/adr)')).toBe(
       'Plan run bun test read the ADR',
     );

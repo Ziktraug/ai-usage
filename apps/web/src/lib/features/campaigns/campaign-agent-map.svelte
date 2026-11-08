@@ -5,6 +5,7 @@
   import type { CampaignMap, CampaignMapNode } from '@ai-usage/report-core/campaign-map';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { fmtCompact } from '../../foundation/presentation/format';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
   import type { CampaignScrollState } from './campaign-virtual-window';
@@ -251,7 +252,7 @@
         {#if parents.has(node.row.rowId)}
           <button
             aria-expanded={expanded}
-            aria-label={`${collapsed.has(node.row.rowId) ? 'Expand' : 'Collapse'} descendants of ${node.title}`}
+            aria-label={`${collapsed.has(node.row.rowId) ? 'Expand' : 'Collapse'} descendants of ${displayTitle(node.title)}`}
             class={toggleClass}
             onclick={() => toggle(node.row.rowId)}
             type="button"
@@ -267,7 +268,7 @@
           <span style:padding-left={`${Math.min(node.depth, 8) * 12}px`}>
             <span class={nodeTitle}
               ><span class={visuallyHidden}>Open session </span><span aria-hidden="true">{nodePrefix(node)}</span>
-              {node.title}</span
+              {displayTitle(node.title)}</span
             >
             <span class={meta}
               >{relationshipLabel(node)}

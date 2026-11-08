@@ -1,6 +1,7 @@
 <script lang="ts">
   import { isLiveReviewAttemptState } from '@ai-usage/report-core/work-attempts';
   import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { sessionRoutePathname } from '../sessions/detail/session-route';
   import {
     attemptProgressLabel,
@@ -84,7 +85,7 @@
           <p class={workHeading}>{attemptProgressLabel(attempt)} · attempt {shortAttemptId(attempt.attemptId)}</p>
           <p class={workMuted}>
             {attempt.executorHarness === 'codex' ? 'Codex' : 'Claude Code'}
-            review · {attempt.target.sessionTitle ?? attempt.target.sourceSessionId}
+            review · {displayTitle(attempt.target.sessionTitle ?? attempt.target.sourceSessionId)}
           </p>
           {#if attempt.declared}
             <p class={workMuted}>

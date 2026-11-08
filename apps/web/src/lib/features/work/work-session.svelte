@@ -9,6 +9,7 @@
   import { createInfiniteQuery } from '@tanstack/svelte-query';
   import { onMount } from 'svelte';
   import { browser } from '$app/env';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { loadNextCampaignPage } from '../../query/options/campaigns';
   import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
   import { workRequest } from '../../query/options/work';
@@ -49,7 +50,9 @@
   <div class={workStack}>
     <div class={workRow}>
       <HarnessBadge name={row.harness} />
-      <h2 class={workHeading}>{row.sessionLabel || row.name || 'Untitled session'}</h2>
+      <h2 class={workHeading} title={row.sessionLabel || row.name}>
+        {displayTitle(row.sessionLabel || row.name || 'Untitled session')}
+      </h2>
     </div>
     <p class={workMuted}>
       {row.projectLabel}
@@ -104,7 +107,7 @@
               {#each members as child (child.rowId)}
                 <li class={workMuted}>
                   <a class={workLink} href={detailHref(child)}
-                    >{child.sessionLabel || child.name || 'Untitled child'}</a
+                    >{displayTitle(child.sessionLabel || child.name || 'Untitled child')}</a
                   >
                   · {child.origin ? sessionOriginLabel(child.origin) : 'Origin undeclared'}
                   ·

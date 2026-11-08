@@ -18,6 +18,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { browser } from '$app/env';
   import {
+    campaignDisplayLabelFor,
     campaignLabelFor,
     focusedCampaignLabelContext,
     indexCampaignLabelOverrides,
@@ -49,6 +50,7 @@
     sortFromSortingState,
   } from '../../../../session-table-schema';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import { withSessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { routeForRow } from '../../sessions/detail/detail-selection';
@@ -388,7 +390,7 @@
     presentCampaignTimelineSeries(series, campaignIndex);
   const presentSessionItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem =>
     presentFocusedOverviewSessionItem(item, (campaignKey, derivedLabel) =>
-      campaignLabelFor(campaignIndex, campaignKey, derivedLabel),
+      campaignDisplayLabelFor(campaignIndex, campaignKey, derivedLabel),
     );
   const unavailable = (): Promise<never> =>
     Promise.reject(new Error('Synthetic session detail transport is unavailable.'));
@@ -421,7 +423,7 @@
     const presented = presentSessionItem(item);
     const campaignContext = focusedCampaignLabelContext(presented);
     const presentedRow = campaignContext
-      ? { ...presented.row, campaignKey: campaignContext.campaignKey, sessionLabel: presented.label }
+      ? withSessionDisplayTitle({ ...presented.row, campaignKey: campaignContext.campaignKey }, presented.label)
       : presented.row;
     detailRows = visibleRows;
     changeSelection({ row: presentedRow, target: sessionAnalysisTargetForOverviewRow(presentedRow) });

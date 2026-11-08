@@ -30,6 +30,7 @@
     type SessionPresentationRow,
     type SessionQueryRequest,
   } from '@ai-usage/report-core/session-query';
+  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { fmtCompact, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import { muted } from '../breakdown/styles';
@@ -139,7 +140,7 @@
           title={session.hidden ? 'Select session hidden by current filters' : 'Select campaign session'}
           type="button"
         >
-          <div>{session.row.sessionLabel}</div>
+          <div title={session.row.sessionLabel}>{sessionDisplayTitle(session.row)}</div>
           <div class={muted}>
             {sessionSummary(session.row)}
             {#if session.hidden}

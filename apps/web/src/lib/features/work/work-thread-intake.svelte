@@ -4,6 +4,7 @@
   import { sessionLinkKey, type WorkThreadCommand, type WorkThreadIntent } from '@ai-usage/report-core/work-thread';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { invalidateWorkThreadQueries } from '../../query/options/work-threads';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createWorkThreadCommandAction, createWorkThreadsClient } from '../../rpc/work-threads-client';
@@ -13,7 +14,7 @@
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
   const queryClient = useQueryClient();
   let expanded = $state(false);
-  let title = $state(untrack(() => row.sessionLabel || row.name || 'Untitled task'));
+  let title = $state(untrack(() => displayTitle(row.sessionLabel || row.name || 'Untitled task')));
   let intent = $state<WorkThreadIntent>('change');
   let pending = $state(false);
   let failure = $state<string | null>(null);

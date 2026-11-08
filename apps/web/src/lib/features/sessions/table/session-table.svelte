@@ -62,6 +62,7 @@
     sessionColumnPresets,
     sessionColumnSchema,
   } from '../../../../session-table-schema';
+  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { fmtDate } from '../../../foundation/presentation/format';
   import type { StateChangeHandler, TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
   import type { SessionCampaignPage } from '../../../query/options/session-window';
@@ -612,6 +613,7 @@
               </tr>
             {/if}
             {#each virtual.rows as virtualRow (virtualRow.row.id)}
+              {@const parent = virtualRow.row.getParentRow()}
               {@const rowProvenance = summarizeSessionRowProvenance(virtualRow.row.original, visibleColumnIds)}
               <tr
                 data-depth={virtualRow.row.depth}
@@ -626,7 +628,7 @@
                 {#each visibleColumns as entry (entry.id)}
                   <td class={cellClass(entry.id, entry.meta.align)}>
                     <SessionCell
-                      campaignRootLabel={virtualRow.row.getParentRow()?.original.sessionLabel}
+                      campaignRootLabel={parent ? sessionDisplayTitle(parent.original) : undefined}
                       canExpand={virtualRow.row.getCanExpand()}
                       columnId={entry.id}
                       depth={virtualRow.row.depth}
@@ -670,11 +672,12 @@
           <li aria-hidden="true" data-virtual-spacer="top" style:height={`${virtual.topHeight}px`}></li>
         {/if}
         {#each virtual.rows as virtualRow (virtualRow.row.id)}
+          {@const parent = virtualRow.row.getParentRow()}
           {@const mobileSession = projectSessionCell(
             virtualRow.row.original,
             'session',
             searchQuery,
-            virtualRow.row.getParentRow()?.original.sessionLabel,
+            parent ? sessionDisplayTitle(parent.original) : undefined,
           )}
           {@const mobileValue = projectSessionCell(virtualRow.row.original, 'cost', searchQuery)}
           {@const mobileFresh = projectSessionCell(virtualRow.row.original, 'fresh', searchQuery)}
@@ -799,7 +802,7 @@
             onclick={() => onLoadCampaignChildren?.(row.campaignKey!)}
             type="button"
           >
-            {campaign.loading ? 'Loading campaign sessions…' : `Load more sessions in ${row.sessionLabel}`}
+            {campaign.loading ? 'Loading campaign sessions…' : `Load more sessions in ${sessionDisplayTitle(row)}`}
           </button>
         </div>
       {/if}

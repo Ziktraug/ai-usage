@@ -14,6 +14,7 @@
   import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
   import { browser } from '$app/env';
   import type { RuntimeMode } from '../../../runtime-mode';
+  import { displayTitle } from '../../foundation/presentation/display-title';
   import { loadNextCampaignPage } from '../../query/options/campaigns';
   import { optionalSessionLookupQueryOptions } from '../../query/options/session';
   import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
@@ -132,7 +133,9 @@
           <span class={workMarker}>archived</span>
         {/if}
       </div>
-      <h2 class={workDetailTitle} id="work-detail-heading">{root.title}</h2>
+      <h2 class={workDetailTitle} id="work-detail-heading" title={root.title}>
+        {root.key.harness === 'claude' ? root.title : displayTitle(root.title)}
+      </h2>
     </div>
     <button aria-label="Close detail" class={workCloseButton} onclick={onClose} type="button" bind:this={closeButton}>
       Close
@@ -236,7 +239,9 @@
     <h3 class={workHeading} id="work-routing-heading">Review this work</h3>
     {#if sessionRow}
       <p class={workMuted}>
-        Choose an executor for a read-only review of “{root.title}”. The engine checks the target before launch.
+        Choose an executor for a read-only review of “{root.key.harness === 'claude'
+          ? root.title
+          : displayTitle(root.title)}”. The engine checks the target before launch.
       </p>
       {#key sessionRow.rowId}
         <WorkThreadIntake row={sessionRow} />
@@ -400,7 +405,7 @@
               {#each members as member (member.rowId)}
                 <li class={workMuted}>
                   <a class={workLink} href={detailHref(member.rowId)}
-                    >{member.sessionLabel || member.name || 'Untitled session'}</a
+                    >{displayTitle(member.sessionLabel || member.name || 'Untitled session')}</a
                   >
                   · {member.origin ? sessionOriginLabel(member.origin) : 'Origin undeclared'}
                 </li>
