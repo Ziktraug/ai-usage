@@ -35,9 +35,19 @@
   onDestroy(() => {
     alive = false;
   });
+  const focusInsideRegion = (): boolean =>
+    typeof document !== 'undefined' && !!container?.contains(document.activeElement);
+  /** The reader's focus is here or on nothing (body/null, as after the focused Retry unmounted). */
+  const focusAvailableToRegion = (): boolean => {
+    if (typeof document === 'undefined') {
+      return false;
+    }
+    const active = document.activeElement;
+    return active === null || active === document.body || !!container?.contains(active);
+  };
   const handleRenderFailure = (cause: unknown): void => {
     failureGeneration += 1;
-    restoreFocus = containedFocus || (typeof document !== 'undefined' && !!container?.contains(document.activeElement));
+    restoreFocus = containedFocus || focusInsideRegion();
     message = `${label} is temporarily unavailable.`;
     reportRenderError(cause);
   };
@@ -49,9 +59,27 @@
       return;
     }
     message = `${label} recovered.`;
-    if (alive) {
+    // Never steal focus the reader moved elsewhere (a filter, a sibling) while the retry was pending.
+    if (focusAvailableToRegion()) {
       container?.focus();
     }
+  };
+  const handleFocusOut = (event: FocusEvent): void => {
+    if (event.relatedTarget instanceof Node) {
+      containedFocus = container?.contains(event.relatedTarget) ?? false;
+      return;
+    }
+    // No relatedTarget: the reader moved focus to nothing (body), the window lost focus with the
+    // element still active, or the element unmounted while focused (a failing render removing
+    // it). Only the settled state tells them apart; an unmounted element never handed focus back
+    // to the reader, so the region still owns it.
+    const left = event.target;
+    queueMicrotask(() => {
+      if (!alive || (left instanceof Node && !left.isConnected)) {
+        return;
+      }
+      containedFocus = focusInsideRegion();
+    });
   };
 </script>
 
@@ -65,11 +93,7 @@
   onfocusin={() => {
     containedFocus = true;
   }}
-  onfocusout={(event) => {
-    if (event.relatedTarget instanceof Node && !container?.contains(event.relatedTarget)) {
-      containedFocus = false;
-    }
-  }}
+  onfocusout={handleFocusOut}
   tabindex="-1"
   bind:this={container}
 >

@@ -13,6 +13,12 @@
 > guard test now forbids every other zstd decoder, `node:zlib`'s included.
 > The Context and Decision text below is kept as decided on 2026-10-22.
 
+> Amended 2026-10-28 (Bun 1.4.4): the pinned runtime moves from 1.4.3 to
+> 1.4.4 in `packageManager`, `@types/bun` and the `flake.nix` override
+> (nixos-unstable still ships 1.4.2). Read "1.4.3" in the Decision below as
+> the version current when it was written; "Amendment 2026-10-28" at the end
+> records what was re-qualified.
+
 ## Context
 
 The repository ran on Bun 1.3.13, pinned in four places: `packageManager`,
@@ -190,3 +196,66 @@ Gathered on 2026-10-22 in the `chore/upgrade-dependencies` worktree under
   working directory on 1.4.3; `BUN_CPU_PROFILE=1` wrote nothing. There is no
   living performance guide to record this in; `docs/performance/` holds
   historical records only.
+
+## Amendment 2026-10-28: Bun 1.4.4
+
+**Context.** Bun 1.4.4 (2026-10-22) reached the operator's machine through
+`bun upgrade`, and `bun run start` refused it: `apps/web/start.mjs` accepts
+only the `packageManager` version. 1.4.4 reworks `bun:sqlite` (and `Bun.SQL`,
+`node:sqlite`) in one change: per-query allocations drop, writes of an
+unfinished `iterate()` are committed at exit, `new Database(path, { create:
+false })` no longer fails with `SQLITE_MISUSE` on an existing file, and
+`PRAGMA hard_heap_limit`/`soft_heap_limit` are accepted but no longer enforced.
+The repository sets neither pragma. Its release notes name no change to
+`DecompressionStream`, zstd, `Bun.spawn` signals or `--no-orphans`.
+
+**Decision.** The runtime is Bun 1.4.4: `packageManager`, `@types/bun` and
+the `flake.nix` override (version and both Linux archive hashes) move
+together. The override stays: nixos-unstable still ships 1.4.2. Everything
+else in this ADR is unchanged.
+
+**Consequences.** `@sveltejs/adapter-bun` pins `bun-types` 1.4.3 exactly, so
+the lockfile now holds a nested `bun-types@1.4.3` for it next to the root
+`bun-types@1.4.4`; it is type-only. `lockfileVersion` stays 1. On macOS, Bun
+links the system ICU (`/usr/lib/libicucore`, 78.1 on macOS 26) rather than
+the one it bundles on Linux, so `Intl.DateTimeFormat` output can differ from
+CI there: one Work server-rendering test fails locally on "Jun 10, 2026 at
+10:00 UTC" against the expected "Jun 10, 2026, 10:00 UTC". That is a property
+of the host, not of 1.4.4; CI is the gate.
+
+**Evidence (2026-10-28, macOS 26 arm64, 8 cores, Bun 1.4.4 `38afee6c8`,
+no `nix`; Linux evidence comes from CI).**
+
+- Archive hashes are the release's `SHASUMS256.txt` entries converted to SRI;
+  the same conversion of the 1.4.3 entry reproduces the hash recorded above.
+  x64-baseline `sha256-4ERutVmVdy65iUvrrppr42jZhai5Jx7hJEhvmUbu3XY=`, aarch64
+  `sha256-uqa7NvUdblhWHgK76oJQOKnfRU9nPW13bou/hvjHhQ4=`.
+- `bun install --ignore-scripts` changed only `@types/bun`/`bun-types`; then
+  `bun install --frozen-lockfile --ignore-scripts` → no changes, exit 0.
+- `bun run check` → no fixes; `bun run typecheck` → 31 of 31 tasks. `bun run
+  lint` failed only on files under stale `.claude/worktrees/` checkouts that
+  import the removed `memory-service` package; every lint tool passed on the
+  repository's own files.
+- Package suites run one by one with a canonical owner-only `TMPDIR` (turbo
+  strips it on this host): 5,364 pass, 7 fail. The failures are host-specific
+  and independent of the runtime pin: CLI Ctrl-C forwarding (2), the
+  design-system Chromium fixture (1), two `gh` timeout tests and a non-UTF-8
+  file name APFS refuses in `local-collectors` (3), and the ICU date format
+  above in `web` (1). `local-machine`, `usage-store`, `usage-engine-runtime`,
+  `report-data` and `usage-engine`, which carry the `bun:sqlite` paths, pass
+  whole.
+- Heap-corruption stress of the zstd decoder, as in ADR 0047: 40 runs of the
+  `local-machine` suite, 8 at a time, each with its own `TMPDIR` → 40 of 40
+  clean (353 tests each), no crash. With all 40 at once on 8 cores, no run
+  crashed, but every run failed on timeouts (5 s and 20 s) in the
+  concurrent-process `machine config` tests and, in 4 runs, the 64 MiB
+  interruption test, whose fixture compression alone is CPU-bound; none
+  failed on a decoder result.
+- `bun run build` → 17 of 17 tasks. `bun run start` with `PORT=3100` and the
+  store and engine state in a fresh 0700 directory answered `/` with 200, and
+  `SIGINT` stopped it with the port released. Earlier the same day the
+  operator's own `bun run start` on 1.4.4 had migrated and published the real
+  store before the web refused the version.
+- Not re-run here: the `turbo watch dev` cold-start loop, the Playwright
+  stacks and the production-web suites; CI runs the latter on 1.4.4 through
+  `packageManager`.

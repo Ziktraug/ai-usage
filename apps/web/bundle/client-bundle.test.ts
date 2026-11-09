@@ -24,11 +24,11 @@ const INITIAL_CLOSURE_ENTRY_KEYS = [
 ] as const;
 
 /**
- * A product decision, not an accounting of history: the report's first load stays under 305 KB
+ * A product decision, not an accounting of history: the report's first load stays under 315 KB
  * gzipped. Raising it is a deliberate choice about what the app costs to open, and the reason
  * belongs in the commit that raises it.
  */
-const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
+const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
 
 /**
  * The last reviewed production measurement, and the tolerance around it. The ceiling alone cannot catch
@@ -38,10 +38,9 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 305_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-// Plan 123: the narrow project-group reference parser removes unrelated engine command parsers
-// from the report closure; Work-only CSS is loaded by the Work route instead of the global
-// Panda stylesheet. A fresh production build measures 304,123 B gzip, below the unchanged ceiling.
-const RECORDED_GZIP_CLOSURE_BYTES = 304_123;
+// Navigation-intent prefetch, independent report-region recovery and view transitions join the
+// report closure. A fresh production build measures 312,862 B gzip; see the ADR 0020 amendment.
+const RECORDED_GZIP_CLOSURE_BYTES = 312_862;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

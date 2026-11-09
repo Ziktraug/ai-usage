@@ -8,11 +8,11 @@ import {
   focusedOverviewFingerprint,
   focusedRevisionFingerprint,
 } from '@ai-usage/report-core/focused-report-query';
-import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import { type SessionQueryProtocolErrorTag, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import type { ReportQueryClient } from '../../../query/options/report';
 import type { SessionQueryScope } from '../../../query/options/session-window';
-import { ReportBootstrapUnavailableError } from '../core/report-errors';
+import { ReportBootstrapUnavailableError, ReportReadUnavailableError } from '../core/report-errors';
 
 export type FocusedQuerySnapshot = Omit<FocusedReportQueryScope, 'revision'>;
 
@@ -113,8 +113,14 @@ export const destinationFingerprint = (destination: FocusedReportDestination): s
   return `${overview}|${focusedBreakdownFingerprint({ query: queryForRevision(destination.query, revision) })}`;
 };
 
-const resultError = (result: { readonly error: { readonly message: string; readonly tag: string } }): Error =>
-  result.error.tag === 'RevisionExpired' ? new FocusedReportRevisionExpiredError() : new Error(result.error.message);
+// The focused contract only parses `QueryFailed` and `RevisionExpired`; both are read failures,
+// never local defects, so neither may surface as a plain `Error` to the prefetch defect reporter.
+const resultError = (result: {
+  readonly error: { readonly message: string; readonly tag: SessionQueryProtocolErrorTag };
+}): Error =>
+  result.error.tag === 'RevisionExpired'
+    ? new FocusedReportRevisionExpiredError()
+    : new ReportReadUnavailableError(result.error.message);
 
 export const requireFocusedBreakdown = (
   result: Awaited<ReturnType<ReportQueryClient['getFocusedReportBreakdown']>>,

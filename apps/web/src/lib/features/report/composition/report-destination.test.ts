@@ -21,6 +21,7 @@ import { createWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapQueryOptions, reportOverviewKey } from '../../../query/options/report';
 import {
+  prefetchReportDestinationIntent,
   type ReportDestinationQueryData,
   refreshReportDestination,
   reportDestinationExactKey,
@@ -31,10 +32,13 @@ import { initialSessionWindowIntent } from '../../../query/options/session-windo
 import { resetReportRegionQueries } from '../../../query/report-region-recovery';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow } from '../../sessions/table/session-table.fixtures';
+import { isExpectedPrefetchFailure } from '../../shell/prefetch-errors';
+import { ReportReadUnavailableError } from '../core/report-errors';
 import {
   type FocusedReportDestination,
   FocusedReportRevisionExpiredError,
   overviewRequestFor,
+  requireFocusedBreakdown,
 } from './report-destination';
 
 const { rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
@@ -556,6 +560,56 @@ describe('report destination Query', () => {
       }
     },
   );
+
+  test('a Breakdown read outage is an expected read failure, not a prefetch defect', async () => {
+    const request = { query: { ...breakdownDestination().query, revision: 'revision-outage' } };
+    const outage = {
+      error: { message: 'Breakdown read unavailable', revision: 'revision-outage', tag: 'QueryFailed' as const },
+      ok: false as const,
+      requestFingerprint: focusedBreakdownFingerprint(request),
+      revision: 'revision-outage',
+    };
+    const readFailure = (() => {
+      try {
+        requireFocusedBreakdown(outage, request);
+      } catch (cause) {
+        return cause;
+      }
+      throw new Error('A failed Breakdown result must throw');
+    })();
+    expect(readFailure).toBeInstanceOf(ReportReadUnavailableError);
+    expect((readFailure as Error).message).toBe('Breakdown read unavailable');
+    expect(isExpectedPrefetchFailure(readFailure)).toBe(true);
+    expect(() =>
+      requireFocusedBreakdown(
+        { ...outage, error: { ...outage.error, message: 'expired', tag: 'RevisionExpired' as const } },
+        request,
+      ),
+    ).toThrow(FocusedReportRevisionExpiredError);
+
+    const overview = overviewDependencies((overviewRequest) => Promise.resolve(successfulOverview(overviewRequest)));
+    const reportClient: ReportQueryClient = {
+      ...overview.reportClient,
+      getFocusedReportBreakdown: (breakdownRequest) =>
+        Promise.resolve({ ...outage, requestFingerprint: focusedBreakdownFingerprint(breakdownRequest) }),
+      getReportRevisionBootstrap: () => Promise.resolve(bootstrap('revision-outage')),
+    };
+    const dependencies = { ...overview, reportClient };
+    try {
+      const prefetchFailure = await prefetchReportDestinationIntent(dependencies, breakdownDestination(), {
+        browser: true,
+      }).then(
+        () => {
+          throw new Error('An intent prefetch over a Breakdown outage must reject');
+        },
+        (cause: unknown) => cause,
+      );
+      expect(prefetchFailure).toBeInstanceOf(ReportReadUnavailableError);
+      expect(isExpectedPrefetchFailure(prefetchFailure)).toBe(true);
+    } finally {
+      dependencies.queryClient.clear();
+    }
+  });
 
   test('QUERY-REPORT-DESTINATION: caches one complete Breakdown value and reuses it while fresh', async () => {
     const queryClient = createWebQueryClient();

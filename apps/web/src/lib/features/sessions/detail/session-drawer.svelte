@@ -567,7 +567,7 @@
       </nav>
     </div>
     <div class={drawerBody} data-session-drawer-body bind:this={bodyElement}>
-      <RecoverableRegion label="Session details" onRetry={controller.retryAnalysis}>
+      <RecoverableRegion label="Session details" onRetry={controller.recoverRegion}>
         <div class={sessionIdentity} data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
           <div class={sessionProject}>{row.projectLabel}</div>
           <div class={drawerTitle} title={row.sessionLabel}>{sessionDisplayTitle(row)}</div>

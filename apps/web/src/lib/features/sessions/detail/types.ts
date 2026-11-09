@@ -40,6 +40,8 @@ export interface SessionDetailController {
     event: Pick<KeyboardEvent, 'defaultPrevented' | 'key' | 'preventDefault' | 'target'>,
   ) => void;
   readonly navigate: (delta: -1 | 1) => void;
+  /** Refetches the owning detail read; rejects so the render boundary retains its retry UI. */
+  readonly recoverRegion: () => Promise<void>;
   readonly resolveVcs: () => Promise<void>;
   readonly retryAnalysis: () => Promise<void>;
   readonly select: (selection: SessionSelectionInput) => void;

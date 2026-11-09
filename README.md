@@ -614,6 +614,43 @@ Typecheck:
 bun run typecheck
 ```
 
+Optional Effect diagnostics:
+
+```sh
+bun run check:effect
+```
+
+This advisory pilot uses pinned `@effect/tsgo` 0.64.1 and its bundled TypeScript
+7.0.2 compiler. It does not patch `node_modules`, replace TypeScript 6, or change
+the Biome or Svelte gates. The diagnostics stay advisory and are not a `verify`
+gate, but their compiler-fixture tests run via `bun test tools` and are part of
+`verify`. The command uses Bun for its launcher
+and never downloads a missing executable; run `bun install --frozen-lockfile`
+first. It also runs in the repository's `nix develop` shell.
+
+`tsconfig.effect.json` starts from production TypeScript in `effect-runtime`,
+`local-machine`, `local-collectors`, and `usage-engine-runtime`. TypeScript follows
+their imports, including other workspace source and shared testing helpers;
+the exclusions avoid selecting test suites as entry points, not all transitive
+imports. Svelte files are still checked by the existing Svelte gate.
+
+The pilot retains the upstream correctness and anti-pattern diagnostics, with
+explicit error-channel checks (`unsafeEffectTypeAssertion`,
+`effectTryWithoutCatch`, `globalJsonInEffect`, and `returnEffectInGen`). General
+style suggestions, API-stability notices, and broad generic-error preferences
+are omitted. Three selected simplifications remain visible: `mapConstToAs`,
+`provideMergeAllToArray`, and `effectSucceedWithUndefined`. Treat findings as
+review candidates: JSON already protected by a domain error handler and
+intentional scheduling choices may need no change.
+
+Effect findings are warnings and do not make this command fail. TypeScript
+errors, unknown rule names, invalid compiler configuration, and tool failures
+still return a failing exit code. Inspect the output even when the command
+succeeds; no automatic fixes or diagnostic baseline are applied. The integration
+tests in `tools/check-effect.test.ts` exercise the installed compiler, including
+this distinction between advisory findings and failures. Recheck them and the
+rule policy when upgrading either pinned version.
+
 Lint:
 
 ```sh

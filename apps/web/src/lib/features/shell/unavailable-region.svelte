@@ -46,6 +46,9 @@
   const compactText = css({ srOnly: { md: true, xl: false } });
   const compactMark = css({ display: { base: 'none', md: 'inline', xl: 'none' } });
   const retry = async (): Promise<void> => {
+    if (pending) {
+      return;
+    }
     pending = true;
     failed = false;
     try {
@@ -73,10 +76,12 @@
     {label}
     is temporarily unavailable.{failed ? ' Retry failed. Try again.' : ''}
   </p>
+  <!-- aria-disabled retains keyboard focus (a native disabled button hands it to the body, which a
+       failing re-render would then leave stranded); the handler suppresses duplicate activation. -->
   <button
+    aria-disabled={pending}
     aria-label={compact ? `${label} unavailable. Retry` : undefined}
     class={cx(ghostButton, retryButton)}
-    disabled={pending}
     onclick={retry}
     title={compact ? `${label} is temporarily unavailable. Retry.` : undefined}
     type="button"

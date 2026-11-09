@@ -381,24 +381,20 @@
       },
       afterRender: (callback) => {
         let cancelled = false;
-        let frame = 0;
         const schedule = async (): Promise<void> => {
           await tick();
-          if (cancelled) {
-            return;
+          // Kit has committed the navigation; tick settles its DOM before the next input task.
+          // A view transition can defer animation frames long enough for the reader to scroll
+          // again, so restoring from a later frame would overwrite that new position.
+          if (!cancelled) {
+            callback();
           }
-          frame = requestAnimationFrame(() => {
-            if (!cancelled) {
-              callback();
-            }
-          });
         };
         schedule().catch(() => {
           navigationFailure = true;
         });
         return () => {
           cancelled = true;
-          cancelAnimationFrame(frame);
         };
       },
       beforeNavigate: (listener) => {

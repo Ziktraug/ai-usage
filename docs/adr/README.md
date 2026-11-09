@@ -55,7 +55,7 @@ was deleted.
 | [0017](0017-absence-is-a-gap-not-a-category.md) | Absence is a gap, not a category; defaults never hide it | 2026-08-25 | Accepted |
 | [0018](0018-one-canonical-number-per-concept.md) | One canonical number per concept | 2026-08-25 | Accepted |
 | [0019](0019-inclusive-period-semantics-and-readable-range-urls.md) | Inclusive period semantics and readable range URLs | 2026-08-25 | Accepted |
-| [0020](0020-bundle-ceiling-and-drift-guard.md) | Bundle ceiling and drift guard, no per-feature ledger | 2026-08-25 | Accepted, amended 2026-10-24 (305,000 B ceiling, headroom expectation) |
+| [0020](0020-bundle-ceiling-and-drift-guard.md) | Bundle ceiling and drift guard, no per-feature ledger | 2026-08-25 | Accepted, amended 2026-11-08 (315,000 B ceiling) |
 | [0021](0021-design-system-promotion-policy.md) | Design-system promotion requires a second consumer | 2026-08-25 | Retired 2026-10-24 |
 | [0022](0022-skill-observation-tiers-and-observability.md) | Skill observations carry a tier; an unobservable harness is never a zero | 2026-08-28 | Accepted; amended by 0037 |
 | [0023](0023-one-product-local-and-shared-compositions.md) | One product with local and shared compositions | 2026-08-29 | Superseded by 0074 |
@@ -99,7 +99,7 @@ was deleted.
 | [0061](0061-local-codex-request-observations.md) | Keep native Codex request observations local and attributable | 2026-10-22 | Accepted; amends 0059; extends 0050, 0060 |
 | [0062](0062-owned-codex-review-through-app-server.md) | Run owned Codex reviews through the subscription app-server | 2026-10-22 | Accepted; amends 0053, 0055; extends 0057 |
 | [0063](0063-durable-work-threads-and-personal-follow-up.md) | Durable Work threads carry the operator's follow-up | 2026-10-24 | Accepted; extends 0050, 0051, 0054 |
-| [0070](0070-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011; amended 2026-10-24 |
+| [0070](0070-bun-1-4-runtime.md) | Run on the Bun 1.4 line, pinned once in `packageManager` | 2026-10-22 | Accepted; extends 0011; amended 2026-10-24, 2026-10-28 (Bun 1.4.4) |
 | [0071](0071-effect-4.md) | Run every Effect surface on Effect 4 | 2026-10-22 | Accepted; amends 0001; amended 2026-10-24 |
 | [0072](0072-sveltekit-3-official-bun-adapter.md) | Run SvelteKit 3 on the official `@sveltejs/adapter-bun` | 2026-10-22 | Accepted; amends 0011; amended 2026-10-24 |
 | [0073](0073-ultracite-8-rule-policy.md) | Ultracite 8 rule policy: rules that churn style, misread the code or change behaviour stay off | 2026-10-22 | Accepted, amended 2026-10-24 (platform-only text removed; nursery promise and Svelte rules on) |
@@ -117,6 +117,7 @@ was deleted.
 | [0085](0085-superseded-unscoped-quota-heads.md) | A superseded unscoped quota head is omitted at the latest read | 2026-10-27 | Accepted; amends 0045; extends 0057, 0062 |
 | [0086](0086-retire-cursor-commit-attribution.md) | Retire Cursor commit attribution while preserving stored data and old artifacts | 2026-11-02 | Accepted; extends 0075 |
 | [0087](0087-svelte-async-rendering.md) | Defer Svelte async rendering over TanStack Query pending a clean global browser gate | 2026-11-04 | Deferred; preserves 0076 |
+| [0088](0088-incremental-jira-synchronization.md) | Incremental Jira synchronization with durable pending reads | 2026-10-28 | Accepted; amends 0054, 0079; extends 0009, 0075 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the
