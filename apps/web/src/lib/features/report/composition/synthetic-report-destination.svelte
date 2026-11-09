@@ -57,6 +57,7 @@
   import SessionDetailQuerySlot from '../../sessions/detail/session-detail-query-slot.svelte';
   import type { SessionRoute } from '../../sessions/detail/session-route';
   import type { SessionSelectionInput } from '../../sessions/detail/types';
+  import { reportUnexpectedPrefetchFailure } from '../../shell/prefetch-errors';
   import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
@@ -73,6 +74,7 @@
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
+  import { reportRegionStaleness } from './report-region-staleness';
   import { reportDestinationForSearch } from './report-search';
 
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
@@ -109,6 +111,7 @@
   let renderedSearch = $state<DashboardSearch>(untrack(() => search));
   let renderedSearchKey = JSON.stringify(untrack(() => search));
   let pending = $state(false);
+  let refreshError = $state<string | null>(null);
   let dashboardBreakdownModule = $state<DashboardBreakdownModule>();
   let dashboardBreakdownLoadFailed = $state(false);
   let sessionTableModule = $state<SessionTableModule>();
@@ -134,6 +137,28 @@
     onLoaded: (module) => (sessionTableModule = module),
   });
   let responseGeneration = 0;
+  const acquireSearch = async (requestedSearch: DashboardSearch, requestedKey: string): Promise<void> => {
+    const generation = ++responseGeneration;
+    pending = true;
+    refreshError = null;
+    try {
+      await responseFixture?.waitForResponse();
+      if (generation !== responseGeneration) {
+        return;
+      }
+      renderedSearch = requestedSearch;
+      renderedSearchKey = requestedKey;
+    } catch (cause) {
+      if (generation === responseGeneration) {
+        refreshError = cause instanceof Error ? cause.message : 'The report request failed.';
+      }
+      reportUnexpectedPrefetchFailure(cause);
+    } finally {
+      if (generation === responseGeneration) {
+        pending = false;
+      }
+    }
+  };
   $effect(() => {
     const requestedSearch = search;
     const requestedKey = JSON.stringify(requestedSearch);
@@ -145,16 +170,7 @@
     if (requestedKey === renderedSearchKey) {
       return;
     }
-    const generation = ++responseGeneration;
-    pending = true;
-    responseFixture.waitForResponse().then(() => {
-      if (generation !== responseGeneration) {
-        return;
-      }
-      renderedSearch = requestedSearch;
-      renderedSearchKey = requestedKey;
-      pending = false;
-    });
+    acquireSearch(requestedSearch, requestedKey).catch(reportUnexpectedPrefetchFailure);
   });
   // Once the rendered payload describes the committed range, the local preview has nothing left to
   // add, so it retires here rather than on pointerup — the same contract as the live destination.
@@ -252,6 +268,18 @@
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
   );
+  const requestedDestination = $derived(
+    reportDestinationForSearch(search, reportSupport.generatedAt, {
+      dimension,
+      granularity: resolveTimelineGranularity(
+        granularityPreference,
+        reportRangeProjection(search.range, new Date(reportSupport.generatedAt), syntheticDateDomain).dayCount,
+      ),
+    }),
+  );
+  const regionStaleness = $derived(
+    reportRegionStaleness(destination.focused ?? undefined, requestedDestination.focused),
+  );
   const syntheticSessionQuery = $derived({ ...destination.sessions, cursor: null, revision });
   const focusedQuery = $derived({
     filters: destination.sessions.filters,
@@ -275,6 +303,10 @@
     }
   });
   const retryReportDestination = async (): Promise<void> => {
+    if (refreshError && responseFixture) {
+      await acquireSearch(search, JSON.stringify(search));
+      return;
+    }
     if (primary === 'breakdown' && dashboardBreakdownLoadFailed) {
       await dashboardBreakdownLoader.retry();
       return;
@@ -472,16 +504,17 @@
   <ActiveFilters
     hidden={Math.max(0, totalSessionCount - overview.summary.sessionCount)}
     {navigation}
-    pending={_filterPending}
+    pending={_filterPending && pending}
     {presentMachineLabel}
     {search}
+    stale={_filterPending}
     total={totalSessionCount}
     visible={overview.summary.sessionCount}
   />
 {/snippet}
 
 {#snippet summary()}
-  {@render activeFilterSummary(pending)}
+  {@render activeFilterSummary(regionStaleness.overview)}
 {/snippet}
 {#snippet sessions()}
   {#if sessionTableModule}
@@ -630,8 +663,10 @@
       range: renderedSearch.range,
     },
   }}
+  {refreshError}
   {sessions}
   sessionsReady={sessionTableModule !== undefined}
+  staleRegions={regionStaleness}
   {summary}
 />
 <SessionDetailQuerySlot

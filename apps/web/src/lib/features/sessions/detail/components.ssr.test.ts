@@ -367,6 +367,7 @@ describe('P4 Svelte detail rendering', () => {
       navigate: () => undefined,
       resolveVcs: () => Promise.resolve(),
       retryAnalysis: () => Promise.resolve(),
+      recoverRegion: () => Promise.resolve(),
       select: () => undefined,
       subscribe: () => () => undefined,
       toggleAnalysis: () => Promise.resolve(),

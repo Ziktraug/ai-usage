@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './browser-test';
+import { settleAnimations } from './settle-animations';
 
 /**
  * These regressions exercise the synthetic Work demo without RPC reads.
@@ -22,6 +23,7 @@ const waitForHydratedWork = async (page: Page): Promise<void> => {
   await expect(page.locator('main[data-route-shell="work"][data-work-hydrated="true"]')).toBeVisible({
     timeout: 15_000,
   });
+  await expect(page.locator('[data-report-progress]')).toHaveCount(0);
 };
 const rowNamed = (page: Page, title: string): Locator =>
   page.locator('[data-work-root]').filter({ has: page.getByText(title, { exact: true }) });
@@ -30,10 +32,6 @@ const expectNoOverflow = async (page: Page): Promise<void> => {
 };
 const expectAxeClean = async (page: Page): Promise<void> => {
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
-};
-/** Overlay animations blend colours while they run; axe reads the settled frame. */
-const settleAnimations = async (page: Page): Promise<void> => {
-  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
 };
 const trackPosts = (page: Page): string[] => {
   const posts: string[] = [];
@@ -44,6 +42,26 @@ const trackPosts = (page: Page): string[] => {
   });
   return posts;
 };
+
+test('ambient header drift on Work is not a pending report request', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/work/sessions');
+  await waitForHydratedWork(page);
+  expect(
+    await page.evaluate(() =>
+      document
+        .getAnimations()
+        .some(
+          (animation) =>
+            animation instanceof CSSAnimation &&
+            animation.animationName.includes('drift') &&
+            animation.effect?.getTiming().iterations === Number.POSITIVE_INFINITY,
+        ),
+    ),
+  ).toBe(true);
+  await settleAnimations(page);
+  await expect(page.locator('[data-report-progress]')).toHaveCount(0);
+});
 
 test('desktop arrival is informative, searchable, keyboard-navigable and keeps the simulation inside the detail', async ({
   page,

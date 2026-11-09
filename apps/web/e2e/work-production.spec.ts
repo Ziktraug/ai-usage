@@ -6,6 +6,7 @@ import AxeBuilder from '@axe-core/playwright';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transport';
+import { settleAnimations } from './settle-animations';
 
 /**
  * The Work resume surface on the production path. The disposable HOME carries a native Claude
@@ -147,10 +148,7 @@ const expectNoOverflow = async (page: Page): Promise<void> => {
 const expectAxeClean = async (page: Page): Promise<void> => {
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 };
-/** Overlay animations blend colours while they run; axe reads the settled frame. */
-const settleAnimations = async (page: Page): Promise<void> => {
-  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
-};
+// Shared helper excludes legitimate infinite ambient animations.
 const searchParam = (page: Page, name: string): string | null => new URL(page.url()).searchParams.get(name);
 
 /** Screenshots are a review artefact, written only where the operator asks; the assertions never read them. */

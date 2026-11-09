@@ -44,7 +44,8 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 /**
  * The browser's own attempts at a failed lazy chunk: Vite's `<link rel=modulepreload>`, then the
  * `import()`, which Chromium 156+ re-fetches after a failed preload while 155 and earlier reuse the
- * failure. A further request before Reload means something beyond the browser's own load fetched the chunk.
+ * failure. A further failed request before Retry means something beyond the browser's own load
+ * fetched the chunk; Retry itself re-imports the module URL, which the served route answers.
  */
 const BROWSER_CHUNK_LOAD_ATTEMPTS = 2;
 
@@ -479,7 +480,7 @@ test('hydrates a directly addressed campaign outside the acquired report filters
   }
 });
 
-test('recovers one failed Session details chunk only after an explicit reload at the same identity', async ({
+test('recovers one failed Session details chunk in place through Retry at the same identity', async ({
   page,
   browserFailureGate,
   baseURL,
@@ -522,21 +523,27 @@ test('recovers one failed Session details chunk only after an explicit reload at
     const documentsBeforeOpen = documentRequests;
     const revision = await reportRevision(page);
     await sessionSurface(page, 'desktop').locator('[data-session-row-id]').first().locator('td').first().click();
-    const reload = page.getByRole('button', { name: 'Reload session details', exact: true });
-    await expect(reload).toBeVisible();
+    const retry = page.getByRole('button', { name: 'Retry session details', exact: true });
+    await expect(retry).toBeVisible();
     await expect.poll(() => new URL(page.url()).pathname).not.toBe('/');
     const selectedUrl = page.url();
     expect(chunkRequests.failed).toBeGreaterThanOrEqual(1);
     expect(chunkRequests.failed).toBeLessThanOrEqual(BROWSER_CHUNK_LOAD_ATTEMPTS);
+    expect(chunkRequests.served).toBe(0);
     expect(documentRequests).toBe(documentsBeforeOpen);
+    expect(await reportRevision(page)).toBe(revision);
     expect(await main?.evaluate((element) => element.isConnected)).toBe(true);
+    // The chunk comes back; Retry re-imports it inside the same document, at the same identity.
     chunkAvailable = true;
-    await reload.click();
+    await retry.click();
     await expectRounds(page, DETAIL_EXPLORATION_TITLE);
+    await expect(retry).toHaveCount(0);
     await expect(page).toHaveURL(selectedUrl);
     expect(await reportRevision(page)).toBe(revision);
     expect(chunkRequests.served).toBeGreaterThanOrEqual(1);
-    expect(documentRequests).toBe(documentsBeforeOpen + 1);
+    expect(chunkRequests.failed).toBeLessThanOrEqual(BROWSER_CHUNK_LOAD_ATTEMPTS);
+    expect(documentRequests).toBe(documentsBeforeOpen);
+    expect(await main?.evaluate((element) => element.isConnected)).toBe(true);
   } finally {
     verifyExpectedFailures();
   }
@@ -716,7 +723,11 @@ test('keeps mobile Rounds modal and restores focus after the original virtual ro
         playState: animation.playState,
       })),
     };
-    await Promise.all(animations.map((animation) => animation.finished));
+    await Promise.all(
+      animations
+        .filter((animation) => animation.effect?.getTiming().iterations !== Number.POSITIVE_INFINITY)
+        .map((animation) => animation.finished),
+    );
     return { before, settledOpacity: getComputedStyle(element).opacity };
   });
   await test.info().attach('drawer-motion-before-axe', {

@@ -74,6 +74,13 @@ export class SessionRevisionExpiredError extends Error {
   }
 }
 
+export class SessionReadUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionReadUnavailableError';
+  }
+}
+
 export const initialSessionWindowIntent = (): SessionWindowIntent => ({
   campaignChildrenDepth: {},
   campaignSessionsDepth: {},
@@ -111,7 +118,9 @@ export const increaseSessionWindowDepth = (
 };
 
 const errorFromResult = (result: { readonly error: { readonly message: string; readonly tag: string } }): Error =>
-  result.error.tag === 'RevisionExpired' ? new SessionRevisionExpiredError() : new Error(result.error.message);
+  result.error.tag === 'RevisionExpired'
+    ? new SessionRevisionExpiredError()
+    : new SessionReadUnavailableError(result.error.message);
 
 const requireSessionPage = (
   result: Awaited<ReturnType<SessionClientAdapter['page']>>,

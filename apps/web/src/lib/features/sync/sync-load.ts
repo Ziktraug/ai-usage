@@ -29,19 +29,24 @@ export const loadSyncPageData = async (
   options: WebQueryRuntimeOptions,
   dependencies: SyncPageLoadDependencies = {},
 ): Promise<SyncPageData> => {
-  const queryState = await createAwaitedRouteQueryState(options, async (runtime) => {
-    const client = dependencies.createClient?.(runtime) ?? createSyncBrowserAdapter(runtime.rpc.sync);
-    await runtime.queryClient.query(
-      syncFleetQueryOptions(client, {
-        browser: false,
-        compatibleGeneration: SYNC_COMPATIBLE_GENERATION,
-        enabled: true,
-      }),
-    );
-  });
+  const queryState = await createAwaitedRouteQueryState(options, (runtime) => prefetchSyncRoute(runtime, dependencies));
   return {
     compatibleGeneration: SYNC_COMPATIBLE_GENERATION,
     queryState,
     renderedAt: dependencies.now?.() ?? Date.now(),
   };
+};
+
+export const prefetchSyncRoute = async (
+  runtime: WebQueryRuntime,
+  dependencies: SyncPageLoadDependencies = {},
+): Promise<void> => {
+  const client = dependencies.createClient?.(runtime) ?? createSyncBrowserAdapter(runtime.rpc.sync);
+  await runtime.queryClient.query(
+    syncFleetQueryOptions(client, {
+      browser: false,
+      compatibleGeneration: SYNC_COMPATIBLE_GENERATION,
+      enabled: true,
+    }),
+  );
 };

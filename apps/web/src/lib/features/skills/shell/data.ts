@@ -10,6 +10,7 @@ import {
   skillsSnapshotQueryOptions,
 } from '../../../query/options/skills';
 import { createSkillsClient } from '../../../rpc/skills-client';
+import { reportUnexpectedPrefetchFailure } from '../../shell/prefetch-errors';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
 import { createSkillsShellViewModel } from './model';
 
@@ -40,7 +41,9 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
     runtime.queryClient.query(skillsKnownProjectPathsQueryOptions(client, serverQueryContext)),
     // Prefetched with the rest so the first paint carries observations rather than a spinner. A
     // failed read is a failed section, not a failed page, so it must not reject this load.
-    runtime.queryClient.query(skillObservationsQueryOptions(client, serverQueryContext)).catch(() => undefined),
+    runtime.queryClient
+      .query(skillObservationsQueryOptions(client, serverQueryContext))
+      .catch(reportUnexpectedPrefetchFailure),
   ]);
   const source = snapshot.config.sourceRepoPath ?? 'not configured';
   const inventories = snapshot.configured
@@ -48,9 +51,9 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
     : [];
   const view = createSkillsShellViewModel({ inventories, knownProjectPaths, pathname, snapshot });
   if (view.selectionDetail.kind === 'global-skill') {
-    await runtime.queryClient.query(
-      managedSkillMarkdownQueryOptions(client, view.selectionDetail.skill.name, serverQueryContext),
-    );
+    await runtime.queryClient
+      .query(managedSkillMarkdownQueryOptions(client, view.selectionDetail.skill.name, serverQueryContext))
+      .catch(reportUnexpectedPrefetchFailure);
     return source;
   }
   if (view.selectionDetail.kind !== 'project-skill') {
@@ -60,17 +63,19 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
   if (observation === undefined) {
     return source;
   }
-  await runtime.queryClient.query(
-    projectSkillMarkdownQueryOptions(
-      client,
-      {
-        projectPath: observation.projectPath,
-        runtimeDirId: observation.runtimeDirId,
-        skillName: view.selectionDetail.skill.name,
-      },
-      serverQueryContext,
-    ),
-  );
+  await runtime.queryClient
+    .query(
+      projectSkillMarkdownQueryOptions(
+        client,
+        {
+          projectPath: observation.projectPath,
+          runtimeDirId: observation.runtimeDirId,
+          skillName: view.selectionDetail.skill.name,
+        },
+        serverQueryContext,
+      ),
+    )
+    .catch(reportUnexpectedPrefetchFailure);
   return source;
 };
 

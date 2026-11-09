@@ -12,6 +12,7 @@ import {
   overviewRequestFor,
   requireFocusedBreakdown,
 } from '../../features/report/composition/report-destination';
+import { ReportReadUnavailableError } from '../../features/report/core/report-errors';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { currentAliasKey } from '../keys';
 import { queryPolicy } from '../policies';
@@ -69,7 +70,9 @@ export const reportDestinationExactKey = (
 ];
 
 const resultError = (result: { readonly error: { readonly message: string; readonly tag: string } }): Error =>
-  result.error.tag === 'RevisionExpired' ? new FocusedReportRevisionExpiredError() : new Error(result.error.message);
+  result.error.tag === 'RevisionExpired'
+    ? new FocusedReportRevisionExpiredError()
+    : new ReportReadUnavailableError(result.error.message);
 
 const requireOverview = (
   result: Awaited<ReturnType<ReportQueryClient['getFocusedReportOverview']>>,
@@ -163,7 +166,7 @@ const loadDestination = async (
   };
 };
 
-const exactDestinationQueryOptions = (
+export const exactDestinationQueryOptions = (
   dependencies: ReportDestinationQueryDependencies,
   destination: FocusedReportDestination,
   descriptor: FocusedReportDescriptor,
@@ -212,6 +215,26 @@ export const reportDestinationQueryOptions = (
     },
     queryKey: reportDestinationKey(),
   });
+
+export const REPORT_INTENT_ERROR_COOLDOWN_MS = 5000;
+
+/** Warm only the exact entry; do not mutate or cancel the report currently being read. */
+export const prefetchReportDestinationIntent = async (
+  dependencies: ReportDestinationQueryDependencies,
+  destination: FocusedReportDestination,
+  execution: ReportDestinationQueryExecution,
+  intent: SessionWindowIntent = initialSessionWindowIntent(),
+): Promise<ReportDestinationQueryData | undefined> => {
+  const visible = dependencies.queryClient.getQueryData<ReportDestinationQueryData>(reportDestinationKey());
+  const descriptor =
+    execution.preserveSessionRevision && visible ? visible.descriptor : await descriptorFor(dependencies, false);
+  const options = exactDestinationQueryOptions(dependencies, destination, descriptor, intent);
+  const state = dependencies.queryClient.getQueryState(options.queryKey);
+  if (state?.status === 'error' && Date.now() - state.errorUpdatedAt < REPORT_INTENT_ERROR_COOLDOWN_MS) {
+    return undefined;
+  }
+  return await dependencies.queryClient.query(options);
+};
 
 export const refreshReportDestination = async (
   dependencies: ReportDestinationQueryDependencies,

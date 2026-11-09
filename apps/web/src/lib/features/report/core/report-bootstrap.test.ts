@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import {
   focusedBreakdownFingerprint,
   focusedOverviewFingerprint,
@@ -18,21 +18,39 @@ import {
   sessionRowIdentity,
 } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
+import { ORPCError } from '@orpc/client';
 import { demoReportPayload } from '../../../../report-data';
+import { parseDashboardSearchUrl } from '../../../foundation/navigation/svelte/dashboard-url';
 import { countDehydratedSessionPagePayloads, createHydratedWebQueryClient } from '../../../query/client';
+import { createWebQueryRuntime } from '../../../query/composition';
 import { type ReportQueryClient, reportBootstrapKey } from '../../../query/options/report';
-import { reportDestinationKey } from '../../../query/options/report-destination';
+import {
+  exactDestinationQueryOptions,
+  prefetchReportDestinationIntent,
+  REPORT_INTENT_ERROR_COOLDOWN_MS,
+  refreshReportDestination,
+  reportDestinationExactKey,
+  reportDestinationKey,
+  reportDestinationQueryOptions,
+} from '../../../query/options/report-destination';
 import {
   sessionLookupKey,
   sessionLookupQueryOptions,
   sessionPageKey,
   sessionPageQueryOptions,
 } from '../../../query/options/session';
+import { initialSessionWindowIntent } from '../../../query/options/session-window';
+import { FINITE_SWR_STALE_TIME_MS } from '../../../query/policies';
 import { createWebRpcClient } from '../../../rpc/client';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
+import { dashboardSearchCodec } from '../../shell/navigation';
+import { initialFocusedReportDescriptor } from '../composition/report-destination';
+import { initialReportTimelineFor, reportDestinationForSearch } from '../composition/report-search';
+import { reportTabTargetFor, reportTimelineForSearch } from '../composition/report-tab-target';
 import {
   acquireLiveReportQueryState,
   deferredLiveReportQueryState,
+  prefetchReportRoute,
   ReportBootstrapUnavailableError,
   reportPageDataFor,
   requireAvailableReportBootstrap,
@@ -118,6 +136,244 @@ const successfulOverviewClient = (result = successfulResult()): ReportQueryClien
   });
 
 describe('report bootstrap', () => {
+  it('uses the mounted known date domain for automatic all-time granularity', () => {
+    const url = new URL('http://report.invalid/?range=all&tab=sessions');
+    const state = {
+      dimension: 'project' as const,
+      granularityPreference: 'auto' as const,
+      knownDateDomain: { first: '2020-01-01', last: '2026-08-01' },
+      generatedAt: successfulResult().bootstrap.support.generatedAt,
+      sessionWindowState: { destinationFingerprint: '', intent: initialSessionWindowIntent() },
+      pendingRevisionApply: false,
+    };
+    const target = reportTabTargetFor(url, state);
+    expect(target?.destination.timeline).toEqual({ dimension: 'project', granularity: 'month' });
+    const remounted = reportTabTargetFor(url, { ...state, knownDateDomain: null, dimension: 'harness' });
+    expect(remounted?.destination.timeline).toEqual({ dimension: 'harness', granularity: 'day' });
+  });
+  it.each([false, true])(
+    'warms the mounted destination key after timeline changes (preserve revision: %s)',
+    async (preserve) => {
+      const runtime = createWebQueryRuntime(liveOptions());
+      const old = successfulResult('visible-revision');
+      const latest = successfulResult('latest-revision');
+      const reportClient = successfulOverviewClient(latest);
+      const sessionClient = sessionClientFixture({});
+      const dependencies = { queryClient: runtime.queryClient, reportClient, sessionClient };
+      const url = new URL(`http://report.invalid/${preserve ? 'sessions/row-id' : ''}?tab=overview`);
+      const search = parseDashboardSearchUrl(url, dashboardSearchCodec);
+      const state = {
+        dimension: 'model' as const,
+        granularityPreference: 'week' as const,
+        knownDateDomain: { first: '2025-01-01', last: '2026-08-01' },
+        generatedAt: latest.bootstrap.support.generatedAt,
+        sessionWindowState: { destinationFingerprint: '', intent: initialSessionWindowIntent() },
+        pendingRevisionApply: false,
+      };
+      try {
+        const target = reportTabTargetFor(url, state);
+        if (!target) {
+          throw new Error('Expected a focused target');
+        }
+        const mounted = reportDestinationForSearch(
+          search,
+          state.generatedAt,
+          reportTimelineForSearch(search, state.generatedAt, state),
+        ).focused;
+        if (!mounted) {
+          throw new Error('Expected a mounted destination');
+        }
+        expect(target.destination).toEqual(mounted);
+        expect(target.destination.timeline).toEqual({ dimension: 'model', granularity: 'week' });
+        expect(target.preserveSessionRevision).toBe(preserve);
+        expect(reportTabTargetFor(new URL('http://report.invalid/?tab=overview'), state)?.preserveSessionRevision).toBe(
+          false,
+        );
+        // The visible report predates the bootstrap alias (e.g. a pending publication in a drawer).
+        const initial = await runtime.queryClient.query(
+          exactDestinationQueryOptions(
+            dependencies,
+            { ...target.destination, timeline: initialReportTimelineFor(search.range, state.generatedAt) },
+            initialFocusedReportDescriptor(old),
+            target.sessionWindowIntent,
+          ),
+        );
+        runtime.queryClient.setQueryData(reportDestinationKey(), initial);
+        runtime.queryClient.setQueryData(reportBootstrapKey(), latest);
+        const warmed = await prefetchReportDestinationIntent(
+          dependencies,
+          target.destination,
+          { browser: true, preserveSessionRevision: target.preserveSessionRevision },
+          target.sessionWindowIntent,
+        );
+        if (!warmed) {
+          throw new Error('Expected the changed timeline to be warmed');
+        }
+        const observed = await refreshReportDestination(
+          dependencies,
+          mounted,
+          target.sessionWindowIntent,
+          target.preserveSessionRevision,
+        );
+        expect(observed).toBe(warmed);
+        expect(warmed).not.toBe(initial);
+        expect(observed.descriptor.revision).toBe(preserve ? 'visible-revision' : 'latest-revision');
+        const expectedKey = reportDestinationExactKey(
+          target.destination,
+          observed.descriptor,
+          target.sessionWindowIntent,
+        );
+        expect(runtime.queryClient.getQueryData(expectedKey)).toBe(warmed);
+        expect(expectedKey).not.toEqual(
+          reportDestinationExactKey(
+            { ...target.destination, timeline: initialReportTimelineFor(search.range, state.generatedAt) },
+            observed.descriptor,
+          ),
+        );
+      } finally {
+        runtime.queryClient.clear();
+      }
+    },
+  );
+
+  it.each(['age', 'invalidation'] as const)(
+    'refreshes a bootstrap made stale by %s before warming a report route',
+    async (staleness) => {
+      const runtime = createWebQueryRuntime(liveOptions());
+      const latest = successfulResult('new-publication');
+      let calls = 0;
+      const client: ReportQueryClient = {
+        ...successfulOverviewClient(latest),
+        getReportRevisionBootstrap: () => {
+          calls += 1;
+          return Promise.resolve(latest);
+        },
+      };
+      runtime.queryClient.setQueryData(reportBootstrapKey(), successfulResult('old-publication'), {
+        updatedAt: Date.now() - (staleness === 'age' ? FINITE_SWR_STALE_TIME_MS + 1 : 0),
+      });
+      if (staleness === 'invalidation') {
+        await runtime.queryClient.invalidateQueries({
+          queryKey: reportBootstrapKey(),
+          exact: true,
+          refetchType: 'none',
+        });
+      }
+      try {
+        await prefetchReportRoute(
+          runtime,
+          new URL('http://report.invalid/'),
+          { createClient: () => client, createSessionClient: () => sessionClientFixture({}) },
+          true,
+        );
+        expect(calls).toBe(1);
+        expect(runtime.queryClient.getQueryData(reportBootstrapKey())).toEqual(latest);
+        const exact = runtime.queryClient
+          .getQueryCache()
+          .getAll()
+          .filter((query) => query.queryKey[2] === 'report-destination');
+        expect(exact).toHaveLength(1);
+        expect(exact[0]?.queryKey[3]).toBe('new-publication');
+      } finally {
+        runtime.queryClient.clear();
+      }
+    },
+  );
+
+  it('cools down failed exact entries across repeated hovers without preventing a later retry', async () => {
+    const runtime = createWebQueryRuntime(liveOptions());
+    const result = successfulResult();
+    let calls = 0;
+    const failure = new ORPCError('Unavailable');
+    const reportClient = reportClientFixture(result, () => {
+      calls += 1;
+      return Promise.reject(failure);
+    });
+    const dependencies = { queryClient: runtime.queryClient, reportClient, sessionClient: sessionClientFixture({}) };
+    const url = new URL('http://report.invalid/');
+    const search = parseDashboardSearchUrl(url, dashboardSearchCodec);
+    const destination = reportDestinationForSearch(
+      search,
+      result.bootstrap.support.generatedAt,
+      initialReportTimelineFor(search.range, result.bootstrap.support.generatedAt),
+    ).focused;
+    if (!destination) {
+      throw new Error('Expected an Overview destination');
+    }
+    try {
+      await expect(prefetchReportDestinationIntent(dependencies, destination, { browser: true })).rejects.toBe(failure);
+      await prefetchReportDestinationIntent(dependencies, destination, { browser: true });
+      await prefetchReportDestinationIntent(dependencies, destination, { browser: true });
+      expect(calls).toBe(1);
+      const key = reportDestinationExactKey(destination, initialFocusedReportDescriptor(result));
+      const query = runtime.queryClient.getQueryCache().find({ queryKey: key, exact: true });
+      if (!query) {
+        throw new Error('Expected failed exact entry');
+      }
+      query.setState({ errorUpdatedAt: Date.now() - REPORT_INTENT_ERROR_COOLDOWN_MS - 1 });
+      await expect(prefetchReportDestinationIntent(dependencies, destination, { browser: true })).rejects.toBe(failure);
+      expect(calls).toBe(2);
+    } finally {
+      runtime.queryClient.clear();
+    }
+  });
+  it('warms the exact destination read by the mounted tab without changing the visible alias', async () => {
+    const runtime = createWebQueryRuntime(liveOptions());
+    const result = successfulResult();
+    let overviewCalls = 0;
+    const reportClient = successfulOverviewClient(result);
+    const countedClient: ReportQueryClient = {
+      ...reportClient,
+      getFocusedReportOverview: (request, options) => {
+        overviewCalls += 1;
+        return reportClient.getFocusedReportOverview(request, options);
+      },
+    };
+    const sessionClient = sessionClientFixture({});
+    const url = new URL('http://report.invalid/?tab=overview');
+    try {
+      await prefetchReportRoute(
+        runtime,
+        url,
+        { createClient: () => countedClient, createSessionClient: () => sessionClient },
+        true,
+      );
+      const search = parseDashboardSearchUrl(url, dashboardSearchCodec);
+      const generatedAt = result.bootstrap.support.generatedAt;
+      const destination = reportDestinationForSearch(
+        search,
+        generatedAt,
+        initialReportTimelineFor(search.range, generatedAt),
+      ).focused;
+      expect(destination).not.toBeNull();
+      if (!destination) {
+        throw new Error('Expected an Overview destination');
+      }
+      const descriptor = initialFocusedReportDescriptor(result);
+      const key = reportDestinationExactKey(destination, descriptor);
+      const dependencies = { queryClient: runtime.queryClient, reportClient: countedClient, sessionClient };
+      const exactOptions = exactDestinationQueryOptions(
+        dependencies,
+        destination,
+        descriptor,
+        initialSessionWindowIntent(),
+      );
+      expect([...exactOptions.queryKey]).toEqual([...key]);
+      const exact = runtime.queryClient.getQueryData(exactOptions.queryKey);
+      expect(exact).toBeDefined();
+      if (exact === undefined) {
+        throw new Error('Intent did not populate the exact destination');
+      }
+      expect(runtime.queryClient.getQueryData(reportDestinationKey())).toBeUndefined();
+      const adopted = await runtime.queryClient.query(
+        reportDestinationQueryOptions(dependencies, destination, { browser: true }),
+      );
+      expect(adopted).toBe(exact);
+      expect(overviewCalls).toBe(1);
+    } finally {
+      runtime.queryClient.clear();
+    }
+  });
   it('turns typed unavailability into a bounded route error', () => {
     expect(() => requireAvailableReportBootstrap(unavailableResult)).toThrow(ReportBootstrapUnavailableError);
     expect(() => requireAvailableReportBootstrap(unavailableResult)).toThrow('Report data is temporarily unavailable.');
@@ -182,11 +438,27 @@ describe('report bootstrap', () => {
   it('keeps the route usable when the Overview prefetch fails', async () => {
     const queryState = await acquireLiveReportQueryState(liveOptions(), {
       createClient: () =>
-        reportClientFixture(successfulResult(), () => Promise.reject(new Error('Overview acquisition failed'))),
+        reportClientFixture(successfulResult(), () =>
+          Promise.reject(new ORPCError('Unavailable', { message: 'Overview acquisition failed' })),
+        ),
     });
 
     const keys = queryState.dehydratedState.queries.map((query) => query.queryKey);
     expect(keys).toEqual([reportBootstrapKey()]);
+  });
+
+  it('keeps best-effort SSR semantics but reports programming defects instead of silently hiding them', async () => {
+    const logged = spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Overview invariant violated');
+    try {
+      const state = await acquireLiveReportQueryState(liveOptions(), {
+        createClient: () => reportClientFixture(successfulResult(), () => Promise.reject(failure)),
+      });
+      expect(state.dehydratedState.queries.map((query) => query.queryKey)).toEqual([reportBootstrapKey()]);
+      expect(logged).toHaveBeenCalledWith('Unexpected navigation prefetch failure', failure);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it('dehydrates both exact legs for a Breakdown deep link', async () => {

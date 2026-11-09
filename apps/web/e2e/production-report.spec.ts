@@ -403,9 +403,11 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
     expect(initialFingerprints.size).toBe(1);
 
     const completeOutput = page.locator('[data-report-complete-output]');
+    const changedRegion = page.locator('[data-report-region="overview"]');
     const activity = page.getByRole('region', { name: 'Activity' });
     const chartOptions = activity.locator('details[aria-label="Explore activity"]');
-    await expect(completeOutput).toHaveAttribute('data-report-stale', 'true');
+    await expect(changedRegion).toHaveAttribute('data-report-stale', 'true');
+    await expect(completeOutput).not.toHaveAttribute('data-report-stale');
     await expect(page.locator('[data-report-refresh-pending]')).toHaveText('Updating report…');
     await expect(activity.getByText('Harness · Week · Estimated API-equivalent value', { exact: true })).toBeVisible();
     await chartOptions.locator('summary').click();
@@ -427,6 +429,7 @@ test('upgrades a live all-time Day cache exactly once after the date domain reso
     await expect(chartOptions.getByRole('radio', { exact: true, name: 'Auto (Week)' })).toBeChecked();
     await expect(activity.getByText('Harness · Week · Estimated API-equivalent value', { exact: true })).toBeVisible();
     await expect(completeOutput).not.toHaveAttribute('data-report-stale');
+    await expect(changedRegion).not.toHaveAttribute('data-report-stale');
     await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
 
     await page.waitForTimeout(LIVE_ALL_TIME_QUIESCENCE_MS);

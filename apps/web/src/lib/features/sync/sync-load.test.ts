@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { SyncFleet } from '@ai-usage/web-contract/sync';
 import { createHydratedWebQueryClient } from '../../query/client';
+import { createWebQueryRuntime } from '../../query/composition';
 import { syncFleetKey, syncFleetQueryOptions } from '../../query/options/sync';
 import { createWebRpcClient } from '../../rpc/client';
-import { deferredSyncPageData, loadSyncPageData, SYNC_COMPATIBLE_GENERATION } from './sync-load';
+import { deferredSyncPageData, loadSyncPageData, prefetchSyncRoute, SYNC_COMPATIBLE_GENERATION } from './sync-load';
 
 const fleet: SyncFleet = {
   currentMachine: { id: 'machine-a', label: 'Machine A' },
@@ -23,6 +24,43 @@ const fleet: SyncFleet = {
 };
 
 describe('Sync SSR load identity', () => {
+  it('shares SSR and browser intent keys and respects the existing freshness policy', async () => {
+    const rpc = createWebRpcClient({
+      url: 'http://sync.invalid/rpc',
+      fetch: () => Promise.reject(new Error('Unexpected transport')),
+    });
+    let calls = 0;
+    const dependencies = {
+      createClient: () => ({
+        fleet: () => {
+          calls += 1;
+          return Promise.resolve(fleet);
+        },
+      }),
+    };
+    const server = await loadSyncPageData({ rpc }, dependencies);
+    const runtime = createWebQueryRuntime({ rpc });
+    try {
+      await prefetchSyncRoute(runtime, dependencies);
+      expect(
+        runtime.queryClient
+          .getQueryCache()
+          .getAll()
+          .map((query) => query.queryKey),
+      ).toEqual(server.queryState.dehydratedState.queries.map((query) => query.queryKey));
+      await runtime.queryClient.query(
+        syncFleetQueryOptions(dependencies.createClient(), {
+          browser: true,
+          compatibleGeneration: SYNC_COMPATIBLE_GENERATION,
+          enabled: true,
+        }),
+      );
+      await prefetchSyncRoute(runtime, dependencies);
+      expect(calls).toBe(2);
+    } finally {
+      runtime.queryClient.clear();
+    }
+  });
   it('uses one stable compatibility generation for SSR and hydration', () => {
     expect(SYNC_COMPATIBLE_GENERATION).toBe('sync-fleet:v1');
     expect(syncFleetKey(SYNC_COMPATIBLE_GENERATION)).toEqual([

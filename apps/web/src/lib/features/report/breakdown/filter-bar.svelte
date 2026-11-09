@@ -99,6 +99,7 @@
       }
     }}
     placeholder="Filter by title, project, model…  ( / )"
+    title="Search matches source title text, project and model. Display titles omit some Markdown formatting."
     value={search.q}
     bind:this={queryInput}
   >

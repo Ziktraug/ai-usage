@@ -1,53 +1,30 @@
 <script lang="ts">
-  import { createQuery } from '@tanstack/svelte-query';
+  import { useQueryClient } from '@tanstack/svelte-query';
   import type { Snippet } from 'svelte';
-  import { browser } from '$app/env';
   import type { RuntimeMode } from '../../../runtime-mode';
-  import { type QuotaQueryClient, quotaRailQueryOptions } from '../../query/options/quota';
-  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { createReportClient } from '../../rpc/report-client';
+  import { resetQuotaRailForRecovery } from '../../query/options/quota';
   import AppShell from './app-shell.svelte';
-  import { buildProviderQuotaRail } from './provider-quota-rail';
+  import ProviderQuotaQueryRail from './provider-quota-query-rail.svelte';
+  import RecoverableRegion from './recoverable-region.svelte';
 
   let {
     children,
     runtimeMode,
     sourceControlSummary,
+    quotaE2eFailure = false,
   }: {
     children: Snippet;
     runtimeMode: RuntimeMode;
     sourceControlSummary: Snippet;
+    quotaE2eFailure?: boolean;
   } = $props();
-
-  const rpc = useOptionalWebQueryRpcContext()?.rpc;
-  let reportClient: QuotaQueryClient | undefined;
-  const client: QuotaQueryClient = {
-    getProviderQuotaHistory: async (...parameters) => {
-      if (!rpc) {
-        throw new Error('The shared browser RPC context is unavailable.');
-      }
-      reportClient ??= createReportClient(rpc);
-      return await reportClient.getProviderQuotaHistory(...parameters);
-    },
-  };
-  const query = createQuery(() =>
-    quotaRailQueryOptions(client, {
-      browser,
-      enabled: runtimeMode === 'live',
-    }),
-  );
-  const providerQuota = $derived(
-    buildProviderQuotaRail(
-      query.data
-        ? {
-            generatedAt: query.data.generatedAt,
-            providers: query.data.latest,
-            schemaVersion: 1,
-          }
-        : null,
-      query.data?.generatedAt ?? new Date(),
-    ),
-  );
+  const queryClient = useQueryClient();
 </script>
 
-<AppShell {providerQuota} {runtimeMode} {sourceControlSummary}> {@render children()} </AppShell>
+{#snippet quotaRail()}
+  <RecoverableRegion compact label="Provider quota" onRetry={() => resetQuotaRailForRecovery(queryClient)}>
+    <ProviderQuotaQueryRail {quotaE2eFailure} {runtimeMode} />
+  </RecoverableRegion>
+{/snippet}
+
+<AppShell {quotaRail} {runtimeMode} {sourceControlSummary}>{@render children()}</AppShell>

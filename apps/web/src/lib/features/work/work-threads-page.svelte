@@ -313,8 +313,8 @@
           {#if data.mode !== 'live'}
             <span>Synthetic demo</span>
           {/if}
-          <a class="wt-link" href="/work/sessions">Session intake ↗</a>
-          <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results ↗</a>
+          <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
+          <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
         </div>
       </header>
       {#if listError}

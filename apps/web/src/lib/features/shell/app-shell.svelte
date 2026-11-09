@@ -16,21 +16,36 @@
   import { createPageStateWriter, providePageStateWriter } from './page-state-writer';
   import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
+  import { provideReportPendingIndicator } from './report-pending-context';
+  import ReportProgress from './report-progress.svelte';
   import { createSessionWindowAnchorOwner, provideSessionWindowAnchorOwner } from './session-window-anchor-context';
 
   let {
     children,
     providerQuota = [],
+    quotaRail,
     runtimeMode,
     sourceControlSummary,
   }: {
     children: Snippet;
     providerQuota?: readonly ProviderQuotaRailEntry[];
+    quotaRail?: Snippet;
     runtimeMode: RuntimeMode;
     sourceControlSummary?: Snippet;
   } = $props();
   // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
   const pageUrl = $derived(new URL(page.url.href));
+  let visibleReportPending = $state.raw<(() => boolean) | undefined>();
+  provideReportPendingIndicator({
+    observe: (read) => {
+      visibleReportPending = read;
+      return () => {
+        if (visibleReportPending === read) {
+          visibleReportPending = undefined;
+        }
+      };
+    },
+  });
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
   provideShellNavigationOwner(createShellNavigationOwner({ currentUrl: () => pageUrl, goto }));
   const pageState = createPageStateWriter({
@@ -62,6 +77,7 @@
           ?.label ?? 'Workspace'),
   );
   const topbar = css({
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -91,9 +107,10 @@
   });
 </script>
 
-<AppNavigation {pageStateFailure} {providerQuota} {runtimeMode} />
+<AppNavigation {pageStateFailure} {providerQuota} {...quotaRail === undefined ? {} : { quotaRail }} {runtimeMode} />
 <div class={content} data-app-shell-content>
-  <header class={topbar} data-workspace-topbar>
+  <header class={topbar} data-workspace-topbar style:view-transition-name="workspace-topbar">
+    <ReportProgress pending={visibleReportPending?.() ?? false} />
     <div class={topbarLocation}>
       <span class={mobileMark}><ProductMark size={18} /></span>
       <span class={locationRoot}>ai-usage</span>

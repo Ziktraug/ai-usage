@@ -42,6 +42,7 @@ test('opens collection details on hover and keyboard without shifting focus, and
   await page.keyboard.press('Escape');
   await expect(trigger).toBeFocused();
   await page.keyboard.press('Enter');
+  await expect(details).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(details.getByRole('link', { name: 'View sources' })).toBeFocused();
   const { violations } = await new AxeBuilder({ page })
@@ -55,6 +56,78 @@ test('opens collection details on hover and keyboard without shifting focus, and
   await expect(header.getByRole('button', { name: 'Collection status' })).toBeVisible();
   expect(streams).toBe(1);
   await expect(page.getByText('Local workspace', { exact: true })).toHaveCount(0);
+});
+
+test('revealing collection status beneath a stationary pointer does not open a hover preview', async ({ page }) => {
+  await openHydratedReport(page);
+  const trigger = page.getByRole('button', { name: 'Collection status' });
+  const details = page.getByRole('dialog', { name: 'Collection details' });
+  await trigger.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const overlay = document.createElement('button');
+    overlay.textContent = 'Dismiss covering panel';
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      left: `${box.left}px`,
+      top: `${box.top}px`,
+      width: `${box.width}px`,
+      height: `${box.height}px`,
+      zIndex: '1000',
+    });
+    overlay.onclick = () => overlay.remove();
+    document.body.append(overlay);
+  });
+  await page.getByRole('button', { name: 'Dismiss covering panel' }).click();
+  // The next paint dispatches pointer boundary events for the uncovered trigger.
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  await expect(details).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await trigger.hover();
+  await expect(details).toBeVisible();
+});
+
+for (const dismissal of ['Escape', 'click'] as const) {
+  test(`collection hover stays dismissed after ${dismissal} until the pointer leaves`, async ({ page }) => {
+    await openHydratedReport(page);
+    const trigger = page.getByRole('button', { name: 'Collection status' });
+    const details = page.getByRole('dialog', { name: 'Collection details' });
+    await trigger.hover();
+    await expect(details).toBeVisible();
+    if (dismissal === 'Escape') {
+      await page.keyboard.press('Escape');
+    } else {
+      await trigger.click();
+    }
+    await expect(details).toHaveCount(0);
+    const box = await trigger.boundingBox();
+    if (!box) {
+      throw new Error('The collection trigger must remain visible after dismissal');
+    }
+    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+    await expect(details).toHaveCount(0);
+    await page.mouse.move(0, 0);
+    await trigger.hover();
+    await expect(details).toBeVisible();
+  });
+}
+
+test('movement without a hydrated pointerenter still preserves hover dismissal', async ({ page }) => {
+  await openHydratedReport(page);
+  const trigger = page.getByRole('button', { name: 'Collection status' });
+  const details = page.getByRole('dialog', { name: 'Collection details' });
+  // A pointer already over the server-rendered trigger never delivered pointerenter to
+  // Svelte. Model that missing event by delivering only its subsequent movement.
+  await trigger.dispatchEvent('pointermove', { pointerType: 'mouse' });
+  await expect(details).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(details).toHaveCount(0);
+  await trigger.dispatchEvent('pointermove', { pointerType: 'mouse', movementX: 1 });
+  await expect(details).toHaveCount(0);
+  await trigger.dispatchEvent('pointerleave', { pointerType: 'mouse' });
+  await trigger.hover();
+  await expect(details).toBeVisible();
 });
 
 test('keeps the mobile header compact and collection actions usable by touch', async ({ page }) => {

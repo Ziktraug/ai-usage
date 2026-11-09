@@ -55,7 +55,7 @@ was deleted.
 | [0017](0017-absence-is-a-gap-not-a-category.md) | Absence is a gap, not a category; defaults never hide it | 2026-08-25 | Accepted |
 | [0018](0018-one-canonical-number-per-concept.md) | One canonical number per concept | 2026-08-25 | Accepted |
 | [0019](0019-inclusive-period-semantics-and-readable-range-urls.md) | Inclusive period semantics and readable range URLs | 2026-08-25 | Accepted |
-| [0020](0020-bundle-ceiling-and-drift-guard.md) | Bundle ceiling and drift guard, no per-feature ledger | 2026-08-25 | Accepted, amended 2026-10-24 (305,000 B ceiling, headroom expectation) |
+| [0020](0020-bundle-ceiling-and-drift-guard.md) | Bundle ceiling and drift guard, no per-feature ledger | 2026-08-25 | Accepted, amended 2026-11-08 (315,000 B ceiling) |
 | [0021](0021-design-system-promotion-policy.md) | Design-system promotion requires a second consumer | 2026-08-25 | Retired 2026-10-24 |
 | [0022](0022-skill-observation-tiers-and-observability.md) | Skill observations carry a tier; an unobservable harness is never a zero | 2026-08-28 | Accepted; amended by 0037 |
 | [0023](0023-one-product-local-and-shared-compositions.md) | One product with local and shared compositions | 2026-08-29 | Superseded by 0074 |

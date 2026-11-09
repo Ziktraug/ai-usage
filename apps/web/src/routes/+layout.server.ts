@@ -1,7 +1,6 @@
-import { createAwaitedRouteQueryState } from '#lib/features/shell/query-load.ts';
+import { ORPCError } from '@orpc/client';
+import { loadOptionalQuotaRail } from '#lib/features/shell/quota-load.ts';
 import type { WebQueryHydrationState } from '#lib/query/client.ts';
-import { prefetchQuotaRail } from '#lib/query/options/quota.ts';
-import { createReportClient } from '#lib/rpc/report-client.ts';
 import { createInProcessWebRpcClient } from '#lib/server/rpc/in-process-client.server.ts';
 import type { LayoutServerLoad } from './$types';
 
@@ -13,12 +12,13 @@ export const load: LayoutServerLoad = async ({ depends, isDataRequest, locals, r
   if (isDataRequest || runtimeMode === 'demo') {
     return { quotaQueryState: emptyQueryState, runtimeMode };
   }
-  const quotaQueryState = await createAwaitedRouteQueryState(
-    { rpc: await createInProcessWebRpcClient(request) },
-    async (runtime) => await prefetchQuotaRail(runtime.queryClient, createReportClient(runtime.rpc)),
-  );
+  const quotaQueryState = await loadOptionalQuotaRail({
+    createRpc: () =>
+      locals.quotaE2eFailure ? Promise.reject(new ORPCError('Unavailable')) : createInProcessWebRpcClient(request),
+  });
   return {
     quotaQueryState,
     runtimeMode,
+    ...(locals.quotaE2eFailure ? { quotaE2eFailure: true } : {}),
   };
 };

@@ -73,6 +73,10 @@ const handleApplicationRequest: Handle = async ({ event, resolve }) => {
       ? 'demo'
       : getServerRuntimeMode();
   event.locals.runtimeMode = runtimeMode;
+  event.locals.quotaE2eFailure =
+    e2eOverridesEnabled &&
+    runtimeMode === 'e2e' &&
+    event.request.headers.get('x-ai-usage-sveltekit-quota-error') === 'once';
   const decision = demoRouteDecision(event.url.pathname, runtimeMode);
   if (decision === 'not-found') {
     return new Response(null, {
@@ -99,8 +103,9 @@ const handleApplicationRequest: Handle = async ({ event, resolve }) => {
   const errorFixtureRequested =
     e2eOverridesEnabled &&
     event.url.pathname === '/' &&
-    event.request.headers.get('x-ai-usage-sveltekit-error') === 'once' &&
-    !event.cookies.get('ai-usage-sveltekit-error-seen');
+    (event.request.headers.get('x-ai-usage-sveltekit-error') === 'always' ||
+      (event.request.headers.get('x-ai-usage-sveltekit-error') === 'once' &&
+        !event.cookies.get('ai-usage-sveltekit-error-seen')));
   if (errorFixtureRequested) {
     event.locals.shellE2eError = true;
     event.cookies.set('ai-usage-sveltekit-error-seen', '1', {

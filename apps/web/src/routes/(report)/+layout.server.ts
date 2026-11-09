@@ -12,8 +12,9 @@ import type { LayoutServerLoad } from './$types';
  * Report acquisition lives on the server so SvelteKit serialises the result into the document.
  * It is a layout load: the session and campaign detail routes below share the mounted report and
  * must not re-acquire it when the detail path changes.
- * A universal `load` would re-run during hydration and re-acquire everything over the network — the
- * serialised SSR fetch cache cannot replay the Overview, whose request body is a Blob by then.
+ * SSR acquisition must stay here: the serialised fetch cache cannot replay the Overview, whose
+ * request body is a Blob by hydration. Universal intent warming uses only a mounted browser
+ * runtime and an empty server delta, so it cannot repeat this document acquisition.
  */
 export const load: LayoutServerLoad = async ({ depends, isDataRequest, locals, request, untrack, url }) => {
   depends('ai-usage:report-root');

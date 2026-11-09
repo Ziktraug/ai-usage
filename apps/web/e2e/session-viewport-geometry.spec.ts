@@ -245,6 +245,15 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
       // production sibling position so the probe exercises external chrome.
       await expect(page.locator('[data-sessions-export]')).toHaveCount(0);
       await expect(page.locator('[data-session-table-owner]')).toHaveCount(1);
+      const gaps = await page.locator('[data-session-table-owner]').evaluate((owner) => {
+        const output = owner.closest('[data-report-complete-output]');
+        if (!(output && owner.parentElement)) {
+          throw new Error('Report stack is missing');
+        }
+        return { original: getComputedStyle(output).rowGap, wrapped: getComputedStyle(owner.parentElement).rowGap };
+      });
+      expect(gaps.wrapped).toBe(gaps.original);
+      expect(gaps.wrapped).toBe('14px');
       await page.evaluate(() => {
         const fixtureOwner = document.querySelector('[data-session-table-owner]');
         if (!fixtureOwner?.parentElement) {

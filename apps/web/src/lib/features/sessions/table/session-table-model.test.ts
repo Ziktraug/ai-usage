@@ -26,6 +26,26 @@ import {
 const CAMPAIGN_DURATION_PREFIX_PATTERN = /^Campaign time uses the root session only\./;
 
 describe('Svelte session table schema adapter', () => {
+  test('source-text search matches can have no highlight in the cleaned title', () => {
+    const row = { ...syntheticSessionRow(0), sessionLabel: '**Update** &amp; test' };
+    const cell = projectSessionCell(row, 'session', '&amp;');
+    if (cell.kind !== 'session') {
+      throw new Error('Expected title');
+    }
+    expect(cell.segments).toEqual([{ match: false, text: 'Update & test' }]);
+    expect(row.sessionLabel).toBe('**Update** &amp; test');
+  });
+  test('normalizes only the presented session title, retaining raw data and search highlighting', () => {
+    const row = { ...syntheticSessionRow(0), sessionLabel: '# **Update** &amp; `test`' };
+    const cell = projectSessionCell(row, 'session', 'Update');
+    expect(cell.kind).toBe('session');
+    if (cell.kind !== 'session') {
+      throw new Error('Expected session title projection');
+    }
+    expect(cell.segments.map((segment) => segment.text).join('')).toBe('Update & test');
+    expect(cell.segments.some((segment) => segment.match && segment.text === 'Update')).toBe(true);
+    expect(row.sessionLabel).toBe('# **Update** &amp; `test`');
+  });
   test('preserves the exact 25-column contract and Work/Tokens/Reliability presets', () => {
     expect(sessionTableColumns).toHaveLength(25);
     expect(new Set(sessionTableColumns.map((column) => column.id)).size).toBe(25);

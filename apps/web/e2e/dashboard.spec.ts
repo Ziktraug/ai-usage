@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
-import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import {
+  FOCUSED_REPORT_E2E_CONTROL_KEY,
+  FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_FAILURE_KEY,
+} from '../src/focused-report-e2e-fixture';
 import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled, waitForHydratedNavigation } from './browser-test';
 import { encodeRpcResponseBody } from './rpc-test-transport';
@@ -109,6 +113,7 @@ test('locks definitive output while a focused filter response is pending', async
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   const pendingSurface = page.locator('[data-report-pending]');
   const completeOutput = page.locator('[data-report-complete-output]');
+  const changedRegion = page.locator('[data-report-region="overview"]');
   const overview = page.locator('[data-report-overview]');
   const kpi = page.locator('[data-executive-kpi]');
   const chart = page.locator('[data-executive-chart]');
@@ -116,6 +121,9 @@ test('locks definitive output while a focused filter response is pending', async
   await expect(pendingSurface).toHaveCount(0);
   const retainedRevision = await overview.getAttribute('data-report-revision');
   const retainedKpi = await kpi.textContent();
+  const topbarHeight = await page
+    .locator('[data-workspace-topbar]')
+    .evaluate((element) => element.getBoundingClientRect().height);
 
   const query = 'pending-filter';
   const search = page.getByRole('textbox', {
@@ -127,8 +135,28 @@ test('locks definitive output while a focused filter response is pending', async
     await controlFocusedResponse(page, 'waitUntilBlocked');
 
     await expect(pendingSurface).toHaveCount(0);
-    await expect(completeOutput).toHaveAttribute('aria-busy', 'true');
-    await expect(completeOutput).toHaveAttribute('data-report-stale', 'true');
+    await expect(changedRegion).toHaveAttribute('aria-busy', 'true');
+    await expect(changedRegion).toHaveAttribute('data-report-stale', 'true');
+    await expect(completeOutput).not.toHaveAttribute('aria-busy');
+    await expect(completeOutput).toHaveCSS('opacity', '1');
+    await expect(page.locator('[data-report-progress]')).toBeVisible();
+    expect(
+      await page.locator('[data-workspace-topbar]').evaluate((element) => element.getBoundingClientRect().height),
+    ).toBe(topbarHeight);
+    await expect(changedRegion).toHaveCSS('transition-delay', '0.18s');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    expect(
+      await page
+        .locator('[data-report-progress]')
+        .evaluate((element) => getComputedStyle(element, '::after').animationName),
+    ).toBe('none');
+    await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'active' });
+    expect(
+      await page
+        .locator('[data-report-progress]')
+        .evaluate((element) => getComputedStyle(element, '::after').backgroundColor),
+    ).not.toBe('rgba(0, 0, 0, 0)');
+    await page.emulateMedia({ forcedColors: 'none' });
     await expect(overview).toHaveAttribute('data-report-revision', retainedRevision ?? '');
     await expect(kpi).toHaveText(retainedKpi ?? '');
     await expect(chart).toBeVisible();
@@ -149,6 +177,8 @@ test('locks definitive output while a focused filter response is pending', async
 
   await expect(pendingSurface).toHaveCount(0);
   await expect(completeOutput).not.toHaveAttribute('aria-busy');
+  await expect(changedRegion).not.toHaveAttribute('aria-busy');
+  await expect(page.locator('[data-report-progress]')).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'No sessions match these filters' })).toBeVisible();
@@ -157,11 +187,36 @@ test('locks definitive output while a focused filter response is pending', async
   await expect(kpi).toBeVisible();
 });
 
+test('a failed filter request keeps retained figures stale until a successful retry', async ({ page }) => {
+  await page.addInitScript((key) => Reflect.set(globalThis, key, true), FOCUSED_REPORT_E2E_ENABLED_KEY);
+  await openHydratedReport(page);
+  const region = page.locator('[data-report-region="overview"]');
+  const retained = await page.locator('[data-executive-kpi]').textContent();
+  await page.evaluate((key) => Reflect.set(globalThis, key, true), FOCUSED_REPORT_E2E_FAILURE_KEY);
+  await page
+    .getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' })
+    .fill('failure-filter');
+  await expect(page.locator('[data-report-refresh-error]')).toContainText(
+    'The report request is temporarily unavailable.',
+  );
+  await expect(region).toHaveAttribute('data-report-stale', 'true');
+  await expect(region).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('[data-active-filters] > span').first()).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('[data-executive-kpi]')).toHaveText(retained ?? '');
+  await expect(page.locator('[data-report-progress]')).toHaveCount(0);
+  await page.locator('[data-report-refresh-error]').getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.locator('[data-report-refresh-error]')).toHaveCount(0);
+  await expect(region).not.toHaveAttribute('data-report-stale');
+});
+
 test('retries a failed report through the Router loading lifecycle', async ({ context, page }) => {
   await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-error': 'once' });
   const failed = await page.goto('/');
 
   expect(failed?.status()).toBe(503);
+  await waitForHydratedNavigation(page);
+  await expect(page.locator('[data-error-route][data-hydrated="true"]')).toBeVisible();
+  await page.evaluate(() => Reflect.set(globalThis, '__routeRetryDocument', 'retained'));
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
   await expect(page.getByText('Report data could not be loaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
@@ -172,6 +227,7 @@ test('retries a failed report through the Router loading lifecycle', async ({ co
     'aria-current',
     'page',
   );
+  expect(await page.evaluate(() => Reflect.get(globalThis, '__routeRetryDocument'))).toBe('retained');
 });
 
 test('retries a failed lazy Analysis module without reloading the page', async ({ page }) => {

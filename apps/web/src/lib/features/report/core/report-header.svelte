@@ -45,7 +45,7 @@
   });
 </script>
 
-<WorkspaceHeader atmospheric={heading === 'Usage overview'} {description} eyebrow="Local activity" {heading}>
+<WorkspaceHeader {description} eyebrow="Local activity" {heading}>
   {#snippet meta()}
     <div class={freshness}>
       {#if showFreshness}

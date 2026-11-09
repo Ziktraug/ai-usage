@@ -42,6 +42,8 @@
   const runPending = $derived(controlState.pendingCommand !== null);
   let isOpen = $state(false);
   let hoverOpened = $state(false);
+  let triggerHovered = false;
+  let hoverSuppressed = false;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let contentHasFocus = false;
   let clock = $state(Date.now());
@@ -51,7 +53,9 @@
     clearTimeout(closeTimer);
   };
   const enter = (event: PointerEvent): void => {
-    if (event.pointerType !== 'mouse') {
+    // Opening requires real pointer movement over the trigger, not a boundary event
+    // caused by a drawer or transition disappearing beneath a stationary pointer.
+    if (event.pointerType !== 'mouse' || hoverSuppressed) {
       return;
     }
     cancelClose();
@@ -180,6 +184,7 @@
       cancelClose();
       isOpen = details.open;
       if (!details.open) {
+        hoverSuppressed = triggerHovered;
         contentHasFocus = false;
       }
     }}
@@ -192,11 +197,23 @@
       aria-label={`Collection status: ${status.label}`}
       class={trigger}
       onclick={() => {
+        hoverSuppressed = triggerHovered;
         hoverOpened = false;
       }}
       onkeydown={focusContentOnTab}
-      onpointerenter={enter}
-      onpointerleave={leave}
+      onpointerenter={() => {
+        triggerHovered = true;
+      }}
+      onpointerleave={() => {
+        triggerHovered = false;
+        hoverSuppressed = false;
+        leave();
+      }}
+      onpointermove={(event) => {
+        // pointerenter may have occurred over the server-rendered trigger before hydration.
+        triggerHovered = true;
+        enter(event);
+      }}
       type="button"
     >
       <span

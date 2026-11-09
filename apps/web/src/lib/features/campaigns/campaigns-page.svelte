@@ -737,7 +737,7 @@
   };
 
   const toolbar = css({ display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: '12px', mb: '24px' });
-  const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mb: '20px' });
+  const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mt: '2px', mb: '20px' });
   const activeViewButton = css.raw({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
   const field = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '11px' });
   const input = css({

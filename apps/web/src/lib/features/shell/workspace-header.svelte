@@ -1,6 +1,11 @@
+<script lang="ts" module>
+  let atmosphereDrawn = false;
+</script>
+
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import type { Snippet } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
+  import { atmosphereContours } from './header-atmosphere';
 
   let {
     heading,
@@ -8,14 +13,14 @@
     description,
     meta,
     actions,
-    atmospheric = false,
+    variant,
   }: {
     heading: string;
     eyebrow?: string | null;
     description?: string;
     meta?: Snippet | undefined;
     actions?: Snippet | undefined;
-    atmospheric?: boolean;
+    variant?: string;
   } = $props();
 
   const header = css.raw({
@@ -27,11 +32,9 @@
     flexWrap: 'wrap',
     gap: '20px',
     minW: 0,
-    minH: { base: '136px', md: '160px' },
-    pb: { base: '24px', md: '32px' },
+    pb: '12px',
   });
-  const atmosphericHeader = css.raw({ minH: { base: '178px', md: '208px' } });
-  const copy = css({ position: 'relative', zIndex: 1, display: 'grid', gap: '10px', minW: 0, maxW: '100%' });
+  const copy = css({ position: 'relative', zIndex: 1, display: 'grid', gap: '6px', minW: 0, maxW: '100%' });
   const label = css({
     color: 'muted',
     fontSize: '10px',
@@ -68,28 +71,34 @@
     zIndex: 0,
     color: 'accent',
     opacity: { base: 0.16, md: 0.2 },
-    maskImage: 'linear-gradient(to right, transparent, black 35%)',
     '& svg': { w: 'full', h: 'full' },
     _print: { display: 'none' },
+    _highContrast: { display: 'none' },
   });
-  const contours = Array.from(
-    { length: 36 },
-    (_, line) =>
-      `M ${-140 + line * 10} 350 C ${100 + line * 5} ${300 - line * 8}, ${215 + line * 4} ${-105 + line * 4}, ${405 + line * 5} ${54 + line * 5} S ${530 + line * 8} ${250 - line * 3}, 860 ${-50 + line * 10}`,
-  );
+  const contours = $derived(atmosphereContours(variant ?? heading));
+  const draw = !atmosphereDrawn;
+  onMount(() => {
+    atmosphereDrawn = true;
+  });
 </script>
 
-<header class={css(header, atmospheric && atmosphericHeader)} data-workspace-header>
-  {#if atmospheric}
-    <div aria-hidden="true" class={atmosphere} data-workspace-atmosphere>
-      <svg aria-hidden="true" fill="none" preserveAspectRatio="xMidYMid slice" viewBox="0 0 720 320">
-        {#each contours as path}
-          <path d={path} stroke="currentColor" stroke-width="1" />
+<header class={css(header)} data-workspace-header>
+  <div aria-hidden="true" class={[atmosphere, draw && 'draw']} data-workspace-atmosphere>
+    <div class="atmosphere-motion">
+      <svg aria-hidden="true" fill="none" preserveAspectRatio="none" viewBox="0 -140 720 560">
+        {#each contours as path, index}
+          <path
+            d={path}
+            pathLength="1"
+            stroke="currentColor"
+            stroke-width="1"
+            style:animation-delay={`${index * 12}ms`}
+          />
         {/each}
       </svg>
     </div>
-  {/if}
-  <div class={copy}>
+  </div>
+  <div class={copy} style:view-transition-name="workspace-copy">
     {#if eyebrow}
       <p class={label}>{eyebrow}</p>
     {/if}
@@ -102,6 +111,59 @@
     {/if}
   </div>
   {#if actions}
-    <div class={actionRow}>{@render actions()}</div>
+    <div class={actionRow} style:view-transition-name="workspace-actions">{@render actions()}</div>
   {/if}
 </header>
+
+<style>
+  h1 {
+    view-transition-name: workspace-title;
+  }
+  [data-workspace-atmosphere] {
+    view-transition-name: workspace-atmosphere;
+  }
+  .atmosphere-motion {
+    width: 100%;
+    height: 100%;
+    mask-image: linear-gradient(to right, transparent, black 35%);
+    transform-origin: center;
+    animation: drift 50s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+  .draw path {
+    animation: draw-in 780ms ease-out both;
+  }
+  @keyframes drift {
+    from {
+      transform: translate(-8px, 3px) scale(1);
+    }
+    to {
+      transform: translate(12px, -5px) scale(1.025);
+    }
+  }
+  @keyframes draw-in {
+    from {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .atmosphere-motion,
+    .draw path {
+      animation: none;
+    }
+    .atmosphere-motion {
+      will-change: auto;
+    }
+  }
+  @media print {
+    .atmosphere-motion,
+    .draw path {
+      animation: none;
+    }
+  }
+</style>

@@ -27,9 +27,14 @@ export const loadDelegationPageData = async (
   options: RouteQueryLoadOptions,
   dependencies: DelegationPageLoadDependencies = {},
 ): Promise<DelegationPageData> => ({
-  queryState: await createAwaitedRouteQueryState(options, async (runtime) => {
-    const client = dependencies.createClient?.(runtime) ?? createDelegationClient(runtime.rpc.delegation);
-    await runtime.queryClient.query(delegationSettingsQueryOptions(client, { browser: false, enabled: true }));
-  }),
+  queryState: await createAwaitedRouteQueryState(options, (runtime) => prefetchDelegationRoute(runtime, dependencies)),
   section: delegationSectionFromUrl(options.url),
 });
+
+export const prefetchDelegationRoute = async (
+  runtime: WebQueryRuntime,
+  dependencies: DelegationPageLoadDependencies = {},
+): Promise<void> => {
+  const client = dependencies.createClient?.(runtime) ?? createDelegationClient(runtime.rpc.delegation);
+  await runtime.queryClient.query(delegationSettingsQueryOptions(client, { browser: false, enabled: true }));
+};
