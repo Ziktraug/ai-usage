@@ -103,6 +103,8 @@ interface CodexSessionReadResult {
   cacheWriteMs: number;
   files: number;
   lines: number;
+  /** Admitted lines the parser dropped as invalid JSON or undated, summed over the sessions. */
+  malformedLines: number;
   observationCompleteness: SkillObservationCollectionCompleteness;
   oversizedLines: number;
   parsedLines: number;
@@ -171,7 +173,9 @@ interface SqliteDatabase {
 // 28: sessions keep `session_meta.source`, so `codex exec` runs are told apart from interactive ones.
 // 29: sessions count `external-import-turn-N` tasks, so transcripts Codex Desktop
 // imported from another harness are retired instead of emitted as empty rows.
-const CODEX_SESSION_CACHE_VERSION = 29;
+// 30: sessions carry `malformedLines` (admitted lines that did not parse or had no
+// timestamp), which a version 29 entry cannot report and which blocks retirement.
+const CODEX_SESSION_CACHE_VERSION = 30;
 
 // The runtime's op-count yielding cannot split one long synchronous
 // decompress-and-parse, and a cold pass over thousands of rollouts chains many
@@ -362,6 +366,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       value.rejectedSkillObservationRecords,
       value.oversizedLines,
       value.importedTasks,
+      value.malformedLines,
     ].map(parseNonNegativeSafeInteger);
     const start = reviveDate(value.start);
     const end = reviveDate(value.end);
@@ -418,11 +423,12 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       rejectedSkillObservationRecords,
       oversizedLines,
       importedTasks,
+      malformedLines,
     ] = counters;
     if (!(turns?.ok && tools?.ok && maxTotal?.ok && tin?.ok && tcr?.ok && tout?.ok && rejectedMetricRecords?.ok)) {
       return null;
     }
-    if (!(rejectedSkillObservationRecords?.ok && oversizedLines?.ok && importedTasks?.ok)) {
+    if (!(rejectedSkillObservationRecords?.ok && oversizedLines?.ok && importedTasks?.ok && malformedLines?.ok)) {
       return null;
     }
     return {
@@ -456,6 +462,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       ...(typeof value.lastRejectedMetricAt === 'string' ? { lastRejectedMetricAt: value.lastRejectedMetricAt } : {}),
       rejectedSkillObservationRecords: rejectedSkillObservationRecords.value,
       oversizedLines: oversizedLines.value,
+      malformedLines: malformedLines.value,
       hasTokenUsage: value.hasTokenUsage,
       importedTasks: importedTasks.value,
       skillObservations: skillObservations.observations,
@@ -605,6 +612,7 @@ const readCodexSessions = (
       let rejectedSkillObservationRecords = 0;
       let skippedLines = 0;
       let oversizedLines = 0;
+      let malformedLines = 0;
       let unreadableFiles = 0;
       const readFailures: LocalHistoryError[] = [];
       const unreadablePaths = new Set<string>();
@@ -646,6 +654,7 @@ const readCodexSessions = (
                 rejectedMetricRecords += cached.session.rejectedMetricRecords;
                 rejectedSkillObservationRecords += cached.session.rejectedSkillObservationRecords;
                 oversizedLines += cached.session.oversizedLines;
+                malformedLines += cached.session.malformedLines;
                 mergeObservationCompleteness(cached.session.skillObservationCompleteness);
                 const session = cloneCodexSession(cached.session);
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
@@ -690,6 +699,7 @@ const readCodexSessions = (
                 // the count is attached here rather than produced by `finish`.
                 parsed.session.oversizedLines = readResult.oversizedLines;
                 oversizedLines += readResult.oversizedLines;
+                malformedLines += parsed.session.malformedLines;
                 lines += parsed.lines;
                 parseMs += parsed.parseMs;
                 parsedLines += parsed.parsedLines;
@@ -753,6 +763,7 @@ const readCodexSessions = (
         cacheWriteMs,
         files: files.length,
         lines,
+        malformedLines,
         observationCompleteness,
         oversizedLines,
         parseMs,
@@ -774,6 +785,7 @@ const readCodexSessions = (
       cacheWriteMs: result.cacheWriteMs,
       files: result.files,
       lines: result.lines,
+      malformedLines: result.malformedLines,
       oversizedLines: result.oversizedLines,
       parseMs: result.parseMs,
       parsedLines: result.parsedLines,
@@ -793,6 +805,11 @@ export interface CodexUsageSessionsResult {
    * `codex` warning.
    */
   archivedWalkFailure: LocalHistoryError | null;
+  /**
+   * Lines the prefix gate admitted and the parser dropped as invalid JSON or
+   * undated; the affected sessions are lower bounds and are never retired.
+   */
+  malformedLines: number;
   metricWarningContext: { affectedSessions: number; lastObservedAt?: string };
   observationCompleteness: SkillObservationCollectionCompleteness;
   /**
@@ -840,6 +857,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     const metadata = yield* readCodexThreadMetadata;
     const {
       archivedWalkFailure,
+      malformedLines,
       observationCompleteness,
       oversizedLines,
       readFailures,
@@ -984,6 +1002,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         ...(lastObservedAt ? { lastObservedAt } : {}),
       },
       archivedWalkFailure,
+      malformedLines,
       observationCompleteness,
       observations,
       oversizedLines,
@@ -997,6 +1016,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   }),
   (result) => ({
     archivedWalkFailed: result.archivedWalkFailure !== null,
+    malformedLines: result.malformedLines,
     observations: result.observations.length,
     ownershipDeferredSessions: result.ownershipDeferredSessions,
     oversizedLines: result.oversizedLines,

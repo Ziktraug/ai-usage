@@ -158,23 +158,31 @@ export interface ClaudeCodexLaunch {
  * - `record-budget`: more records than the reader accepts; the transcript was refused, not read.
  * - `no-timestamped-record`: no record carries a parseable `timestamp`, so nothing could be placed
  *   in time (an empty file, a `bridge-session`-only stub, or a format change).
- * - `rejected-usage`: at least one model reply carried `usage` that failed validation and nothing
- *   else made the session a row; the usage may be real and the count is reported.
+ * - `rejected-usage`: at least one model reply carried `usage` that failed validation, or was not
+ *   a readable message object, and nothing else made the session a row; the usage may be real and
+ *   the count is reported.
  * - `usage-absent`: a model reply (not `<synthetic>`) carried no `usage` field at all; whether it
  *   consumed tokens is unknown.
+ * - `unreadable-record`: a record the parser could not place and nothing else made the session a
+ *   row: a line that is not an object record, or a `user`, `assistant` or untyped record without a
+ *   parseable `timestamp`. Claude Code's housekeeping records (`mode`, `last-prompt`, `ai-title`…)
+ *   carry no timestamp by design and are not counted: they declare a type the usage read never
+ *   consults, so dropping them loses nothing.
  */
 export type ClaudeTranscriptRejection =
   | 'no-session-id'
   | 'no-timestamped-record'
   | 'record-budget'
   | 'rejected-usage'
+  | 'unreadable-record'
   | 'usage-absent';
 
 /**
  * The outcome of reading one transcript. `facts` is a usage session; `empty` is a positive
  * observation that the transcript holds timestamped records, no model usage, no human prompt and
- * nothing it had to reject (a session opened and closed without a prompt, or answered only by a
- * `<synthetic>` local reply); `rejected` is neither, and must never be read as "no usage".
+ * nothing it had to reject or could not read (a session opened and closed without a prompt, or
+ * answered only by a `<synthetic>` local reply); `rejected` is neither, and must never be read as
+ * "no usage".
  */
 export type ClaudeTranscriptParseResult =
   | { kind: 'empty' }
@@ -533,14 +541,33 @@ const detailPhases = (assistants: readonly ClaudeAssistant[]): SessionDetailPhas
   return phases;
 };
 
-const parseClaudeEvents = (records: readonly unknown[]): ClaudeEvent[] => {
+interface ClaudeParsedEvents {
+  /** Timestamped object records in time order; the only input of every read below. */
+  events: ClaudeEvent[];
+  /**
+   * Records dropped here that the usage read would have consulted had they been readable: a
+   * non-object line, or an undated `user`, `assistant` or untyped record. Undated records of any
+   * other declared type are Claude Code housekeeping and are not counted.
+   */
+  unreadableRecords: number;
+}
+
+const isUndatedConversationRecord = (record: Record<string, unknown>): boolean =>
+  record.type === 'user' || record.type === 'assistant' || typeof record.type !== 'string';
+
+const parseClaudeEvents = (records: readonly unknown[]): ClaudeParsedEvents => {
   const events: ClaudeEvent[] = [];
+  let unreadableRecords = 0;
   for (const [index, value] of records.entries()) {
     if (!isRecord(value)) {
+      unreadableRecords += 1;
       continue;
     }
     const at = eventDate(value.timestamp);
     if (!at) {
+      if (isUndatedConversationRecord(value)) {
+        unreadableRecords += 1;
+      }
       continue;
     }
     events.push({
@@ -552,7 +579,7 @@ const parseClaudeEvents = (records: readonly unknown[]): ClaudeEvent[] => {
     });
   }
   events.sort((left, right) => left.at.getTime() - right.at.getTime() || left.index - right.index);
-  return events;
+  return { events, unreadableRecords };
 };
 
 const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphIndex => {
@@ -738,7 +765,13 @@ const collectClaudeAssistants = (
       continue;
     }
     const message = isRecord(record.message) ? record.message : null;
-    if (!message || message.model === CLAUDE_SYNTHETIC_MODEL) {
+    if (!message) {
+      // The record declares a model reply; a `message` that is not an object is
+      // a usage record this read cannot validate, not the absence of one.
+      rejectedMetricRecords += 1;
+      continue;
+    }
+    if (message.model === CLAUDE_SYNTHETIC_MODEL) {
       continue;
     }
     const messageId = typeof message.id === 'string' ? message.id : null;
@@ -2044,7 +2077,7 @@ export const parseClaudeTranscript = (input: ClaudeSessionInput): ClaudeTranscri
   if (input.records.length > MAX_CLAUDE_RECORDS) {
     return rejectedTranscript('record-budget');
   }
-  const events = parseClaudeEvents(input.records);
+  const { events, unreadableRecords } = parseClaudeEvents(input.records);
   const start = events[0]?.at;
   const end = events.at(-1)?.at;
   if (!(start && end)) {
@@ -2058,13 +2091,17 @@ export const parseClaudeTranscript = (input: ClaudeSessionInput): ClaudeTranscri
   const { prompts, promptsTruncated } = promptFacts;
   if (assistants.length === 0 && prompts.length === 0) {
     // Nothing made this a session. That is a positive "no usage" observation
-    // only when no model reply was dropped on the way: a reply whose usage
-    // failed validation, or carried none, may be the usage.
+    // only when nothing was dropped on the way: a reply whose usage failed
+    // validation, or carried none, or a record the parser could not place,
+    // may be the usage.
     if (assistantFacts.rejectedMetricRecords > 0) {
       return rejectedTranscript('rejected-usage', assistantFacts.rejectedMetricRecords);
     }
     if (assistantFacts.usageAbsentRecords > 0) {
       return rejectedTranscript('usage-absent');
+    }
+    if (unreadableRecords > 0) {
+      return rejectedTranscript('unreadable-record');
     }
     return { kind: 'empty' };
   }

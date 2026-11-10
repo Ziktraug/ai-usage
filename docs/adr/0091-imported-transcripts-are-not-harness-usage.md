@@ -26,18 +26,30 @@ A harness's collector reports only the usage that harness produced. A rollout
 Codex materialized from another harness's transcript is not a Codex session:
 the parser counts its `external-import-turn-N` tasks without opening them, so
 they attribute no tokens, prompts or evidence, and
-`isCodexExternalImport` (imported tasks present, no native turn with a
-`turn_context`, no token usage) excludes the session from rows, skill
-observations and work observations. A thread the operator continued in Codex keeps its native turns
-and stays a Codex row; the imported turns in it still count for nothing.
+`isCodexExternalImport` excludes the session from rows, skill observations and
+work observations. The predicate is a positive, loss-free claim about the whole
+rollout: imported tasks present, no native turn with a `turn_context`, no token
+usage, and nothing dropped on the way — no record dropped as oversized, no
+admitted line that failed to parse (a half-written last record) or carried no
+readable timestamp, no `token_count` that failed validation. A rollout that lost
+anything is read as a lower bound and emitted as a Codex row with the loss
+reported (`oversizedHistoryLine`, `malformedHistoryLine`, `metricValidation`),
+never retired on what remained. A thread the operator continued in Codex keeps
+its native turns and stays a Codex row; the imported turns in it still count
+for nothing.
 
 The collector returns the ids it classified this way in
 `retiredSourceSessionIds`: only rollouts it positively read this pass, never a
-session that is merely absent or unreadable. The store marks the matching
-local-observed rows of that machine and harness deleted (the store-side
-contract lives with `HarnessAdapterCollection`); a session re-emitted later as
-a native row becomes active again. The Codex session cache version is bumped so
-cached rollouts are re-parsed with the new fact.
+session that is merely absent or unreadable. Classification is per rollout and
+retirement per id: an id is retired only when no rollout of the pass kept it as
+a Codex session, so an import copy never retires the native thread it shares an
+id with, whether that thread is emitted or has its ownership deferred this
+pass. The store marks the matching local-observed rows of that machine and
+harness deleted (the store-side contract lives with `HarnessAdapterCollection`);
+a session re-emitted later as a native row becomes active again. The Codex
+session cache version is bumped so cached rollouts are re-parsed with the new
+fact, and the loss counters travel with the cached session so a warm pass
+reaches the same verdict as the cold one.
 
 ## Consequences
 
@@ -45,6 +57,13 @@ cached rollouts are re-parsed with the new fact.
 - The classification rests on an in-rollout marker, not on the import
   registry, so it holds on a machine where the registry is absent and does not
   depend on reading another file. The registry remains the way to audit it.
+- Retirement needs a loss-free read. A rollout the reader or parser dropped any
+  part of stays a (lower-bound) Codex row and surfaces its loss as a warning;
+  it is retired on a later pass only once the rollout reads cleanly. Dropped
+  input is never silent: every drop that can block retirement is counted and
+  reported, so a row that persists because of one can be explained.
+- An id shared by an import copy and a native rollout is never retired; the
+  native rollout wins, on this pass and on cached ones.
 - No schema change. Existing import rows are retired by the store, not deleted,
   per the preservation rule; nothing is rewritten in the rollouts.
 

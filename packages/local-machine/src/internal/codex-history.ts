@@ -78,6 +78,13 @@ export interface CodexSession {
   lastRejectedMetricAt?: string;
   /** `session_meta.source` when it is a plain string: `exec` for `codex exec`, `cli`, `vscode`… */
   launchSource: string | null;
+  /**
+   * Lines the prefix gate admitted that the parser then dropped: not valid
+   * JSON (a half-written last record) or without a readable timestamp. What
+   * they carried is unknown, so a session with any is read as a lower bound
+   * and is never classified on what remained (`isCodexExternalImport`).
+   */
+  malformedLines: number;
   maxTotal: number;
   model: string;
   models: string[];
@@ -492,6 +499,7 @@ const emptySession = (): CodexSession => ({
   durationPartial: false,
   reportPartial: false,
   observedPriorTokenUsage: false,
+  malformedLines: 0,
   oversizedLines: 0,
   rejectedMetricRecords: 0,
   rejectedSkillObservationRecords: 0,
@@ -1267,6 +1275,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     parsedLines++;
     const event = safeJSON(line);
     if (!event) {
+      session.malformedLines++;
       // The prefix gate above serves the usage-row parser, so passing it is not
       // evidence that this line could have carried a skill observation. A line
       // admitted only by `shouldParseCodexPrefix` — token_count, session_meta,
@@ -1291,6 +1300,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) {
+      session.malformedLines++;
       workObserver.rejectUndated(event, ownsWorkEvent(payload));
       if (isCodexToolCallPrefix(prefix) && isCodexExecToolCall(payload)) {
         unplacedInvocationSignals += matchCodexSkillDocuments(codexToolCallCommandBlob(payload)).length;
@@ -2070,14 +2080,16 @@ export const isCodexUsageOwnedByRoot = (
  * finished session: `turns` and the token counters are settled by `finish`.
  *
  * Retiring is a positive claim about the whole rollout, so a read that lost
- * anything is never an import: a record dropped as oversized or a token_count
- * that failed validation may have been the native usage.
+ * anything is never an import: a record dropped as oversized, an admitted line
+ * that did not parse or carried no timestamp, or a token_count that failed
+ * validation may have been the native usage.
  */
 export const isCodexExternalImport = (session: CodexSession): boolean =>
   session.importedTasks > 0 &&
   session.turns === 0 &&
   session.tin + session.tcr + session.tout === 0 &&
   session.oversizedLines === 0 &&
+  session.malformedLines === 0 &&
   session.rejectedMetricRecords === 0;
 
 /**

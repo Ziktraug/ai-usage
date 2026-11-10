@@ -1295,9 +1295,59 @@ describe('parseClaudeTranscript', () => {
       records: Array.from({ length: MAX_CLAUDE_RECORDS + 1 }, () => event({ type: 'mode', mode: 'normal' })),
       rejection: { kind: 'rejected', reason: 'record-budget', rejectedMetricRecords: 0 },
     },
+    {
+      // A JSON line that is not an object record: nothing says what it was.
+      name: 'a record is not an object',
+      records: [...housekeeping, 'not-a-record'],
+      rejection: { kind: 'rejected', reason: 'unreadable-record', rejectedMetricRecords: 0 },
+    },
+    {
+      name: 'a model reply carries no readable timestamp',
+      records: [
+        ...housekeeping,
+        event({ type: 'assistant', uuid: 'undated', message: { model: 'claude-sonnet-4-6', usage } }),
+      ],
+      rejection: { kind: 'rejected', reason: 'unreadable-record', rejectedMetricRecords: 0 },
+    },
+    {
+      name: 'a human prompt carries no readable timestamp',
+      records: [
+        ...housekeeping,
+        event({ type: 'user', timestamp: 'yesterday', uuid: 'undated', message: { content: 'Hi' } }),
+      ],
+      rejection: { kind: 'rejected', reason: 'unreadable-record', rejectedMetricRecords: 0 },
+    },
+    {
+      name: 'an untyped record carries no readable timestamp',
+      records: [...housekeeping, event({ uuid: 'shapeless' })],
+      rejection: { kind: 'rejected', reason: 'unreadable-record', rejectedMetricRecords: 0 },
+    },
+    {
+      // The reply is declared by its type; a `message` that is not an object is a lost usage record.
+      name: "a model reply's message is not an object",
+      records: [event({ type: 'assistant', timestamp: stamp(0), uuid: 'assistant-0', message: 'cut' })],
+      rejection: { kind: 'rejected', reason: 'rejected-usage', rejectedMetricRecords: 1 },
+    },
   ])('rejects instead of observing an empty transcript when $name', ({ records, rejection }) => {
     expect(parseClaudeTranscript({ records, repository: null, sourceSessionId: 'unknown' })).toEqual(rejection);
     expect(parseClaudeSessionFacts({ records, repository: null, sourceSessionId: 'unknown' })).toBeNull();
+  });
+
+  test('keeps the facts of a transcript with usage next to a reply whose message is not an object', () => {
+    const result = parseClaudeTranscript({
+      records: [
+        prompt(0),
+        reply(0, { model: 'claude-sonnet-4-6', usage }),
+        event({ type: 'assistant', timestamp: stamp(1), uuid: 'assistant-cut', message: 'cut' }),
+      ],
+      repository: null,
+      sourceSessionId: 'mixed',
+    });
+    expect(result.kind).toBe('facts');
+    if (result.kind !== 'facts') {
+      throw new Error('expected facts');
+    }
+    expect(result.facts.report).toMatchObject({ calls: 1, rejectedMetricRecords: 1, tokens: { in: 10, out: 5 } });
   });
 
   test('rejects a transcript without a session id', () => {

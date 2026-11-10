@@ -114,7 +114,10 @@ interface ClaudeCache {
 // 24: a retirement needs the parser's explicit empty observation. Version 23 also retired
 // transcripts the parser rejected (no timestamped record, malformed or missing usage) and lost
 // their rejected usage counts.
-const CLAUDE_CACHE_VERSION = 24;
+// 25: a transcript with a record the parser could not place (a non-object line, an undated
+// `user`/`assistant`/untyped record) or a model reply whose `message` is not an object is rejected,
+// never observed empty; version 24 entries may hold such a retirement.
+const CLAUDE_CACHE_VERSION = 25;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 

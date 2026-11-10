@@ -4273,6 +4273,82 @@ describe('Codex external imports', () => {
     expect(result.warnings.map(({ operation }) => operation)).toContain('oversizedHistoryLine');
   });
 
+  test('does not retire an import-shaped rollout whose admitted line could not be parsed', async () => {
+    const storage = new TestMemoryStorage();
+    // A half-written final record: the prefix gate admits it as a token_count,
+    // and only the JSON parse finds it cut. It may have been the native usage.
+    const halfWrittenTokenCount =
+      '{"timestamp":"2026-11-08T15:56:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tok';
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-half-import.jsonl',
+      `${jsonl(...importedEvents('half-import'))}${halfWrittenTokenCount}`,
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+
+    expect(result.retiredSourceSessionIds).toEqual([]);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['half-import']);
+    expect(result.warnings.find(({ operation }) => operation === 'malformedHistoryLine')).toMatchObject({
+      harness: 'codex',
+      rejectedRecords: 1,
+    });
+  });
+
+  test('does not retire an import-shaped rollout whose admitted line carries no readable timestamp', async () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-undated-import.jsonl',
+      jsonl(
+        ...importedEvents('undated-import'),
+        at(
+          'event_msg',
+          {
+            type: 'token_count',
+            info: {
+              total_token_usage: { total_tokens: 900, input_tokens: 700, cached_input_tokens: 500, output_tokens: 200 },
+              last_token_usage: { total_tokens: 900, input_tokens: 700, cached_input_tokens: 500, output_tokens: 200 },
+            },
+          },
+          'not-a-timestamp',
+        ),
+      ),
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+
+    expect(result.retiredSourceSessionIds).toEqual([]);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['undated-import']);
+    expect(result.warnings.find(({ operation }) => operation === 'malformedHistoryLine')).toMatchObject({
+      harness: 'codex',
+      rejectedRecords: 1,
+    });
+  });
+
+  test('a cached pass keeps the malformed-line loss and still does not retire', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'codex-import-malformed-cache-'));
+    try {
+      const directory = path.join(home, '.codex', 'sessions', '2026', '11', '08');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        path.join(directory, 'rollout-cached-half-import.jsonl'),
+        `${jsonl(...importedEvents('cached-half-import'))}{"timestamp":"2026-11-08T15:56:00.000Z","type":"event_msg","payload":{"type":"token_count"`,
+      );
+
+      const cold = await runWithRealStorage(collectCodexResult, home);
+      const warm = await runWithRealStorage(collectCodexResult, home);
+
+      expect(cold.retiredSourceSessionIds).toEqual([]);
+      expect(cold.rows.map((row) => row.source?.sourceSessionId)).toEqual(['cached-half-import']);
+      expect(cold.warnings.map(({ operation, rejectedRecords }) => [operation, rejectedRecords])).toContainEqual([
+        'malformedHistoryLine',
+        1,
+      ]);
+      expect(warm).toEqual(cold);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('never retires an id another rollout emits as a row', async () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/sessions/2026/11/08/rollout-shared-import.jsonl', jsonl(...importedEvents('shared')));

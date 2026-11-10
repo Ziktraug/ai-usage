@@ -142,7 +142,10 @@ export interface OpenCodeCollectionResult {
 // Bumped to 17 because an entry now carries the retirements declared with its
 // rows: an entry written by version 16 has none, and a warm pass served from
 // it would never re-declare a retirement the store missed.
-const OPENCODE_DB_CACHE_VERSION = 17;
+// Bumped to 18 because a legacy `message` row that is not valid JSON now counts
+// as a lost record of its session: an entry written by version 17 may have
+// retired such a session on the rows that did decode.
+const OPENCODE_DB_CACHE_VERSION = 18;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 // Observations are tens to hundreds; the bound guards a corrupt database, not
 // ordinary volume.
@@ -185,6 +188,11 @@ export const openCodeLegacySkillPartSql = (limit: number) =>
   `SELECT id, message_id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${limit + 1}`;
 export const OPENCODE_LEGACY_TURN_SQL = `SELECT m.session_id, m.id AS message_id FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id, m.id`;
 export const OPENCODE_LEGACY_MESSAGE_SQL = `SELECT id, session_id, json_extract(data, '$.role') AS role, ${OPENCODE_MESSAGE_METRIC_COLUMNS} FROM message WHERE json_valid(data) AND json_extract(data, '$.role') = 'assistant' ORDER BY session_id, time_created, id`;
+// A legacy row keeps its role inside `data`, so a payload that is not valid JSON
+// cannot be told from an assistant message: the metric read above filters it out
+// and it is counted per session as a lost record, like the session_v2 one below.
+export const OPENCODE_LEGACY_MALFORMED_MESSAGE_SQL =
+  'SELECT session_id, count(*) n FROM message WHERE NOT json_valid(data) GROUP BY session_id';
 
 export const OPENCODE_V2_SESSION_SQL =
   'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session_v2';
@@ -203,7 +211,8 @@ export const OPENCODE_V2_MALFORMED_ASSISTANT_SQL =
 
 interface OpenCodeTableSet {
   kind: OpenCodeSchemaKind;
-  malformedAssistantSql: string | null;
+  /** Per-session count of message rows the metric read excluded as invalid JSON. */
+  malformedMessageSql: string;
   messageSql: string;
   sessionSql: string;
   skillPartSql: (limit: number) => string;
@@ -213,7 +222,7 @@ interface OpenCodeTableSet {
 
 const OPENCODE_V2_TABLES: OpenCodeTableSet = {
   kind: 'v2',
-  malformedAssistantSql: OPENCODE_V2_MALFORMED_ASSISTANT_SQL,
+  malformedMessageSql: OPENCODE_V2_MALFORMED_ASSISTANT_SQL,
   messageSql: OPENCODE_V2_MESSAGE_SQL,
   sessionSql: OPENCODE_V2_SESSION_SQL,
   skillPartSql: openCodeV2SkillPartSql,
@@ -223,7 +232,7 @@ const OPENCODE_V2_TABLES: OpenCodeTableSet = {
 
 const OPENCODE_LEGACY_TABLES: OpenCodeTableSet = {
   kind: 'legacy',
-  malformedAssistantSql: null,
+  malformedMessageSql: OPENCODE_LEGACY_MALFORMED_MESSAGE_SQL,
   messageSql: OPENCODE_LEGACY_MESSAGE_SQL,
   sessionSql: OPENCODE_LEGACY_SESSION_SQL,
   skillPartSql: openCodeLegacySkillPartSql,
@@ -383,17 +392,15 @@ const readOpenCodeDatabaseFacts = (
           tokenRows: result.tokenRows,
         }),
       );
-      if (tableSet.malformedAssistantSql) {
-        const malformedRows = yield* withPerfSpan(
-          span('malformedMessages'),
-          db.all<MalformedCountRow>(tableSet.malformedAssistantSql),
-          (rows) => ({ db: source, rows: rows.length, schema: tableSet.kind }),
-        );
-        for (const row of malformedRows) {
-          const malformed = parseOptionalNonNegativeSafeInteger(row.n);
-          // A count that does not parse is itself one unreadable record.
-          reject(row.session_id, malformed.ok ? malformed.value : 1);
-        }
+      const malformedRows = yield* withPerfSpan(
+        span('malformedMessages'),
+        db.all<MalformedCountRow>(tableSet.malformedMessageSql),
+        (rows) => ({ db: source, rows: rows.length, schema: tableSet.kind }),
+      );
+      for (const row of malformedRows) {
+        const malformed = parseOptionalNonNegativeSafeInteger(row.n);
+        // A count that does not parse is itself one unreadable record.
+        reject(row.session_id, malformed.ok ? malformed.value : 1);
       }
 
       const turnRows = yield* withPerfSpan(span('turnCounts'), db.all<TurnRow>(tableSet.turnSql), (rows) => ({

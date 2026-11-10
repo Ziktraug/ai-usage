@@ -59,6 +59,23 @@ export const oversizedHistoryLineWarning = (harness: string, oversizedLines: num
     : null;
 
 /**
+ * Lines the parser admitted and then could not read: not valid JSON (a record
+ * still being written) or without a readable timestamp. The reader delivered
+ * them, so they are neither oversized nor an unreadable file, and what they
+ * carried is unknown: the sessions they touch are lower bounds and are never
+ * retired on what remained.
+ */
+export const malformedHistoryLineWarning = (harness: string, malformedLines: number): LocalHistoryWarning | null =>
+  malformedLines > 0
+    ? {
+        harness,
+        operation: 'malformedHistoryLine',
+        message: `Dropped ${malformedLines} unreadable ${harness} history record(s) (invalid JSON or no readable timestamp); the affected sessions are lower bounds.`,
+        rejectedRecords: malformedLines,
+      }
+    : null;
+
+/**
  * History files the reader could not open or decompress, so the sessions they
  * hold are missing from this pass. One warning carries the count because the
  * engine's sanitizer keeps only the operation code and `rejectedRecords`: one

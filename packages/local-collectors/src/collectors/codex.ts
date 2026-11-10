@@ -11,6 +11,7 @@ import { hasCodexHistory, readCodexUsageSessionsResult } from '../codex-history'
 import { sessionToUsageRow } from '../collected-session';
 import {
   deferredUsageOwnershipWarning,
+  malformedHistoryLineWarning,
   metricValidationWarning,
   oversizedHistoryLineWarning,
   skillObservationTruncationWarning,
@@ -55,6 +56,7 @@ export const collectCodexResult = Effect.gen(function* () {
   const warning = metricValidationWarning('codex', result.rejectedMetricRecords, result.metricWarningContext);
   const observationWarning = skillObservationValidationWarning('codex', result.rejectedSkillObservationRecords);
   const oversizedWarning = oversizedHistoryLineWarning('codex', result.oversizedLines);
+  const malformedWarning = malformedHistoryLineWarning('codex', result.malformedLines);
   const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('codex', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
@@ -76,6 +78,7 @@ export const collectCodexResult = Effect.gen(function* () {
       warning,
       observationWarning,
       oversizedWarning,
+      malformedWarning,
       truncationWarning,
       unreadableWarning,
       unlistedWarning,
