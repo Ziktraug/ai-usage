@@ -60,6 +60,40 @@ export interface OpenCodeMillisecondInterval {
 
 export type OpenCodeParentKind = 'human' | 'internal' | 'unresolved';
 
+/**
+ * Providers whose usage another harness already records (ADR 0090). OpenCode's
+ * `claude-agent` provider drives the Claude Agent SDK on the operator's Claude
+ * Code login, and the SDK writes the same turns as `entrypoint: "sdk-ts"`
+ * transcripts under `~/.claude/projects`, where the Claude collector counts them
+ * with identical token figures. The Claude transcript is the system of record;
+ * OpenCode keeps the session as a transcript but not as usage.
+ */
+export const OPENCODE_FOREIGN_USAGE_PROVIDER_IDS: ReadonlySet<string> = new Set(['claude-agent']);
+
+export const isOpenCodeForeignUsageProvider = (providerId: string): boolean =>
+  OPENCODE_FOREIGN_USAGE_PROVIDER_IDS.has(providerId);
+
+export interface OpenCodeUsageFactPartition {
+  /** Facts another harness owns; never summed into OpenCode usage. */
+  foreign: OpenCodeMessageFact[];
+  /** Facts OpenCode is the system of record for. */
+  owned: OpenCodeMessageFact[];
+}
+
+/**
+ * Split a session's assistant facts into the ones OpenCode accounts for and the
+ * ones another harness owns. Both the report collector and the on-demand
+ * session analysis build their usage projection from `owned` only, so the two
+ * stay identical; a session with no owned fact is not an OpenCode usage row.
+ */
+export const partitionOpenCodeUsageFacts = (facts: readonly OpenCodeMessageFact[]): OpenCodeUsageFactPartition => {
+  const partition: OpenCodeUsageFactPartition = { foreign: [], owned: [] };
+  for (const fact of facts) {
+    (isOpenCodeForeignUsageProvider(fact.providerId) ? partition.foreign : partition.owned).push(fact);
+  }
+  return partition;
+};
+
 const MAX_OPEN_CODE_FACT_STRING_LENGTH = 512;
 const OPEN_CODE_FLAT_TOKEN_KEYS = [
   'token_input',
@@ -90,6 +124,13 @@ const tokenValue = (tokens: Record<string, unknown>, flat: Record<string, unknow
   return tokens[key] ?? flat[`token_${key}`];
 };
 
+/**
+ * Decode one OpenCode assistant message into a usage fact. Two storage shapes
+ * are accepted: the legacy `message.data` (`providerID`/`modelID`/`variant` at
+ * the top level, `role` inside the payload) and the `session_v2`
+ * `session_message.data` (`model: { providerID, id, variant }`; the role is the
+ * row's `type` column, which the caller copies into `role`).
+ */
 export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeResult => {
   if (!isJsonObject(value)) {
     return { kind: 'invalid' };
@@ -97,6 +138,7 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
   if (value.role !== 'assistant') {
     return { kind: 'ignored' };
   }
+  const model = isJsonObject(value.model) ? value.model : null;
   const nestedTokens = isJsonObject(value.tokens) ? value.tokens : null;
   const hasFlatTokens = OPEN_CODE_FLAT_TOKEN_KEYS.some((key) => value[key] !== undefined && value[key] !== null);
   if (!(nestedTokens || hasFlatTokens)) {
@@ -125,15 +167,15 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
     return { kind: 'invalid' };
   }
   const time = isJsonObject(value.time) ? value.time : null;
-  const providerId = boundedString(value.providerID ?? value.provider_id) ?? '?';
-  const modelId = boundedString(value.modelID ?? value.model_id) ?? '?';
+  const providerId = boundedString(value.providerID ?? value.provider_id ?? model?.providerID) ?? '?';
+  const modelId = boundedString(value.modelID ?? value.model_id ?? model?.id) ?? '?';
   return {
     kind: 'fact',
     value: {
       completedMs: timestampMs(time?.completed ?? value.completed),
       cost: cost.value,
       createdMs: timestampMs(time?.created ?? value.created),
-      effort: boundedString(value.variant),
+      effort: boundedString(value.variant ?? model?.variant),
       id: boundedString(value.id),
       model: `${providerId}/${modelId}`,
       modelId,
@@ -151,6 +193,65 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
   };
 };
 
+/**
+ * One assistant message as `OPENCODE_MESSAGE_METRIC_COLUMNS` projects it. Every
+ * value is `unknown`: the columns come straight from SQLite and are validated by
+ * `decodeOpenCodeMessageRow`.
+ */
+export interface OpenCodeMessageColumnRow {
+  completed?: unknown;
+  cost: unknown;
+  created: unknown;
+  id?: unknown;
+  model_id: unknown;
+  parent_id?: unknown;
+  provider_id: unknown;
+  role: unknown;
+  token_cache_read: unknown;
+  token_cache_write: unknown;
+  token_input: unknown;
+  token_output: unknown;
+  token_reasoning: unknown;
+  tokens_type: unknown;
+  variant: unknown;
+}
+
+/**
+ * Decode the projected metric columns of one message. A `tokens` object that
+ * is present but empty still counts as a token payload; an absent or null one
+ * leaves the message ignored, as with the raw payload.
+ */
+export const decodeOpenCodeMessageColumns = (row: OpenCodeMessageColumnRow): OpenCodeMessageDecodeResult => {
+  const hasExtractedTokenValue = [
+    row.token_cache_read,
+    row.token_cache_write,
+    row.token_input,
+    row.token_output,
+    row.token_reasoning,
+  ].some((value) => value !== undefined && value !== null);
+  const tokens =
+    row.tokens_type === 'object' || hasExtractedTokenValue
+      ? {
+          cache: { read: row.token_cache_read, write: row.token_cache_write },
+          input: row.token_input,
+          output: row.token_output,
+          reasoning: row.token_reasoning,
+        }
+      : undefined;
+  return decodeOpenCodeMessageRow({
+    completed: row.completed,
+    cost: row.cost,
+    created: row.created,
+    id: row.id,
+    model_id: row.model_id,
+    parent_id: row.parent_id,
+    provider_id: row.provider_id,
+    role: row.role,
+    ...(tokens ? { tokens } : {}),
+    variant: row.variant,
+  });
+};
+
 export interface OpenCodeSkillPartRow {
   data: unknown;
   id?: unknown;
@@ -161,6 +262,11 @@ export interface OpenCodeSkillPartRow {
 
 /**
  * Decode one OpenCode `skill` tool part into a `declared` skill observation.
+ *
+ * Two shapes are accepted: a legacy `part` row (`tool`, `callID`,
+ * `state.time.start`) and a `session_v2` content item embedded in the
+ * assistant message (`name`, `id`, `time.created`); the state payload carrying
+ * the skill name, directory and status is the same in both.
  *
  * Measured against real local history, every skill part carries a resolved
  * skill directory in `state.metadata.dir`. That is captured when present, but
@@ -173,15 +279,16 @@ export interface OpenCodeSkillPartRow {
  */
 export const decodeOpenCodeSkillPart = (row: OpenCodeSkillPartRow): SkillObservation | null => {
   const data = typeof row.data === 'string' ? (safeParse(row.data) ?? null) : row.data;
-  if (!(isJsonObject(data) && data.type === 'tool' && data.tool === 'skill')) {
+  if (!(isJsonObject(data) && data.type === 'tool' && (data.tool ?? data.name) === 'skill')) {
     return null;
   }
   const state = isJsonObject(data.state) ? data.state : null;
   const input = isJsonObject(state?.input) ? state.input : null;
   const metadata = isJsonObject(state?.metadata) ? state.metadata : null;
   const time = isJsonObject(state?.time) ? state.time : null;
-  const observedMs = timestampMs(time?.start) ?? timestampMs(row.time_created);
-  const callId = boundedString(data.callID) ?? boundedString(row.id);
+  const itemTime = isJsonObject(data.time) ? data.time : null;
+  const observedMs = timestampMs(time?.start) ?? timestampMs(itemTime?.created) ?? timestampMs(row.time_created);
+  const callId = boundedString(data.callID) ?? boundedString(data.id) ?? boundedString(row.id);
   return parseSkillObservation({
     argsPresent: null,
     harnessKey: 'opencode',
