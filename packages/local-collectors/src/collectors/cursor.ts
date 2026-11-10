@@ -1,10 +1,12 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '@ai-usage/local-machine/errors';
 import {
   LocalHistoryStorage,
   type LocalHistoryStorage as LocalHistoryStorageService,
 } from '@ai-usage/local-machine/local-history';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
-import { isJsonObject, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
+import { base, isJsonObject, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -13,12 +15,18 @@ import { cachedDbCollection, dbStat, readDbRowCache, storeDbRows, writeDbRowCach
 import {
   addNonNegativeSafeIntegers,
   metricValidationWarning,
+  parseOptionalNonNegativeFiniteNumber,
   parseOptionalNonNegativeSafeInteger,
 } from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import type { CollectorRow } from '../rtk-enrichment';
-import { type CursorCsvOptions, collectCursorCsvTurnsResult } from './cursor-csv';
-import { reconcileCursorSessions } from './cursor-reconcile';
+import {
+  type CursorCsvOptions,
+  type CursorCsvTurn,
+  collectCursorCsvTurnsResult,
+  cursorCsvMissingInputWarning,
+} from './cursor-csv';
+import { type CursorReconcileOptions, reconcileCursorSessions } from './cursor-reconcile';
 
 interface KeyValueRow {
   key: string;
@@ -37,13 +45,16 @@ const cursorTitleSource = (aiTitle: string | null | undefined, firstPrompt: stri
 const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
+/** Per-workspace composer list: `{ allComposers: [{ composerId, ... }] }` in the workspace `state.vscdb`. */
+const WORKSPACE_COMPOSERS_SQL = "SELECT value FROM ItemTable WHERE key = 'composer.composerData'";
+const WORKSPACE_JSON_MAX_BYTES = 64 * 1024;
+/** Workspaces are dozens on a developer machine; the bound guards a corrupt listing, not volume. */
+const MAX_CURSOR_WORKSPACES = 512;
 
-// Bumped to 6 with the shared cache entry gaining an observation list. Cursor
-// records no skill observations and is not observable (ADR 0022), so its list is always
-// empty — but the entry shape changed, and an undeclared invalidation is worse
-// than a declared one.
+// Bumped to 8: rows now carry the billed model(s) from `usageData`, Cursor's metered cost as the
+// quota perspective, the workspace folder as project, and token-less composers keep their model.
 // Rows include calculated costs; invalidate them when newly priced models land.
-const CURSOR_DB_CACHE_VERSION = 7;
+const CURSOR_DB_CACHE_VERSION = 8;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -52,15 +63,96 @@ export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
 };
 
 export interface CursorCollectionResult {
+  /**
+   * Composers observed in this pass that are deliberately not Cursor usage rows. Cursor imports
+   * no other tool's sessions and counts nothing under another harness, so the list is always
+   * empty; it exists so the store retires rows on an explicit declaration, never on absence.
+   */
+  retiredSourceSessionIds: string[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
 
-interface CursorDbCollectionResult {
+interface CursorDbRowsResult {
   rejectedMetricRecords: number;
-  rows: CollectorRow[] | null;
-  sessions: CollectedSession[];
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
 }
+
+/**
+ * Cursor's own request accounting for a composer: `usageData` maps each billed model to its
+ * request count and metered cost in cents. It is the only record of which model actually served
+ * the requests; `modelConfig` is merely the model selected in the picker when the composer was
+ * last saved. Tokens are not split per model, so no segments are fabricated from it.
+ */
+interface ComposerUsage {
+  costCents: number;
+  dominantModel: string;
+  models: string[];
+}
+
+interface ComposerRecord {
+  add: number;
+  created: number;
+  del: number;
+  name: string;
+  selectedModel: string | null;
+  usage: ComposerUsage | null;
+}
+
+type ComposerUsageParse = { ok: true; usage: ComposerUsage | null } | { ok: false };
+
+const parseComposerUsage = (value: unknown): ComposerUsageParse => {
+  if (value === undefined || value === null) {
+    return { ok: true, usage: null };
+  }
+  if (!isJsonObject(value)) {
+    return { ok: false };
+  }
+  const entries: { cents: number; model: string; requests: number }[] = [];
+  for (const [model, record] of Object.entries(value)) {
+    if (!(model.length > 0 && isJsonObject(record))) {
+      return { ok: false };
+    }
+    const requests = parseOptionalNonNegativeSafeInteger(record.amount);
+    const cents = parseOptionalNonNegativeFiniteNumber(record.costInCents);
+    if (!(requests.ok && cents.ok)) {
+      return { ok: false };
+    }
+    entries.push({ cents: cents.value, model, requests: requests.value });
+  }
+  const first = entries[0];
+  if (!first) {
+    return { ok: true, usage: null };
+  }
+  // Stable sort: equal request counts keep Cursor's own key order.
+  const ranked = [...entries].sort((left, right) => right.requests - left.requests);
+  return {
+    ok: true,
+    usage: {
+      costCents: entries.reduce((total, entry) => total + entry.cents, 0),
+      dominantModel: (ranked[0] ?? first).model,
+      models: ranked.map((entry) => entry.model),
+    },
+  };
+};
+
+const composerModelFields = (composer: ComposerRecord | undefined): Pick<CollectedSession, 'model' | 'models'> => {
+  const model = composer?.usage?.dominantModel ?? composer?.selectedModel ?? 'cursor';
+  const models = composer?.usage && composer.usage.models.length > 1 ? composer.usage.models : undefined;
+  return { model, ...(models ? { models } : {}) };
+};
+
+// Cursor meters every request at API prices against the plan's included amount, then on demand.
+// Without the export's `Kind` column the two cannot be told apart, so the metered value is
+// reported as the quota perspective; a reconciled export replaces it with the Kind-aware split.
+const composerCostFields = (composer: ComposerRecord | undefined): Pick<CollectedSession, 'costQuota'> =>
+  composer?.usage ? { costQuota: composer.usage.costCents / 100 } : {};
+
+const composerProjectFields = (
+  folder: string | undefined,
+): Pick<CollectedSession, 'project'> & { projectPath?: string } =>
+  folder ? { project: base(folder), projectPath: folder } : { project: '' };
 
 const hasCursorCsvInput = (cursorCsv: CursorCsvIngestionOptions | undefined) =>
   Boolean(cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir);
@@ -72,7 +164,7 @@ const cursorCsvTurnsOptions = (cursorCsv: CursorCsvIngestionOptions): CursorCsvO
   ...(cursorCsv.user ? { user: cursorCsv.user } : {}),
 });
 
-const cursorCsvReconcileOptions = (cursorCsv: CursorCsvIngestionOptions) => ({
+const cursorCsvReconcileOptions = (cursorCsv: CursorCsvIngestionOptions): CursorReconcileOptions => ({
   clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
   maxSessionSpanMs: cursorCsv.maxSessionSpanMs ?? 60 * 60_000,
   reconcileWindowMs: cursorCsv.reconcileWindowMs ?? 3 * 60_000,
@@ -80,9 +172,138 @@ const cursorCsvReconcileOptions = (cursorCsv: CursorCsvIngestionOptions) => ({
 
 const cursorSessionsToRows = (sessions: CollectedSession[]) => sessions.map(sessionToUsageRow);
 
-const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath: string) =>
+const workspaceFolderPath = (workspaceJson: string): string | null => {
+  const folder = safeJSON(workspaceJson)?.folder;
+  if (typeof folder !== 'string') {
+    // Multi-root (`workspace`) and remote workspaces name no local folder: no project, by design.
+    return null;
+  }
+  try {
+    const url = new URL(folder);
+    return url.protocol === 'file:' ? fileURLToPath(url) : null;
+  } catch {
+    return null;
+  }
+};
+
+const sqliteText = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return value instanceof Uint8Array ? new TextDecoder().decode(value) : null;
+};
+
+const workspaceComposerIds = (value: unknown): string[] => {
+  const text = sqliteText(value);
+  const composers = text === null ? null : safeJSON(text)?.allComposers;
+  if (!Array.isArray(composers)) {
+    return [];
+  }
+  return composers.flatMap((composer) =>
+    isJsonObject(composer) && typeof composer.composerId === 'string' && composer.composerId.length > 0
+      ? [composer.composerId]
+      : [],
+  );
+};
+
+const matchFailure =
+  <A, E, R>() =>
+  (effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.match({
+        onFailure: (error) => ({ _tag: 'failure' as const, error }),
+        onSuccess: (value) => ({ _tag: 'success' as const, value }),
+      }),
+    );
+
+/**
+ * Composer → workspace folder, from `workspaceStorage/<hash>/{workspace.json,state.vscdb}`.
+ * Read-only and bounded; a workspace that cannot be read costs its own attribution and a warning,
+ * never the collection.
+ */
+const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, workspaceStorageDir: string | null) =>
   Effect.gen(function* () {
-    const comp = new Map<string, { name: string; model: string; created: number; add: number; del: number }>();
+    const projects = new Map<string, string>();
+    const warnings: LocalHistoryWarning[] = [];
+    if (!workspaceStorageDir) {
+      return { projects, warnings };
+    }
+    const listed = yield* storage.readDir(workspaceStorageDir).pipe(matchFailure());
+    if (listed._tag === 'failure') {
+      warnings.push(
+        localHistoryWarningFromError(listed.error, {
+          harness: 'cursor',
+          message: 'Failed to list Cursor workspace storage; sessions carry no project',
+        }),
+      );
+      return { projects, warnings };
+    }
+    const directories = listed.value
+      .filter((entry) => entry.isDirectory)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    if (directories.length > MAX_CURSOR_WORKSPACES) {
+      warnings.push({
+        harness: 'cursor',
+        operation: 'cursor.workspaceStorage',
+        path: workspaceStorageDir,
+        message: `Cursor workspace storage lists ${directories.length} workspaces; project attribution read the first ${MAX_CURSOR_WORKSPACES}.`,
+      });
+    }
+    for (const entry of directories.slice(0, MAX_CURSOR_WORKSPACES)) {
+      const workspaceDir = path.join(workspaceStorageDir, entry.name);
+      const descriptionPath = path.join(workspaceDir, 'workspace.json');
+      const dbPath = path.join(workspaceDir, 'state.vscdb');
+      const exists = (filePath: string) => storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false)));
+      // An empty-window workspace has no description; it opened no folder, so it maps nothing.
+      if (!((yield* exists(descriptionPath)) && (yield* exists(dbPath)))) {
+        continue;
+      }
+      const description = yield* storage.readText(descriptionPath, WORKSPACE_JSON_MAX_BYTES).pipe(matchFailure());
+      if (description._tag === 'failure') {
+        warnings.push(
+          localHistoryWarningFromError(description.error, {
+            harness: 'cursor',
+            message: 'Failed to read a Cursor workspace description; its sessions carry no project',
+          }),
+        );
+        continue;
+      }
+      const folder = workspaceFolderPath(description.value);
+      if (!folder) {
+        continue;
+      }
+      const composers = yield* Effect.acquireUseRelease(
+        storage.openDatabase(dbPath),
+        (db) => db.all<{ value: unknown }>(WORKSPACE_COMPOSERS_SQL),
+        (db) => db.close,
+      ).pipe(matchFailure());
+      if (composers._tag === 'failure') {
+        warnings.push(
+          localHistoryWarningFromError(composers.error, {
+            harness: 'cursor',
+            message: 'Failed to read a Cursor workspace database; its sessions carry no project',
+          }),
+        );
+        continue;
+      }
+      for (const row of composers.value) {
+        for (const composerId of workspaceComposerIds(row.value)) {
+          if (!projects.has(composerId)) {
+            projects.set(composerId, folder);
+          }
+        }
+      }
+    }
+    return { projects, warnings };
+  });
+
+const collectCursorSessionsFromDb = (
+  storage: LocalHistoryStorageService,
+  dbPath: string,
+  workspaceStorageDir: string | null,
+) =>
+  Effect.gen(function* () {
+    const comp = new Map<string, ComposerRecord>();
     const agg = new Map<string, { in: number; out: number; cr: number; cw: number; calls: number }>();
     const naming = new Map<string, { turns: number; first: string | null }>();
     let rejectedMetricRecords = 0;
@@ -112,12 +333,18 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                   rejectedMetricRecords++;
                   continue;
                 }
+                const usage = parseComposerUsage(data.usageData);
+                if (!usage.ok) {
+                  // The composer stays, attributed to its selected model; only the accounting is lost.
+                  rejectedMetricRecords++;
+                }
                 const modelConfig = isJsonObject(data.modelConfig) ? data.modelConfig : null;
                 comp.set(id, {
                   name: typeof data.name === 'string' ? data.name : '',
-                  model:
+                  selectedModel:
                     (typeof modelConfig?.modelName === 'string' ? modelConfig.modelName : null) ??
-                    (typeof modelConfig?.model === 'string' ? modelConfig.model : 'cursor'),
+                    (typeof modelConfig?.model === 'string' ? modelConfig.model : null),
+                  usage: usage.ok ? usage.usage : null,
                   created: created.value,
                   add: added.value,
                   del: removed.value,
@@ -216,6 +443,12 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
       (db) => db.close,
     );
 
+    const workspaces = yield* withPerfSpan(
+      'aiUsage.collect.cursor.workspaces',
+      readCursorWorkspaceProjects(storage, workspaceStorageDir),
+      (result) => ({ composers: result.projects.size, warnings: result.warnings.length }),
+    );
+
     const sessions = yield* withPerfSpan(
       'aiUsage.collect.cursor.mapSessions',
       Effect.sync(() => {
@@ -223,7 +456,6 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
         for (const [composerId, current] of agg) {
           const composer = comp.get(composerId);
           const name = naming.get(composerId);
-          const model = composer?.model || 'cursor';
           const tokens = {
             in: current.in,
             out: current.out,
@@ -232,6 +464,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
           };
           mappedSessions.push({
             source: { harnessKey: 'cursor', sourceSessionId: composerId },
+            ...composerProjectFields(workspaces.projects.get(composerId)),
             date: composer?.created ? new Date(composer.created) : null,
             endDate: null,
             provider: 'Cursor sub',
@@ -239,10 +472,10 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             titleSource: cursorTitleSource(composer?.name, name?.first),
             // Cursor interaction-mode fields such as isAgentic and unifiedMode do not state who started the session.
             originProvenance: 'origin-unsupported',
-            model,
-            project: '',
+            ...composerModelFields(composer),
             tokens,
             cost: actualCost(0),
+            ...composerCostFields(composer),
             calls: current.calls,
             turns: name?.turns || 0,
             tools: 0,
@@ -255,6 +488,8 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
         // Cursor stopped persisting per-bubble token counts around Feb 2026, so recent
         // composers carry no usable tokens. Surface them as usage-unavailable rows (like
         // the Claude prompt-history fallback) so the timeline still reflects the sessions.
+        // Unlike that fallback, the composer still names its model: unavailability is the
+        // `usageUnavailable` flag, which every consumer reads, not a model sentinel.
         for (const [composerId, composer] of comp) {
           if (agg.has(composerId)) {
             continue;
@@ -265,16 +500,17 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
           }
           mappedSessions.push({
             source: { harnessKey: 'cursor', sourceSessionId: composerId },
+            ...composerProjectFields(workspaces.projects.get(composerId)),
             date: composer.created ? new Date(composer.created) : null,
             endDate: null,
             provider: 'Cursor sub',
             name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
             titleSource: cursorTitleSource(composer.name, name.first),
             originProvenance: 'origin-unsupported',
-            model: 'usage unavailable',
-            project: '',
+            ...composerModelFields(composer),
             tokens: { in: 0, out: 0, cr: 0, cw: 0 },
             cost: actualCost(null),
+            ...composerCostFields(composer),
             calls: 0,
             turns: name.turns,
             tools: 0,
@@ -287,17 +523,19 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
       }),
       (mappedSessions) => ({ rows: mappedSessions.length }),
     );
-    return { rejectedMetricRecords, sessions };
+    return { rejectedMetricRecords, sessions, warnings: workspaces.warnings };
   });
 
+/**
+ * Rows for the state database, through the per-db row cache. The cache is the only thing standing
+ * between a 200 MB `state.vscdb` and a full re-parse every cycle, so every caller goes through it;
+ * export reconciliation is applied on top of the cached rows, never instead of them.
+ */
 const collectCursorRowsFromDb = (
   storage: LocalHistoryStorageService,
   dbPath: string,
-): Effect.Effect<
-  { rejectedMetricRecords: number; rows: CollectorRow[] },
-  import('@ai-usage/local-machine/errors').LocalHistoryError,
-  never
-> =>
+  workspaceStorageDir: string | null,
+): Effect.Effect<CursorDbRowsResult, import('@ai-usage/local-machine/errors').LocalHistoryError, never> =>
   Effect.gen(function* () {
     const cache = yield* withPerfSpan(
       'aiUsage.collect.cursor.cache.read',
@@ -307,11 +545,13 @@ const collectCursorRowsFromDb = (
     const stat = dbStat(dbPath);
     const cached = cachedDbCollection(cache, dbPath, stat);
     if (cached) {
-      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cached), (cachedResult) => ({
-        rows: cachedResult.rows.length,
-      }));
+      return yield* withPerfSpan(
+        'aiUsage.collect.cursor.cache.hit',
+        Effect.succeed({ rejectedMetricRecords: cached.rejectedMetricRecords, rows: cached.rows, warnings: [] }),
+        (cachedResult) => ({ rows: cachedResult.rows.length }),
+      );
     }
-    const result = yield* collectCursorSessionsFromDb(storage, dbPath);
+    const result = yield* collectCursorSessionsFromDb(storage, dbPath, workspaceStorageDir);
     const rows = cursorSessionsToRows(result.sessions);
     const afterStat = dbStat(dbPath);
     if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
@@ -322,22 +562,72 @@ const collectCursorRowsFromDb = (
       Effect.sync(() => writeDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION, cache)),
       (wrote) => ({ wrote }),
     );
-    return { rejectedMetricRecords: result.rejectedMetricRecords, rows };
+    return { rejectedMetricRecords: result.rejectedMetricRecords, rows, warnings: result.warnings };
   });
+
+const findCursorInputs = (storage: LocalHistoryStorageService) =>
+  Effect.gen(function* () {
+    const candidates = resolvePathCandidates(storage).cursor;
+    const dbPath = yield* withPerfSpan(
+      'aiUsage.collect.cursor.findDb',
+      firstExisting(storage, ...candidates.stateVscdb),
+      (found) => ({ found: found !== null }),
+    );
+    const workspaceStorageDir = yield* firstExisting(storage, ...candidates.workspaceStorageDir);
+    return { dbPath, workspaceStorageDir };
+  });
+
+/** The subset of a cached row that export reconciliation reads or carries over. */
+const cursorRowToSession = (row: CollectorRow): CollectedSession => ({
+  source: { ...row.source, harnessKey: 'cursor', sourceSessionId: row.source?.sourceSessionId ?? null },
+  ...(row.projectPath === undefined ? {} : { projectPath: row.projectPath }),
+  date: row.date,
+  endDate: row.endDate,
+  provider: row.provider,
+  name: row.name,
+  ...(row.titleSource === undefined ? {} : { titleSource: row.titleSource }),
+  ...(row.originProvenance === undefined ? {} : { originProvenance: row.originProvenance }),
+  model: row.model,
+  ...(row.models === undefined ? {} : { models: row.models }),
+  project: row.project,
+  tokens: { in: row.tokIn, out: row.tokOut, cr: row.tokCr, cw: row.tokCw },
+  cost: actualCost(row.costActual),
+  ...(row.costQuota === undefined ? {} : { costQuota: row.costQuota }),
+  calls: row.calls,
+  turns: row.turns,
+  tools: row.tools,
+  linesAdded: row.linesAdded,
+  linesDeleted: row.linesDeleted,
+  ...(row.partial === undefined ? {} : { partial: row.partial }),
+  ...(row.usageUnavailable === undefined ? {} : { usageUnavailable: row.usageUnavailable }),
+});
+
+const reconcileCursorRows = (
+  rows: CollectorRow[],
+  turns: CursorCsvTurn[],
+  options: CursorReconcileOptions,
+): CollectorRow[] => {
+  if (!turns.length) {
+    return rows;
+  }
+  const sessions = rows.map(cursorRowToSession);
+  const reconciled = reconcileCursorSessions(sessions, turns, options);
+  // A session the export did not touch comes back as the same object: its cached row stays as is.
+  return reconciled.map((session, index) => {
+    const row = rows[index];
+    return row && session === sessions[index] ? row : sessionToUsageRow(session);
+  });
+};
 
 export const collectCursor = withPerfSpan(
   'aiUsage.collect.cursor.details',
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
-    const dbPath = yield* withPerfSpan(
-      'aiUsage.collect.cursor.findDb',
-      firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
-      (path) => ({ found: path !== null }),
-    );
+    const { dbPath, workspaceStorageDir } = yield* findCursorInputs(storage);
     if (!dbPath) {
       return [];
     }
-    const result = yield* collectCursorRowsFromDb(storage, dbPath);
+    const result = yield* collectCursorRowsFromDb(storage, dbPath, workspaceStorageDir);
     return result.rows;
   }),
   (rows) => ({ rows: rows.length }),
@@ -354,38 +644,13 @@ export const collectCursorResult = (
     'aiUsage.collect.cursor.ingestion',
     Effect.gen(function* () {
       const storage = yield* LocalHistoryStorage;
-      const dbPath = yield* withPerfSpan(
-        'aiUsage.collect.cursor.findDb',
-        firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
-        (path) => ({ found: path !== null }),
-      );
+      const { dbPath, workspaceStorageDir } = yield* findCursorInputs(storage);
       const warnings: LocalHistoryWarning[] = [];
-      let sessions: CollectedSession[] = [];
-      let rows: CollectorRow[] | null = null;
+      let rows: CollectorRow[] = [];
       let rejectedMetricRecords = 0;
-      const hasCsvInput = Boolean(cursorCsv && hasCursorCsvInput(cursorCsv));
 
       if (dbPath) {
-        const collection = hasCsvInput
-          ? collectCursorSessionsFromDb(storage, dbPath).pipe(
-              Effect.map(
-                (result): CursorDbCollectionResult => ({
-                  rejectedMetricRecords: result.rejectedMetricRecords,
-                  rows: null,
-                  sessions: result.sessions,
-                }),
-              ),
-            )
-          : collectCursorRowsFromDb(storage, dbPath).pipe(
-              Effect.map((result): CursorDbCollectionResult => ({ ...result, sessions: [] })),
-            );
-        const dbResult = yield* collection.pipe(
-          Effect.match({
-            onFailure: (error) => ({ _tag: 'failure' as const, error }),
-            onSuccess: (result) => ({ _tag: 'success' as const, result }),
-          }),
-        );
-
+        const dbResult = yield* collectCursorRowsFromDb(storage, dbPath, workspaceStorageDir).pipe(matchFailure());
         if (dbResult._tag === 'failure') {
           warnings.push(
             localHistoryWarningFromError(dbResult.error, {
@@ -394,22 +659,17 @@ export const collectCursorResult = (
             }),
           );
         } else {
-          sessions = dbResult.result.sessions;
-          rows = dbResult.result.rows;
-          rejectedMetricRecords += dbResult.result.rejectedMetricRecords;
+          rows = dbResult.value.rows;
+          rejectedMetricRecords += dbResult.value.rejectedMetricRecords;
+          warnings.push(...dbResult.value.warnings);
         }
       }
 
-      if (cursorCsv && hasCsvInput) {
+      if (cursorCsv && hasCursorCsvInput(cursorCsv)) {
         const turnsResult = yield* withPerfSpan(
           'aiUsage.collect.cursorCsv',
-          collectCursorCsvTurnsResult(cursorCsvTurnsOptions(cursorCsv)).pipe(
-            Effect.match({
-              onFailure: (error) => ({ _tag: 'failure' as const, error }),
-              onSuccess: (result) => ({ _tag: 'success' as const, result }),
-            }),
-          ),
-          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.result.turns.length : 0 }),
+          collectCursorCsvTurnsResult(cursorCsvTurnsOptions(cursorCsv)).pipe(matchFailure()),
+          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.value.turns.length : 0 }),
         );
 
         if (turnsResult._tag === 'failure') {
@@ -420,8 +680,9 @@ export const collectCursorResult = (
             }),
           );
         } else {
-          rejectedMetricRecords += turnsResult.result.rejectedMetricRecords;
-          sessions = reconcileCursorSessions(sessions, turnsResult.result.turns, cursorCsvReconcileOptions(cursorCsv));
+          warnings.push(...turnsResult.value.missingInputs.map(cursorCsvMissingInputWarning));
+          rejectedMetricRecords += turnsResult.value.rejectedMetricRecords;
+          rows = reconcileCursorRows(rows, turnsResult.value.turns, cursorCsvReconcileOptions(cursorCsv));
         }
       }
 
@@ -429,7 +690,7 @@ export const collectCursorResult = (
       if (metricWarning) {
         warnings.push(metricWarning);
       }
-      return { rows: rows ?? cursorSessionsToRows(sessions), warnings };
+      return { retiredSourceSessionIds: [], rows, warnings };
     }),
     (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
   );

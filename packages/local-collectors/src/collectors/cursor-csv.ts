@@ -49,10 +49,26 @@ export interface CursorCsvTurn {
 }
 
 export interface CursorCsvTurnsResult {
+  /** Configured export files or directories that do not exist; each one is also a warning. */
+  missingInputs: string[];
   rejectedMetricRecords: number;
   turns: CursorCsvTurn[];
   warnings: LocalHistoryWarning[];
 }
+
+export const CURSOR_CSV_INPUT_OPERATION = 'cursorCsv.input';
+
+/**
+ * A configured export path that is absent is a misconfiguration the operator must see: a silent
+ * empty import would look exactly like "no usage". An existing directory without CSV files is
+ * the normal state before the first export and stays quiet.
+ */
+export const cursorCsvMissingInputWarning = (inputPath: string): LocalHistoryWarning => ({
+  harness: 'cursor',
+  operation: CURSOR_CSV_INPUT_OPERATION,
+  path: inputPath,
+  message: `Configured Cursor usage export path does not exist: ${inputPath}`,
+});
 
 const REQUIRED_HEADERS = [
   'Date',
@@ -74,16 +90,19 @@ const resolveExportPath = (exportPath: string) => path.resolve(exportPath);
 const exportPathsFromDir = (
   storage: LocalHistoryStorageService,
   dirPath: string,
-): Effect.Effect<string[], LocalHistoryError> =>
+): Effect.Effect<{ missing: boolean; paths: string[] }, LocalHistoryError> =>
   Effect.gen(function* () {
     const resolvedDir = resolveExportPath(dirPath);
     if (!(yield* storage.exists(resolvedDir).pipe(Effect.catch(() => Effect.succeed(false))))) {
-      return [];
+      return { missing: true, paths: [] };
     }
     const entries = yield* storage.readDir(resolvedDir);
-    return entries
-      .filter((entry) => !entry.isDirectory && entry.name.toLowerCase().endsWith('.csv'))
-      .map((entry) => path.join(resolvedDir, entry.name));
+    return {
+      missing: false,
+      paths: entries
+        .filter((entry) => !entry.isDirectory && entry.name.toLowerCase().endsWith('.csv'))
+        .map((entry) => path.join(resolvedDir, entry.name)),
+    };
   });
 
 const parseCsvLine = (line: string): string[] => {
@@ -319,11 +338,16 @@ export const collectCursorCsvTurnsResult = (
     const storage = yield* LocalHistoryStorage;
     const turns: CursorCsvTurn[] = [];
     const seen = new Set<string>();
+    const missingInputs: string[] = [];
     let rejectedMetricRecords = 0;
     const configuredPaths = (options.usageExportPaths ?? []).map(resolveExportPath);
-    const dirPaths = options.usageExportDir ? yield* exportPathsFromDir(storage, options.usageExportDir) : [];
-    for (const filePath of [...configuredPaths, ...dirPaths]) {
+    const directory = options.usageExportDir ? yield* exportPathsFromDir(storage, options.usageExportDir) : null;
+    if (directory?.missing && options.usageExportDir) {
+      missingInputs.push(resolveExportPath(options.usageExportDir));
+    }
+    for (const filePath of [...configuredPaths, ...(directory?.paths ?? [])]) {
       if (!(yield* storage.exists(filePath).pipe(Effect.catch(() => Effect.succeed(false))))) {
+        missingInputs.push(filePath);
         continue;
       }
       yield* visitCsvRows(storage, filePath, (row) => {
@@ -346,9 +370,10 @@ export const collectCursorCsvTurnsResult = (
     }
     const warning = metricValidationWarning('cursor', rejectedMetricRecords);
     return {
+      missingInputs,
       rejectedMetricRecords,
       turns: turns.sort((a, b) => a.date.getTime() - b.date.getTime()),
-      warnings: warning ? [warning] : [],
+      warnings: [...missingInputs.map(cursorCsvMissingInputWarning), ...(warning ? [warning] : [])],
     };
   });
 

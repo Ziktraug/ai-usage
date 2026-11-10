@@ -4,7 +4,7 @@ import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storag
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
 import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
-import { collectCursor } from './collectors/cursor';
+import { collectCursor, collectCursorResult } from './collectors/cursor';
 import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
@@ -26,6 +26,15 @@ const CURSOR_COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 
 const CURSOR_TOKEN_SQL =
   "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const CURSOR_USER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
+const CURSOR_WORKSPACES = '.config/Cursor/User/workspaceStorage';
+const CURSOR_WORKSPACE_SQL = "SELECT value FROM ItemTable WHERE key = 'composer.composerData'";
+
+const writeCursorWorkspace = (storage: TestMemoryStorage, hash: string, folder: string, composerIds: string[]) => {
+  storage.writeText(`${CURSOR_WORKSPACES}/${hash}/workspace.json`, JSON.stringify({ folder }));
+  storage.writeDatabaseRows(`${CURSOR_WORKSPACES}/${hash}/state.vscdb`, CURSOR_WORKSPACE_SQL, [
+    { value: JSON.stringify({ allComposers: composerIds.map((composerId) => ({ type: 'head', composerId })) }) },
+  ]);
+};
 
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
 
@@ -785,12 +794,195 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.name).toBe('Refactor agent loop');
     expect(rows[0]?.titleSource).toBe('ai');
     expect(rows[0]?.usageUnavailable).toBe(true);
+    // The composer still names its model; only the token counters are missing.
+    expect(rows[0]?.model).toBe('gpt-5.3');
     expect(rows[0]?.tokIn).toBe(0);
     expect(rows[0]?.costActual).toBeNull();
     expect(rows[0]?.costKnown).toBe(false);
     expect(rows[0]?.turns).toBe(2);
     expect(rows[0]?.linesAdded).toBe(9);
     expect(rows[0]?.date?.toISOString()).toBe('2026-03-10T00:00:00.000Z');
+  });
+
+  test('attributes Cursor rows to the billed models and the workspace folder', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      {
+        key: 'composerData:billed',
+        value: JSON.stringify({
+          name: 'Multi-model composer',
+          // The picker said one thing; Cursor's own accounting says the requests went elsewhere.
+          modelConfig: { modelName: 'cursor' },
+          usageData: {
+            'gpt-5': { amount: 2, costInCents: 8 },
+            'claude-4-sonnet': { amount: 3, costInCents: 12 },
+            'gpt-5-high': { amount: 2, costInCents: 8 },
+          },
+          createdAt: Date.parse('2026-01-02T00:00:00.000Z'),
+          totalLinesAdded: 1,
+          totalLinesRemoved: 0,
+        }),
+      },
+      {
+        key: 'composerData:selected-only',
+        value: JSON.stringify({
+          name: 'No accounting yet',
+          modelConfig: { modelName: 'gpt-5.3' },
+          createdAt: Date.parse('2026-01-03T00:00:00.000Z'),
+          totalLinesAdded: 0,
+          totalLinesRemoved: 0,
+        }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      { key: 'bubbleId:billed:a1', value: JSON.stringify({ tokenCount: { inputTokens: 10, outputTokens: 5 } }) },
+      { key: 'bubbleId:selected-only:a1', value: JSON.stringify({ tokenCount: { inputTokens: 4, outputTokens: 1 } }) },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, []);
+    writeCursorWorkspace(storage, 'hash-a', 'file:///work/stock', ['billed']);
+    // An empty-window workspace has no description and maps nothing.
+    storage.writeDatabaseRows(`${CURSOR_WORKSPACES}/hash-empty/state.vscdb`, CURSOR_WORKSPACE_SQL, []);
+
+    const rows = runWithStorage(collectCursor, storage);
+    const billed = rows.find((row) => row.source?.sourceSessionId === 'billed');
+    const selectedOnly = rows.find((row) => row.source?.sourceSessionId === 'selected-only');
+
+    expect(rows).toHaveLength(2);
+    expect(billed?.model).toBe('claude-4-sonnet');
+    expect(billed?.models).toEqual(['claude-4-sonnet', 'gpt-5', 'gpt-5-high']);
+    // No per-model token split exists in the source, so none is invented.
+    expect(billed?.modelSegments).toBeUndefined();
+    expect(billed?.tokIn).toBe(10);
+    expect(billed?.costActual).toBe(0);
+    expect(billed?.costQuota).toBe(0.28);
+    expect(billed?.project).toBe('stock');
+    expect(billed?.projectPath).toBe('/work/stock');
+    expect(billed?.source?.sourcePath).toBe('/work/stock');
+    expect(selectedOnly?.model).toBe('gpt-5.3');
+    expect(selectedOnly?.models).toBeUndefined();
+    expect(selectedOnly?.costQuota).toBeUndefined();
+    expect(selectedOnly?.project).toBe('');
+    expect(selectedOnly?.projectPath).toBeUndefined();
+  });
+
+  test('keeps a Cursor composer on its selected model when its usage accounting is malformed', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      {
+        key: 'composerData:broken',
+        value: JSON.stringify({
+          name: 'Broken accounting',
+          modelConfig: { modelName: 'gpt-5.3' },
+          usageData: { 'gpt-5.3': { amount: -1, costInCents: 'twelve' } },
+          createdAt: Date.parse('2026-01-02T00:00:00.000Z'),
+          totalLinesAdded: 0,
+          totalLinesRemoved: 0,
+        }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      { key: 'bubbleId:broken:a1', value: JSON.stringify({ tokenCount: { inputTokens: 10, outputTokens: 5 } }) },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, []);
+
+    const result = runWithStorage(
+      collectSelectedHarnessResults({ harness: 'cursor', includeCursor: true, keepSource: true }),
+      storage,
+    );
+    const cursor = result.harnesses.find((harness) => harness.harness === 'cursor');
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.model).toBe('gpt-5.3');
+    expect(result.rows[0]?.costQuota).toBeUndefined();
+    expect(cursor?.warnings).toEqual([expect.objectContaining({ operation: 'metricValidation', rejectedRecords: 1 })]);
+    expect(JSON.stringify(cursor?.warnings)).not.toContain('twelve');
+  });
+
+  test('warns when a Cursor workspace database cannot be read and keeps the other projects', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      {
+        key: 'composerData:mapped',
+        value: JSON.stringify({ name: 'Mapped', createdAt: 1, totalLinesAdded: 0, totalLinesRemoved: 0 }),
+      },
+      {
+        key: 'composerData:unmapped',
+        value: JSON.stringify({ name: 'Unmapped', createdAt: 2, totalLinesAdded: 0, totalLinesRemoved: 0 }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      { key: 'bubbleId:mapped:a1', value: JSON.stringify({ tokenCount: { inputTokens: 1, outputTokens: 1 } }) },
+      { key: 'bubbleId:unmapped:a1', value: JSON.stringify({ tokenCount: { inputTokens: 1, outputTokens: 1 } }) },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, []);
+    writeCursorWorkspace(storage, 'hash-ok', 'file:///work/alpha', ['mapped']);
+    storage.writeText(
+      `${CURSOR_WORKSPACES}/hash-broken/workspace.json`,
+      JSON.stringify({ folder: 'file:///work/beta' }),
+    );
+    storage.writeText(`${CURSOR_WORKSPACES}/hash-broken/state.vscdb`, '');
+
+    const result = runWithStorage(collectCursorResult(), storage);
+
+    expect(result.rows.find((row) => row.source?.sourceSessionId === 'mapped')?.project).toBe('alpha');
+    expect(result.rows.find((row) => row.source?.sourceSessionId === 'unmapped')?.project).toBe('');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.message).toContain('Failed to read a Cursor workspace database');
+    expect(result.warnings[0]?.path).toBe(`${storage.home}/${CURSOR_WORKSPACES}/hash-broken/state.vscdb`);
+  });
+
+  test('warns about a configured Cursor export path that does not exist and keeps the database rows', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      {
+        key: 'composerData:local',
+        value: JSON.stringify({
+          name: 'Local only',
+          modelConfig: { modelName: 'gpt-5.3' },
+          createdAt: Date.parse('2026-06-03T09:00:00.000Z'),
+          totalLinesAdded: 0,
+          totalLinesRemoved: 0,
+        }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      { key: 'bubbleId:local:a1', value: JSON.stringify({ tokenCount: { inputTokens: 10, outputTokens: 5 } }) },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, []);
+    const missingDir = `${storage.home}/.ai-usage/cursor-exports`;
+    const emptyDir = `${storage.home}/exports`;
+    storage.writeText('exports/README.txt', 'drop Cursor usage exports here');
+
+    const missing = runWithStorage(
+      collectSelectedHarnessResults({
+        harness: 'cursor',
+        includeCursor: true,
+        keepSource: true,
+        cursorCsv: { usageExportDir: missingDir, usageExportPaths: [`${storage.home}/gone.csv`] },
+      }),
+      storage,
+    );
+    const empty = runWithStorage(
+      collectSelectedHarnessResults({
+        harness: 'cursor',
+        includeCursor: true,
+        keepSource: true,
+        cursorCsv: { usageExportDir: emptyDir },
+      }),
+      storage,
+    );
+
+    expect(missing.rows).toHaveLength(1);
+    expect(missing.rows[0]?.model).toBe('gpt-5.3');
+    expect(missing.rows[0]?.tokIn).toBe(10);
+    const missingCursor = missing.harnesses.find((harness) => harness.harness === 'cursor');
+    expect(missingCursor?.status).toBe('warning');
+    expect(missingCursor?.warnings).toEqual([
+      expect.objectContaining({ harness: 'cursor', operation: 'cursorCsv.input', path: missingDir }),
+      expect.objectContaining({ harness: 'cursor', operation: 'cursorCsv.input', path: `${storage.home}/gone.csv` }),
+    ]);
+    expect(empty.rows).toEqual(missing.rows);
+    expect(empty.harnesses.find((harness) => harness.harness === 'cursor')?.warnings).toEqual([]);
   });
 
   test('ingests Cursor CSV through the Cursor harness before publishing rows', () => {
