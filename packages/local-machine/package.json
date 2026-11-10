@@ -32,7 +32,8 @@
     "./testing/codex-review-app-server": "./src/testing/fake-codex-review-app-server.ts",
     "./testing/claude-desktop-sessions": "./src/testing/claude-desktop-sessions-fixture.ts",
     "./testing/harness-home": "./src/testing/harness-home.ts",
-    "./testing/memory-storage": "./src/testing/memory-storage.ts"
+    "./testing/memory-storage": "./src/testing/memory-storage.ts",
+    "./testing/opencode-v2-database": "./src/testing/opencode-v2-database.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",

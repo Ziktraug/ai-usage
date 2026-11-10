@@ -17,15 +17,25 @@ import {
   parseFiniteTimestamp,
   parseOptionalNonNegativeSafeInteger,
 } from './metric-validation';
-import { OPENCODE_DIRECT_USER_PART_PREDICATE, OPENCODE_TOOL_PART_PREDICATE } from './opencode-schema';
+import {
+  OPENCODE_DIRECT_USER_PART_PREDICATE,
+  OPENCODE_MESSAGE_METRIC_COLUMNS,
+  OPENCODE_SCHEMA_SQL,
+  OPENCODE_TOOL_PART_PREDICATE,
+  OPENCODE_V2_TOOL_CONTENT_PREDICATE,
+  type OpenCodeSchemaKind,
+  openCodeSchemaError,
+  openCodeSchemaKinds,
+} from './opencode-schema';
 import {
   buildOpenCodeProjectionSummary,
-  decodeOpenCodeMessageRow,
+  decodeOpenCodeMessageColumns,
   mergeOpenCodeActivityIntervals,
-  type OpenCodeMessageDecodeResult,
+  type OpenCodeMessageColumnRow,
   type OpenCodeParentKind,
   openCodeActivityDuration,
   openCodeParentKind,
+  partitionOpenCodeUsageFacts,
 } from './opencode-session-facts';
 import { resolvePathCandidates } from './platform-paths';
 
@@ -47,18 +57,7 @@ SELECT
   id,
   json_extract(data, '$.role') AS role,
   json_extract(data, '$.parentID') AS parent_id,
-  COALESCE(json_extract(data, '$.time.created'), time_created) AS created,
-  json_extract(data, '$.time.completed') AS completed,
-  json_extract(data, '$.providerID') AS provider_id,
-  json_extract(data, '$.modelID') AS model_id,
-  json_extract(data, '$.variant') AS variant,
-  json_extract(data, '$.tokens.input') AS token_input,
-  json_extract(data, '$.tokens.output') AS token_output,
-  json_extract(data, '$.tokens.reasoning') AS token_reasoning,
-  json_extract(data, '$.tokens.cache.read') AS token_cache_read,
-  json_extract(data, '$.tokens.cache.write') AS token_cache_write,
-  json_type(data, '$.tokens') AS tokens_type,
-  json_extract(data, '$.cost') AS cost
+  ${OPENCODE_MESSAGE_METRIC_COLUMNS}
 FROM message
 WHERE session_id = ? AND json_valid(data)
 ORDER BY time_created, id
@@ -107,22 +106,59 @@ GROUP BY message_id
 ORDER BY message_id
 LIMIT ?`;
 
-interface OpenCodeDetailMessageRow {
-  completed: unknown;
-  cost: unknown;
-  created: unknown;
+/**
+ * The `session_v2` counterparts. The role is the row's `type`; there is no
+ * parent message id, so an assistant message is attributed to the prompt that
+ * precedes it in sequence once both schemas' rows are merged. A prompt is the
+ * user row itself (its text is in the payload, not in a part), so its id is
+ * the message id. Synthetic and system inputs carry their own `type`, which
+ * makes every `user` row a direct prompt.
+ */
+export const OPENCODE_DETAIL_V2_SESSION_SQL =
+  'SELECT id, time_created, time_updated FROM session_v2 WHERE id = ? LIMIT ?';
+export const OPENCODE_DETAIL_V2_MESSAGE_SQL = `
+SELECT
+  id,
+  type AS role,
+  NULL AS parent_id,
+  ${OPENCODE_MESSAGE_METRIC_COLUMNS}
+FROM session_message
+WHERE session_id = ? AND type IN ('user', 'assistant') AND json_valid(data)
+ORDER BY seq, time_created, id
+LIMIT ?`;
+export const OPENCODE_DETAIL_V2_PROMPT_SQL = `
+SELECT
+  id,
+  id AS message_id,
+  COALESCE(json_extract(data, '$.time.created'), time_created) AS created,
+  substr(json_extract(data, '$.text'), 1, 32769) AS text,
+  length(json_extract(data, '$.text')) AS text_length
+FROM session_message
+WHERE session_id = ? AND type = 'user' AND json_valid(data)
+ORDER BY seq, time_created, id
+LIMIT ?`;
+export const OPENCODE_DETAIL_V2_CHILDREN_SQL = `
+SELECT id, title
+FROM session_v2
+WHERE parent_id = ?
+ORDER BY time_created, id
+LIMIT ?`;
+export const OPENCODE_DETAIL_V2_TOOL_SQL = `
+SELECT sm.id AS message_id, count(*) AS tool_count
+FROM session_message sm, json_each(sm.data, '$.content') c
+WHERE sm.session_id = ? AND ${OPENCODE_V2_TOOL_CONTENT_PREDICATE}
+GROUP BY sm.id
+ORDER BY sm.id
+LIMIT ?`;
+
+interface OpenCodeDetailMessageRow extends OpenCodeMessageColumnRow {
   id: unknown;
-  model_id: unknown;
   parent_id: unknown;
-  provider_id: unknown;
-  role: unknown;
-  token_cache_read: unknown;
-  token_cache_write: unknown;
-  token_input: unknown;
-  token_output: unknown;
-  token_reasoning: unknown;
-  tokens_type: unknown;
-  variant: unknown;
+}
+
+/** A message row with the schema it was read from; only current-schema rows get a sequence-derived parent. */
+interface OpenCodeMergedMessageRow extends OpenCodeDetailMessageRow {
+  schema: OpenCodeSchemaKind;
 }
 
 interface OpenCodeDetailPromptRow {
@@ -207,37 +243,6 @@ const addTokens = (
     output: output.value,
     total: total.value,
   };
-};
-
-const decodeMessageFactFromDetailRow = (row: OpenCodeDetailMessageRow): OpenCodeMessageDecodeResult => {
-  const hasExtractedTokenValue = [
-    row.token_cache_read,
-    row.token_cache_write,
-    row.token_input,
-    row.token_output,
-    row.token_reasoning,
-  ].some((value) => value !== undefined && value !== null);
-  const tokens =
-    row.tokens_type === 'object' || hasExtractedTokenValue
-      ? {
-          cache: { read: row.token_cache_read, write: row.token_cache_write },
-          input: row.token_input,
-          output: row.token_output,
-          reasoning: row.token_reasoning,
-        }
-      : undefined;
-  return decodeOpenCodeMessageRow({
-    completed: row.completed,
-    cost: row.cost,
-    created: row.created,
-    id: row.id,
-    model_id: row.model_id,
-    parent_id: row.parent_id,
-    provider_id: row.provider_id,
-    role: row.role,
-    ...(tokens ? { tokens } : {}),
-    variant: row.variant,
-  });
 };
 
 const boundedPromptText = (value: string, maximumBytes: number): BoundedPromptText => {
@@ -332,7 +337,7 @@ const turnsFromRows = (
     if (row.role !== 'assistant') {
       continue;
     }
-    const decoded = decodeMessageFactFromDetailRow(row);
+    const decoded = decodeOpenCodeMessageColumns(row);
     if (decoded.kind === 'ignored') {
       continue;
     }
@@ -504,38 +509,135 @@ const phasesFromTurns = (turns: readonly ParsedOpenCodeTurn[], dbPath: string): 
   return phases;
 };
 
-const detailFromDatabase = (
+interface OpenCodeDetailQuerySet {
+  childrenSql: string;
+  messageSql: string;
+  promptParameters: (sourceSessionId: string, limit: number) => Array<string | number>;
+  promptSql: string;
+  sessionSql: string;
+  toolSql: string;
+}
+
+const OPENCODE_DETAIL_QUERIES: Record<OpenCodeSchemaKind, OpenCodeDetailQuerySet> = {
+  legacy: {
+    childrenSql: OPENCODE_DETAIL_CHILDREN_SQL,
+    messageSql: OPENCODE_DETAIL_MESSAGE_SQL,
+    promptParameters: (sourceSessionId, limit) => [sourceSessionId, sourceSessionId, limit],
+    promptSql: OPENCODE_DETAIL_PROMPT_SQL,
+    sessionSql: OPENCODE_DETAIL_SESSION_SQL,
+    toolSql: OPENCODE_DETAIL_TOOL_SQL,
+  },
+  v2: {
+    childrenSql: OPENCODE_DETAIL_V2_CHILDREN_SQL,
+    messageSql: OPENCODE_DETAIL_V2_MESSAGE_SQL,
+    promptParameters: (sourceSessionId, limit) => [sourceSessionId, limit],
+    promptSql: OPENCODE_DETAIL_V2_PROMPT_SQL,
+    sessionSql: OPENCODE_DETAIL_V2_SESSION_SQL,
+    toolSql: OPENCODE_DETAIL_V2_TOOL_SQL,
+  },
+};
+
+interface OpenCodeDetailRows {
+  childRows: OpenCodeDetailChildRow[];
+  childrenOmitted: boolean;
+  directUserMessageIds: Set<string>;
+  messageRows: OpenCodeDetailMessageRow[];
+  promptRows: OpenCodeDetailPromptRow[];
+  sessionRow: OpenCodeDetailSessionRow;
+  toolRows: OpenCodeDetailToolRow[];
+}
+
+const compareByCreated = (left: { created: unknown }, right: { created: unknown }): number =>
+  (timestampMs(left.created) ?? Number.MAX_SAFE_INTEGER) - (timestampMs(right.created) ?? Number.MAX_SAFE_INTEGER);
+
+/**
+ * Read one session from every schema the database holds, current schema first.
+ * A message found in the current schema is skipped in the legacy tables, since
+ * the legacy copy is its pre-migration form; a session's rows may be split
+ * between the two, so the merge is by message id, not by session.
+ */
+const readOpenCodeDetailRows = (
+  db: Awaited<
+    ReturnType<LocalHistoryStorageService['openDatabase']> extends Effect.Effect<infer Db, unknown, unknown>
+      ? Db
+      : never
+  >,
   dbPath: string,
   sourceSessionId: string,
-  storage: LocalHistoryStorageService,
-): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError> =>
-  Effect.acquireUseRelease(
-    storage.openDatabase(dbPath),
-    (db) =>
-      Effect.gen(function* () {
-        const sessionRows = yield* db.all<OpenCodeDetailSessionRow>(OPENCODE_DETAIL_SESSION_SQL, [sourceSessionId, 2]);
-        const sessionRow = sessionRows[0];
-        if (!sessionRow || sessionRows.length > 1) {
-          return null;
+): Effect.Effect<OpenCodeDetailRows | null, LocalHistoryError> =>
+  Effect.gen(function* () {
+    const schemaRows = yield* db.all<{ name: unknown }>(OPENCODE_SCHEMA_SQL);
+    const tables = new Set(schemaRows.flatMap((row) => (typeof row.name === 'string' ? [row.name] : [])));
+    const kinds = openCodeSchemaKinds(tables);
+    if (kinds.length === 0) {
+      return yield* Effect.fail(openCodeSchemaError(dbPath, tables));
+    }
+
+    let sessionRow: OpenCodeDetailSessionRow | null = null;
+    const mergedRows: OpenCodeMergedMessageRow[] = [];
+    const promptRows: OpenCodeDetailPromptRow[] = [];
+    const directUserMessageIds = new Set<string>();
+    const toolRows: OpenCodeDetailToolRow[] = [];
+    const childRows: OpenCodeDetailChildRow[] = [];
+    let childrenOmitted = false;
+    const currentMessageIds = new Set<string>();
+
+    for (const kind of kinds) {
+      const queries = OPENCODE_DETAIL_QUERIES[kind];
+      const isCurrent = kind === 'v2';
+      const claim = (messageId: string | null): boolean => {
+        if (messageId === null) {
+          return true;
         }
-        const messageRows = yield* db.all<OpenCodeDetailMessageRow>(OPENCODE_DETAIL_MESSAGE_SQL, [
-          sourceSessionId,
-          MAX_MESSAGE_ROWS + 1,
-        ]);
-        if (messageRows.length > MAX_MESSAGE_ROWS) {
-          return yield* Effect.fail(
-            detailError(
-              'readOpenCodeSessionAnalysis.messageLimit',
-              dbPath,
-              'OpenCode session exceeds its message limit',
-            ),
-          );
+        if (isCurrent) {
+          currentMessageIds.add(messageId);
+          return true;
         }
-        const promptRows = yield* db.all<OpenCodeDetailPromptRow>(OPENCODE_DETAIL_PROMPT_SQL, [
-          sourceSessionId,
-          sourceSessionId,
-          MAX_PROMPT_ROWS + 1,
-        ]);
+        return !currentMessageIds.has(messageId);
+      };
+
+      const sessionRows = yield* db.all<OpenCodeDetailSessionRow>(queries.sessionSql, [sourceSessionId, 2]);
+      if (sessionRows.length > 1) {
+        return null;
+      }
+      const found = sessionRows[0];
+      if (!found) {
+        // A schema without the session row holds none of its messages either.
+        continue;
+      }
+      sessionRow ??= found;
+
+      const messageRows = yield* db.all<OpenCodeDetailMessageRow>(queries.messageSql, [
+        sourceSessionId,
+        MAX_MESSAGE_ROWS + 1,
+      ]);
+      if (messageRows.length > MAX_MESSAGE_ROWS) {
+        return yield* Effect.fail(
+          detailError('readOpenCodeSessionAnalysis.messageLimit', dbPath, 'OpenCode session exceeds its message limit'),
+        );
+      }
+      for (const row of messageRows) {
+        const messageId = boundedString(row.id, MAX_ID_LENGTH);
+        if (!claim(messageId)) {
+          continue;
+        }
+        mergedRows.push({ ...row, schema: kind });
+        if (isCurrent && row.role === 'user' && messageId) {
+          directUserMessageIds.add(messageId);
+        }
+      }
+
+      const schemaPromptRows = yield* db.all<OpenCodeDetailPromptRow>(
+        queries.promptSql,
+        queries.promptParameters(sourceSessionId, MAX_PROMPT_ROWS + 1),
+      );
+      for (const row of schemaPromptRows) {
+        if (claim(boundedString(row.message_id, MAX_ID_LENGTH))) {
+          promptRows.push(row);
+        }
+      }
+
+      if (!isCurrent) {
         const parentRows = yield* db.all<OpenCodeDetailParentRow>(OPENCODE_DETAIL_PARENT_SQL, [
           sourceSessionId,
           sourceSessionId,
@@ -546,26 +648,87 @@ const detailFromDatabase = (
             detailError('readOpenCodeSessionAnalysis.parentLimit', dbPath, 'OpenCode session exceeds its turn limit'),
           );
         }
-        const toolRows = yield* db.all<OpenCodeDetailToolRow>(OPENCODE_DETAIL_TOOL_SQL, [
-          sourceSessionId,
-          MAX_TOOL_GROUPS + 1,
-        ]);
-        if (toolRows.length > MAX_TOOL_GROUPS) {
-          return yield* Effect.fail(
-            detailError(
-              'readOpenCodeSessionAnalysis.toolLimit',
-              dbPath,
-              'OpenCode session exceeds its tool-group limit',
-            ),
-          );
+        for (const row of parentRows) {
+          const messageId = boundedString(row.message_id, MAX_ID_LENGTH);
+          if (messageId && claim(messageId)) {
+            directUserMessageIds.add(messageId);
+          }
         }
+      }
 
-        const childRows = yield* db.all<OpenCodeDetailChildRow>(OPENCODE_DETAIL_CHILDREN_SQL, [
-          sourceSessionId,
-          MAX_CHILD_ROWS + 1,
-        ]);
+      const schemaToolRows = yield* db.all<OpenCodeDetailToolRow>(queries.toolSql, [
+        sourceSessionId,
+        MAX_TOOL_GROUPS + 1,
+      ]);
+      if (schemaToolRows.length > MAX_TOOL_GROUPS) {
+        return yield* Effect.fail(
+          detailError('readOpenCodeSessionAnalysis.toolLimit', dbPath, 'OpenCode session exceeds its tool-group limit'),
+        );
+      }
+      for (const row of schemaToolRows) {
+        if (claim(boundedString(row.message_id, MAX_ID_LENGTH))) {
+          toolRows.push(row);
+        }
+      }
+
+      const schemaChildRows = yield* db.all<OpenCodeDetailChildRow>(queries.childrenSql, [
+        sourceSessionId,
+        MAX_CHILD_ROWS + 1,
+      ]);
+      childrenOmitted ||= schemaChildRows.length > MAX_CHILD_ROWS;
+      childRows.push(...schemaChildRows.slice(0, MAX_CHILD_ROWS));
+    }
+    if (!sessionRow) {
+      return null;
+    }
+    if (mergedRows.length > MAX_MESSAGE_ROWS) {
+      return yield* Effect.fail(
+        detailError('readOpenCodeSessionAnalysis.messageLimit', dbPath, 'OpenCode session exceeds its message limit'),
+      );
+    }
+    if (directUserMessageIds.size > MAX_TURNS) {
+      return yield* Effect.fail(
+        detailError('readOpenCodeSessionAnalysis.parentLimit', dbPath, 'OpenCode session exceeds its turn limit'),
+      );
+    }
+
+    // Rows from both schemas interleave in time; the current schema records no
+    // parent message, so its assistant rows are attributed to the prompt that
+    // precedes them in that order.
+    mergedRows.sort(compareByCreated);
+    promptRows.sort(compareByCreated);
+    let lastUserMessageId: string | null = null;
+    const messageRows: OpenCodeDetailMessageRow[] = mergedRows.map((row) => {
+      const messageId = boundedString(row.id, MAX_ID_LENGTH);
+      if (row.role === 'user') {
+        lastUserMessageId = messageId ?? lastUserMessageId;
+        return row;
+      }
+      if (row.schema === 'v2' && row.role === 'assistant' && row.parent_id === null) {
+        return { ...row, parent_id: lastUserMessageId };
+      }
+      return row;
+    });
+    return { childRows, childrenOmitted, directUserMessageIds, messageRows, promptRows, sessionRow, toolRows };
+  });
+
+const detailFromDatabase = (
+  dbPath: string,
+  sourceSessionId: string,
+  storage: LocalHistoryStorageService,
+): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError> =>
+  Effect.acquireUseRelease(
+    storage.openDatabase(dbPath),
+    (db) =>
+      Effect.gen(function* () {
+        const read = yield* readOpenCodeDetailRows(db, dbPath, sourceSessionId);
+        if (!read) {
+          return null;
+        }
+        const { childRows, childrenOmitted, directUserMessageIds, messageRows, promptRows, sessionRow, toolRows } =
+          read;
         const children: SessionDetailChildLink[] = [];
-        for (const row of childRows.slice(0, MAX_CHILD_ROWS)) {
+        for (const row of childRows) {
           const id = boundedString(row.id, MAX_ID_LENGTH);
           if (id && id !== sourceSessionId && !children.some((child) => child.sourceSessionId === id)) {
             children.push({
@@ -577,7 +740,20 @@ const detailFromDatabase = (
             });
           }
         }
-        const childrenOmitted = childRows.length > MAX_CHILD_ROWS;
+
+        // The detail keeps every turn, foreign-owned ones included: it is a
+        // transcript, not usage. The projection mirrors the report row, which
+        // counts only the facts OpenCode owns (ADR 0090); a session with none is
+        // not an OpenCode usage row and has no detail to reconcile against.
+        const messageFacts = messageRows.flatMap((row) => {
+          const decoded = decodeOpenCodeMessageColumns(row);
+          return decoded.kind === 'fact' ? [decoded.value] : [];
+        });
+        const { foreign, owned } = partitionOpenCodeUsageFacts(messageFacts);
+        if (owned.length === 0) {
+          return null;
+        }
+        const foreignMessageIds = new Set(foreign.flatMap((fact) => (fact.id === null ? [] : [fact.id])));
 
         const toolsByMessageId = new Map<string, number>();
         let projectionTools = 0;
@@ -586,6 +762,9 @@ const detailFromDatabase = (
           const count = parseOptionalNonNegativeSafeInteger(row.tool_count);
           if (messageId && count.ok) {
             toolsByMessageId.set(messageId, count.value);
+            if (foreignMessageIds.has(messageId)) {
+              continue;
+            }
             const nextTools = addNonNegativeSafeIntegers(projectionTools, count.value);
             if (!nextTools.ok) {
               return yield* Effect.fail(
@@ -596,12 +775,6 @@ const detailFromDatabase = (
           }
         }
         const { bodiesOmitted, identitiesOmitted, prompts, promptsTruncated } = promptsFromRows(promptRows);
-        const directUserMessageIds = new Set(
-          parentRows.flatMap((row) => {
-            const messageId = boundedString(row.message_id, MAX_ID_LENGTH);
-            return messageId ? [messageId] : [];
-          }),
-        );
         const parsedTurns = turnsFromRows(
           messageRows,
           prompts,
@@ -611,11 +784,7 @@ const detailFromDatabase = (
           dbPath,
         );
         const phases = phasesFromTurns(parsedTurns, dbPath);
-        const messageFacts = messageRows.flatMap((row) => {
-          const decoded = decodeMessageFactFromDetailRow(row);
-          return decoded.kind === 'fact' ? [decoded.value] : [];
-        });
-        const projectionSummary = buildOpenCodeProjectionSummary(messageFacts);
+        const projectionSummary = buildOpenCodeProjectionSummary(owned);
         if (!projectionSummary) {
           return null;
         }
@@ -638,7 +807,7 @@ const detailFromDatabase = (
         const elapsedDurationMs = boundedEndMs - startMs;
         const activeDurationMs = Math.min(elapsedDurationMs, openCodeActivityDuration(parsedTurns));
         const missingCompletion = messageRows.some((row) => {
-          const decoded = decodeMessageFactFromDetailRow(row);
+          const decoded = decodeOpenCodeMessageColumns(row);
           if (decoded.kind !== 'fact') {
             return false;
           }
@@ -715,7 +884,7 @@ const detailFromDatabase = (
                 },
               }))
               .sort((left, right) => left.model.localeCompare(right.model)),
-            partial: projectionSummary.partial,
+            partial: projectionSummary.partial || foreign.length > 0,
             tokens: projectionSummary.tokens,
             tools: projectionTools,
             turns: directUserMessageIds.size,

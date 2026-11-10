@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
+import {
+  createOpenCodeUnknownSchemaDatabase,
+  OPENCODE_V2_FIXTURE_SKILL_DIR,
+  seedOpenCodeV2Scenario,
+} from '@ai-usage/local-machine/testing/opencode-v2-database';
 import { Effect } from 'effect';
 import { collectCursorResult } from './collectors/cursor';
 import { collectOpenCodeResult } from './collectors/opencode';
@@ -138,6 +143,106 @@ describe('real SQLite harness collectors', () => {
     const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.opencode);
 
     expect(row).toMatchObject({ calls: 3, tokIn: 90, tokOut: 28, turns: 1 });
+  });
+
+  test('collects a session_v2 OpenCode session with embedded tool content through a real database', async () => {
+    const home = await makeHome();
+    const scenario = await seedOpenCodeV2Scenario(home);
+    const t0 = scenario.times.v2ContentStartMs;
+
+    const result = await runAtHome(home, collectOpenCodeResult);
+    const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === scenario.ids.v2Content);
+
+    // The malformed assistant row is the only rejected record; non-object
+    // content items, idle, synthetic and compaction rows are not metrics.
+    expect(result.warnings.map((warning) => warning.operation)).toEqual(['metricValidation']);
+    expect(result.warnings[0]?.rejectedRecords).toBe(1);
+    expect(row?.name).toBe('Real session_v2 fixture');
+    expect(row?.provider).toBe('Codex sub (OC)');
+    expect(row?.models).toEqual(['openai/gpt-6.1-sol']);
+    expect(row).toMatchObject({
+      calls: 3,
+      durationMs: 71_000,
+      linesAdded: 4,
+      partial: false,
+      tokCr: 20,
+      tokCw: 4,
+      tokIn: 56,
+      tokOut: 17,
+      tools: 3,
+      turns: 1,
+    });
+    expect(row?.date?.toISOString()).toBe(new Date(t0 + 10_000).toISOString());
+    expect(row?.endDate?.toISOString()).toBe(new Date(t0 + 111_000).toISOString());
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]).toMatchObject({
+      harnessKey: 'opencode',
+      observationKey: 'call_skill',
+      observedAt: new Date(t0 + 12_000).toISOString(),
+      projectPath: '/work/fixture',
+      resolvedPath: OPENCODE_V2_FIXTURE_SKILL_DIR,
+      sessionId: scenario.ids.v2Content,
+      skillName: 'fixture-skill',
+      success: true,
+      tier: 'declared',
+    });
+  });
+
+  test('reads a partially migrated OpenCode database once per session and once per message', async () => {
+    const home = await makeHome();
+    const scenario = await seedOpenCodeV2Scenario(home);
+
+    const result = await runAtHome(home, collectOpenCodeResult);
+    const byId = new Map(result.rows.map((row) => [row.source?.sourceSessionId, row]));
+
+    const { claudeAgentOnly, ...usageSessionIds } = scenario.ids;
+    expect([...byId.keys()].sort()).toEqual(Object.values(usageSessionIds).sort());
+    // Observed in the database, owned by the Claude collector (ADR 0090).
+    expect(result.retiredSourceSessionIds).toEqual([claudeAgentOnly]);
+    expect(byId.get(scenario.ids.mixed)).toMatchObject({
+      calls: 1,
+      models: ['openai/gpt-5.5'],
+      name: 'Mixed providers',
+      partial: true,
+      provider: 'Codex sub (OC)',
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 12,
+      tokOut: 3,
+      tools: 1,
+      turns: 2,
+    });
+    expect(byId.get(scenario.ids.shared)).toMatchObject({
+      calls: 2,
+      durationMs: 10_000,
+      linesAdded: 5,
+      name: 'Shared (v2 title)',
+      provider: 'Codex sub (OC)',
+      tokIn: 150,
+      tokOut: 15,
+      tools: 3,
+      turns: 2,
+    });
+    expect(byId.get(scenario.ids.legacyOnly)).toMatchObject({ calls: 1, name: 'Only in legacy', tokIn: 20, turns: 0 });
+    expect(byId.get(scenario.ids.v2Only)).toMatchObject({
+      calls: 1,
+      name: 'Only in v2',
+      provider: 'OpenCode Go',
+      tokIn: 7,
+    });
+  });
+
+  test('reports an OpenCode database without a known session schema instead of returning no rows', async () => {
+    const home = await makeHome();
+    const databasePath = await createOpenCodeUnknownSchemaDatabase(home);
+
+    const result = await runAtHome(home, collectOpenCodeResult);
+
+    expect(result.rows).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({ harness: 'opencode', operation: 'opencode.schema', path: databasePath });
+    expect(result.warnings[0]?.message).toContain('session_v2');
+    expect(result.warnings[0]?.message).toContain('kv');
   });
 
   test('collects partial Cursor composer tokens through a real state database', async () => {
