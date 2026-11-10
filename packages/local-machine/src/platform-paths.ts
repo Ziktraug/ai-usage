@@ -33,6 +33,8 @@ export interface HarnessPaths {
   cursor: {
     stateVscdb: string;
     aiTrackingDb: string;
+    /** Per-workspace `<hash>/workspace.json` + `state.vscdb`; maps composers to their folder. */
+    workspaceStorageDir: string;
   };
   opencode: {
     liveDb: string;
@@ -57,6 +59,7 @@ export interface HarnessPathCandidates {
   cursor: {
     stateVscdb: string[];
     aiTrackingDb: string[];
+    workspaceStorageDir: string[];
   };
   opencode: {
     liveDb: string[];
@@ -99,6 +102,7 @@ const pathSet = (storage: LocalHistoryStorage) => {
     cursor: {
       stateVscdb: join('Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
       aiTrackingDb: join('Library', 'Application Support', 'Cursor', 'ai-tracking', 'ai-code-tracking.db'),
+      workspaceStorageDir: join('Library', 'Application Support', 'Cursor', 'User', 'workspaceStorage'),
     },
     rtk: {
       historyDb: join('Library', 'Application Support', 'rtk', 'history.db'),
@@ -118,6 +122,7 @@ const pathSet = (storage: LocalHistoryStorage) => {
     cursor: {
       stateVscdb: join('.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
       aiTrackingDb: join('.cursor', 'ai-tracking', 'ai-code-tracking.db'),
+      workspaceStorageDir: join('.config', 'Cursor', 'User', 'workspaceStorage'),
     },
     rtk: {
       historyDb: join('.local', 'share', 'rtk', 'history.db'),
@@ -138,6 +143,7 @@ const pathSet = (storage: LocalHistoryStorage) => {
     cursor: {
       stateVscdb: join('AppData', 'Roaming', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
       aiTrackingDb: join('AppData', 'Roaming', 'Cursor', 'ai-tracking', 'ai-code-tracking.db'),
+      workspaceStorageDir: join('AppData', 'Roaming', 'Cursor', 'User', 'workspaceStorage'),
     },
     rtk: {
       historyDb: join('AppData', 'Local', 'rtk', 'history.db'),
@@ -173,6 +179,7 @@ export const resolvePathCandidates = (storage: LocalHistoryStorage): HarnessPath
     cursor: {
       stateVscdb: unique(ordered.map((platformPaths) => platformPaths.cursor.stateVscdb)),
       aiTrackingDb: unique(ordered.map((platformPaths) => platformPaths.cursor.aiTrackingDb)),
+      workspaceStorageDir: unique(ordered.map((platformPaths) => platformPaths.cursor.workspaceStorageDir)),
     },
     rtk: {
       historyDb: unique(ordered.map((platformPaths) => platformPaths.rtk.historyDb)),

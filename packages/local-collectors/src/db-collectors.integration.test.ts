@@ -253,17 +253,24 @@ describe('real SQLite harness collectors', () => {
     const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.cursor);
 
     expect(result.warnings).toEqual([]);
+    // Cursor never reclassifies an observed composer under another harness.
+    expect(result.retiredSourceSessionIds).toEqual([]);
     expect(row?.source?.vcs).toBeUndefined();
     expect(row).toMatchObject({
       calls: 1,
+      costQuota: 0.2,
       model: 'gpt-5.3',
       partial: true,
+      project: 'fixture',
+      projectPath: fixture.paths.repository,
       tokCr: 5,
       tokCw: 0,
       tokIn: 25,
       tokOut: 7,
       turns: 1,
     });
+    expect(row?.models).toBeUndefined();
+    expect(row?.source?.sourcePath).toBe(fixture.paths.repository);
   });
 
   test('reconciles Cursor DB and CSV without double counting the DB usage', async () => {
@@ -279,21 +286,52 @@ describe('real SQLite harness collectors', () => {
       ].join('\n'),
     );
 
-    const result = await runAtHome(
-      home,
-      collectCursorResult({
-        clusterGapMs: 5 * 60_000,
-        reconcileWindowMs: 3 * 60_000,
-        usageExportPaths: [csvPath],
-        user: 'fixture@example.com',
-      }),
-    );
+    const options = {
+      clusterGapMs: 5 * 60_000,
+      reconcileWindowMs: 3 * 60_000,
+      usageExportPaths: [csvPath],
+      user: 'fixture@example.com',
+    };
+    const result = await runAtHome(home, collectCursorResult(options));
     const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.cursor);
 
     expect(result.warnings).toEqual([]);
     expect(row).toMatchObject({ tokCr: 8, tokCw: 2, tokIn: 35, tokOut: 11 });
     expect((row?.tokCr ?? 0) + (row?.tokCw ?? 0) + (row?.tokIn ?? 0) + (row?.tokOut ?? 0)).toBe(56);
     expect(row?.models).toEqual(['gpt-5.3', 'claude-sonnet-4-6']);
+    // The export's Kind-aware split replaces the composer's metered quota value: no double count.
+    expect(row?.costQuota).toBeCloseTo(0.3, 12);
+    expect(row?.costActual).toBe(0);
+    // Facts the export does not know survive the merge.
+    expect(row).toMatchObject({ project: 'fixture', projectPath: fixture.paths.repository, titleSource: 'ai' });
+
+    // The export is reconciled on top of the cached database rows, so the cache is written on the
+    // first pass and served on the second one, with the same result.
+    const cachePath = join(home, '.config', 'ai-usage', 'cursor-db-cache.json');
+    const cache = await readFile(cachePath, 'utf8');
+    expect(cache).toContain(`"project":"fixture"`);
+    expect(cache).not.toContain('claude-sonnet-4-6');
+    const second = await runAtHome(home, collectCursorResult(options));
+    expect(second.rows).toEqual(result.rows);
+    expect(second.warnings).toEqual([]);
+  });
+
+  test('warns about a configured Cursor export directory that does not exist', async () => {
+    const home = await makeHome();
+    const fixture = await seedHarnessHome(home, { harnesses: ['cursor'] });
+    const exportDir = join(home, '.ai-usage', 'cursor-exports');
+
+    const result = await runAtHome(home, collectCursorResult({ usageExportDir: exportDir }));
+
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual([fixture.ids.cursor]);
+    expect(result.warnings).toEqual([
+      {
+        harness: 'cursor',
+        message: `Configured Cursor usage export path does not exist: ${exportDir}`,
+        operation: 'cursorCsv.input',
+        path: exportDir,
+      },
+    ]);
   });
 
   test('rejects Cursor database main and WAL symlink redirection', async () => {

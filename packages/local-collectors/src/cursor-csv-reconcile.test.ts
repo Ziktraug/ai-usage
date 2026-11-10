@@ -36,6 +36,30 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
 describe('Cursor CSV reconciliation', () => {
+  test('reports configured export paths that do not exist and stays quiet on an empty directory', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText('exports/README.txt', 'no exports yet');
+    const missingDir = `${storage.home}/.ai-usage/cursor-exports`;
+    const missingFile = `${storage.home}/gone.csv`;
+
+    const missing = runWithStorage(
+      collectCursorCsvTurnsResult({ usageExportDir: missingDir, usageExportPaths: [missingFile], clusterGapMs: 1 }),
+      storage,
+    );
+    const empty = runWithStorage(
+      collectCursorCsvTurnsResult({ usageExportDir: `${storage.home}/exports`, clusterGapMs: 1 }),
+      storage,
+    );
+
+    expect(missing.turns).toEqual([]);
+    expect(missing.missingInputs).toEqual([missingDir, missingFile]);
+    expect(missing.warnings.map((warning) => [warning.operation, warning.path])).toEqual([
+      ['cursorCsv.input', missingDir],
+      ['cursorCsv.input', missingFile],
+    ]);
+    expect(empty).toEqual({ missingInputs: [], rejectedMetricRecords: 0, turns: [], warnings: [] });
+  });
+
   test('keeps valid CSV rows and reports malformed metrics without leaking values', () => {
     const storage = new TestMemoryStorage();
     const exportPath = `${storage.home}/cursor.csv`;

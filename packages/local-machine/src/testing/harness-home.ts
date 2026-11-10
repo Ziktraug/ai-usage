@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   type ClaudeDesktopSessionsFixtureVariant,
   type SeededClaudeDesktopSessions,
@@ -29,6 +30,7 @@ export interface SeededHarnessHome {
     claudeSubagentTranscript: string;
     codexRootRollout: string;
     cursorDatabase: string;
+    cursorWorkspaceStorage: string;
     opencodeDatabase: string;
     repository: string;
   };
@@ -737,7 +739,11 @@ const writeOpenCodeFixture = async (databasePath: string, repository: string, sk
   }
 };
 
-const writeCursorFixture = async (databasePath: string): Promise<void> => {
+const writeCursorFixture = async (
+  databasePath: string,
+  workspaceStorageDir: string,
+  repository: string,
+): Promise<void> => {
   await ensureParent(databasePath);
   const database = new Database(databasePath, { create: true });
   try {
@@ -748,6 +754,8 @@ const writeCursorFixture = async (databasePath: string): Promise<void> => {
       JSON.stringify({
         name: 'Cursor fixture',
         modelConfig: { modelName: 'gpt-5.3' },
+        // Cursor's own per-model request accounting; the billed model for this composer.
+        usageData: { 'gpt-5.3': { amount: 1, costInCents: 20 } },
         createdAt: Date.parse('2026-07-05T11:00:00.000Z'),
         totalLinesAdded: 9,
         totalLinesRemoved: 2,
@@ -760,6 +768,23 @@ const writeCursorFixture = async (databasePath: string): Promise<void> => {
     );
   } finally {
     database.close();
+  }
+  // One workspace folder, as Cursor records it: `<hash>/workspace.json` names the folder and the
+  // workspace `state.vscdb` lists the composers opened in it.
+  const workspaceDir = join(workspaceStorageDir, 'fixture-workspace-hash');
+  await mkdir(workspaceDir, { recursive: true });
+  await writeFile(join(workspaceDir, 'workspace.json'), JSON.stringify({ folder: pathToFileURL(repository).href }));
+  const workspaceDatabase = new Database(join(workspaceDir, 'state.vscdb'), { create: true });
+  try {
+    workspaceDatabase.exec('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
+    workspaceDatabase
+      .prepare('INSERT INTO ItemTable VALUES (?, ?)')
+      .run(
+        'composer.composerData',
+        JSON.stringify({ allComposers: [{ type: 'head', composerId: FIXTURE_IDS.cursor, createdAt: 0 }] }),
+      );
+  } finally {
+    workspaceDatabase.close();
   }
 };
 
@@ -787,6 +812,7 @@ export const seedHarnessHome = async (
       `rollout-2026-07-02T09-00-00-${FIXTURE_IDS.codexRoot}.jsonl`,
     ),
     cursorDatabase: join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+    cursorWorkspaceStorage: join(home, '.config', 'Cursor', 'User', 'workspaceStorage'),
     opencodeDatabase: join(home, '.local', 'share', 'opencode', 'opencode.db'),
     repository: join(home, 'work', 'fixture'),
   };
@@ -809,7 +835,7 @@ export const seedHarnessHome = async (
     await writeOpenCodeFixture(paths.opencodeDatabase, paths.repository, options.skillSignals === true);
   }
   if (seededHarnesses.includes('cursor')) {
-    await writeCursorFixture(paths.cursorDatabase);
+    await writeCursorFixture(paths.cursorDatabase, paths.cursorWorkspaceStorage, paths.repository);
   }
   const claudeDesktop =
     options.claudeDesktopSessions === undefined

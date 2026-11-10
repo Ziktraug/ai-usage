@@ -47,6 +47,7 @@ const mergeClusterIntoSession = (
     endDate: cluster.endDate,
     provider: session.provider,
     name: session.name,
+    ...(session.titleSource === undefined ? {} : { titleSource: session.titleSource }),
     ...(session.originProvenance === undefined ? {} : { originProvenance: session.originProvenance }),
     model: cluster.dominantModel,
     ...(models ? { models } : {}),
