@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   CLAUDE_SYNTHETIC_MODEL,
+  MAX_CLAUDE_RECORDS,
   MAX_CLAUDE_SOURCE_PATHS,
   parseClaudeSessionFacts,
+  parseClaudeTranscript,
 } from '@ai-usage/local-machine/claude-session-facts';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import { normalizeSessionVcsRepository } from '@ai-usage/report-core/session-vcs';
@@ -1202,5 +1204,119 @@ describe('parseClaudeSessionFacts synthetic records', () => {
     expect(
       parseClaudeSessionFacts({ records: [synthetic(0)], repository: null, sourceSessionId: 'synthetic-only' }),
     ).toBeNull();
+  });
+});
+
+describe('parseClaudeTranscript', () => {
+  const stamp = (index: number) => `2026-07-01T15:0${index}:00.000Z`;
+  const prompt = (index: number) =>
+    event({ type: 'user', timestamp: stamp(index), uuid: `user-${index}`, message: { content: `Prompt ${index}` } });
+  const reply = (index: number, message: Record<string, unknown>) =>
+    event({
+      type: 'assistant',
+      timestamp: stamp(index),
+      uuid: `assistant-${index}`,
+      parentUuid: `user-${index}`,
+      requestId: `req-${index}`,
+      message: { id: `message-${index}`, content: [{ type: 'text', text: 'Answer' }], ...message },
+    });
+  const usage = { input_tokens: 10, output_tokens: 5 };
+  /** What Claude Code writes for a session opened and closed without a prompt. */
+  const housekeeping = [
+    event({ type: 'mode', mode: 'normal', sessionId: 'idle' }),
+    event({ type: 'permission-mode', permissionMode: 'default', sessionId: 'idle' }),
+    event({
+      type: 'system',
+      subtype: 'local_command',
+      timestamp: stamp(0),
+      uuid: 'system-idle',
+      parentUuid: null,
+      content: '<command-name>/resume</command-name>',
+    }),
+    event({ type: 'last-prompt', leafUuid: 'system-idle', sessionId: 'idle' }),
+  ];
+
+  test('returns the facts of a transcript with usage', () => {
+    const result = parseClaudeTranscript({
+      records: [prompt(0), reply(0, { model: 'claude-sonnet-4-6', usage })],
+      repository: null,
+      sourceSessionId: 'active',
+    });
+    expect(result.kind).toBe('facts');
+    expect(result.kind === 'facts' && result.facts.report.calls).toBe(1);
+  });
+
+  test.each([
+    { name: 'housekeeping records only', records: housekeeping },
+    {
+      name: 'a synthetic reply without a human prompt',
+      records: [reply(0, { model: CLAUDE_SYNTHETIC_MODEL, usage: { input_tokens: 0, output_tokens: 0 } })],
+    },
+    {
+      name: 'a slash command answered by a synthetic reply',
+      records: [
+        event({
+          type: 'user',
+          timestamp: stamp(0),
+          uuid: 'user-0',
+          message: { content: '<command-name>/clear</command-name>\n<command-message>clear</command-message>' },
+        }),
+        reply(1, { model: CLAUDE_SYNTHETIC_MODEL, usage: { input_tokens: 0, output_tokens: 0 } }),
+      ],
+    },
+  ])('observes an explicit empty transcript: $name', ({ records }) => {
+    expect(parseClaudeTranscript({ records, repository: null, sourceSessionId: 'idle' })).toEqual({ kind: 'empty' });
+    expect(parseClaudeSessionFacts({ records, repository: null, sourceSessionId: 'idle' })).toBeNull();
+  });
+
+  test.each([
+    {
+      name: 'no record carries a timestamp',
+      records: [event({ type: 'bridge-session', sessionId: 'bridge' }), event({ type: 'mode', mode: 'normal' })],
+      rejection: { kind: 'rejected', reason: 'no-timestamped-record', rejectedMetricRecords: 0 },
+    },
+    {
+      name: 'no record at all',
+      records: [],
+      rejection: { kind: 'rejected', reason: 'no-timestamped-record', rejectedMetricRecords: 0 },
+    },
+    {
+      name: 'the only usage is malformed',
+      records: [reply(0, { model: 'claude-sonnet-4-6', usage: { input_tokens: -1, output_tokens: 'many' } })],
+      rejection: { kind: 'rejected', reason: 'rejected-usage', rejectedMetricRecords: 1 },
+    },
+    {
+      name: 'a model reply carries no usage',
+      records: [reply(0, { model: 'claude-sonnet-4-6' })],
+      rejection: { kind: 'rejected', reason: 'usage-absent', rejectedMetricRecords: 0 },
+    },
+    {
+      name: 'the transcript exceeds the record budget',
+      records: Array.from({ length: MAX_CLAUDE_RECORDS + 1 }, () => event({ type: 'mode', mode: 'normal' })),
+      rejection: { kind: 'rejected', reason: 'record-budget', rejectedMetricRecords: 0 },
+    },
+  ])('rejects instead of observing an empty transcript when $name', ({ records, rejection }) => {
+    expect(parseClaudeTranscript({ records, repository: null, sourceSessionId: 'unknown' })).toEqual(rejection);
+    expect(parseClaudeSessionFacts({ records, repository: null, sourceSessionId: 'unknown' })).toBeNull();
+  });
+
+  test('rejects a transcript without a session id', () => {
+    expect(parseClaudeTranscript({ records: housekeeping, repository: null, sourceSessionId: '' })).toEqual({
+      kind: 'rejected',
+      reason: 'no-session-id',
+      rejectedMetricRecords: 0,
+    });
+  });
+
+  test('counts every malformed usage record of a transcript it rejects', () => {
+    const result = parseClaudeTranscript({
+      records: [
+        reply(0, { model: 'claude-sonnet-4-6', usage: { input_tokens: 'ten' } }),
+        reply(1, { model: 'claude-sonnet-4-6', usage: { output_tokens: -5 } }),
+      ],
+      repository: null,
+      sourceSessionId: 'broken',
+    });
+    expect(result).toEqual({ kind: 'rejected', reason: 'rejected-usage', rejectedMetricRecords: 2 });
   });
 });

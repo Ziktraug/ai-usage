@@ -237,6 +237,24 @@ describe('real SQLite harness collectors', () => {
     });
   });
 
+  test('declares the same OpenCode retirements from the row cache as from the cold read', async () => {
+    const home = await makeHome();
+    const scenario = await seedOpenCodeV2Scenario(home);
+
+    const cold = await runAtHome(home, collectOpenCodeResult);
+    const cachePath = join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
+    const cache = await readFile(cachePath, 'utf8');
+    const warm = await runAtHome(home, collectOpenCodeResult);
+
+    expect(cold.retiredSourceSessionIds).toEqual([scenario.ids.claudeAgentOnly]);
+    // The store retires idempotently; a first import that never reached it is
+    // covered by the next pass re-declaring from the cache.
+    expect(cache).toContain(`"retiredSourceSessionIds":["${scenario.ids.claudeAgentOnly}"]`);
+    expect(warm.retiredSourceSessionIds).toEqual(cold.retiredSourceSessionIds);
+    expect(warm.rows).toEqual(cold.rows);
+    expect(warm.warnings).toEqual(cold.warnings);
+  });
+
   test('reports an OpenCode database without a known session schema instead of returning no rows', async () => {
     const home = await makeHome();
     const databasePath = await createOpenCodeUnknownSchemaDatabase(home);
@@ -276,6 +294,35 @@ describe('real SQLite harness collectors', () => {
     });
     expect(row?.models).toBeUndefined();
     expect(row?.source?.sourcePath).toBe(fixture.paths.repository);
+  });
+
+  test('does not cache Cursor rows attributed while a workspace read failed', async () => {
+    const home = await makeHome();
+    const fixture = await seedHarnessHome(home, { harnesses: ['cursor'] });
+    const workspaceDb = join(fixture.paths.cursorWorkspaceStorage, 'fixture-workspace-hash', 'state.vscdb');
+    const intactWorkspaceDb = `${workspaceDb}.intact`;
+    await rename(workspaceDb, intactWorkspaceDb);
+    await writeFile(workspaceDb, 'not a database');
+
+    const failed = await runAtHome(home, collectCursorResult());
+    const failedRow = failed.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.cursor);
+    await rename(intactWorkspaceDb, workspaceDb);
+    const repaired = await runAtHome(home, collectCursorResult());
+    const repairedRow = repaired.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.cursor);
+    const cached = await runAtHome(home, collectCursorResult());
+
+    // The failing pass is honest about its attribution gap...
+    expect(failed.warnings).toHaveLength(1);
+    expect(failed.warnings[0]?.message).toContain('Failed to read a Cursor workspace database');
+    expect(failed.warnings[0]?.path).toBe(workspaceDb);
+    expect(failedRow?.project).toBe('');
+    expect(failedRow?.projectPath).toBeUndefined();
+    // ...and is not served from the row cache once the workspace reads again: the
+    // state database did not change, the attribution did.
+    expect(repaired.warnings).toEqual([]);
+    expect(repairedRow).toMatchObject({ project: 'fixture', projectPath: fixture.paths.repository });
+    expect(cached.rows).toEqual(repaired.rows);
+    expect(cached.warnings).toEqual([]);
   });
 
   test('reconciles Cursor DB and CSV without double counting the DB usage', async () => {

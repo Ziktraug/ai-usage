@@ -131,7 +131,7 @@ describe('shared collector row cache', () => {
     const stat = dbStat(dbPath);
     expect(cachedDbRows(cache, dbPath, stat)).toBeNull(); // empty cache, no hit yet
 
-    storeDbRows(cache, dbPath, stat, [row('2026-06-01T00:00:00.000Z')], 2);
+    storeDbRows(cache, dbPath, stat, [row('2026-06-01T00:00:00.000Z')], 2, undefined, ['retired-session']);
     expect(cache?.dirty).toBe(true);
     expect(writeDbRowCache(storage, 'opencode-db-cache.json', 1, cache)).toBe(true);
     expect(cache?.dirty).toBe(false);
@@ -140,7 +140,10 @@ describe('shared collector row cache', () => {
     const revived = reloaded?.entries[dbPath]?.rows[0];
     expect(revived?.date).toBeInstanceOf(Date);
     expect(cachedDbRows(reloaded, dbPath, dbStat(dbPath))?.[0]?.name).toBe('fixture');
-    expect(cachedDbCollection(reloaded, dbPath, dbStat(dbPath))?.rejectedMetricRecords).toBe(2);
+    const collection = cachedDbCollection(reloaded, dbPath, dbStat(dbPath));
+    expect(collection?.rejectedMetricRecords).toBe(2);
+    // The retirements declared with the rows are served with them (ADR 0089).
+    expect(collection?.retiredSourceSessionIds).toEqual(['retired-session']);
     if (process.platform !== 'win32') {
       const cachePath = path.join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
       expect(fs.lstatSync(cachePath).mode % 0o1000).toBe(0o600);
@@ -168,6 +171,24 @@ describe('shared collector row cache', () => {
     if (process.platform !== 'win32') {
       expect(fs.lstatSync(aliasPath).mode % 0o1000).toBe(0o644);
       expect(fs.lstatSync(cachePath).mode % 0o1000).toBe(0o600);
+    }
+  });
+
+  test('discards an entry whose retirement list is missing or not a list of session ids', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'collector-cache-'));
+    const dbPath = path.join(home, 'history.db');
+    fs.writeFileSync(dbPath, 'db-bytes');
+    const storage = storageAt(home);
+    const cache = readDbRowCache(storage, 'opencode-db-cache.json', 1);
+    storeDbRows(cache, dbPath, dbStat(dbPath), [row('2026-06-01T00:00:00.000Z')]);
+    writeDbRowCache(storage, 'opencode-db-cache.json', 1, cache);
+    const cachePath = path.join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
+    const written = fs.readFileSync(cachePath, 'utf8');
+    expect(written).toContain('"retiredSourceSessionIds":[]');
+
+    for (const malformed of ['"retiredSourceSessionIds":"x"', '"retiredSourceSessionIds":[1]', '']) {
+      fs.writeFileSync(cachePath, written.replace('"retiredSourceSessionIds":[]', malformed || '"unrelated":1'));
+      expect(readDbRowCache(storage, 'opencode-db-cache.json', 1)?.entries).toEqual({});
     }
   });
 

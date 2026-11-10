@@ -4237,6 +4237,58 @@ describe('Codex external imports', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test('does not retire an import-shaped rollout whose token_count was rejected', async () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-broken-import.jsonl',
+      jsonl(
+        ...importedEvents('broken-import'),
+        at('event_msg', {
+          type: 'token_count',
+          info: { total_token_usage: { total_tokens: 'unreadable' }, last_token_usage: null },
+          rate_limits: null,
+        }),
+      ),
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+
+    expect(result.retiredSourceSessionIds).toEqual([]);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['broken-import']);
+    expect(result.warnings.map(({ operation }) => operation)).toContain('metricValidation');
+  });
+
+  test('does not retire an import-shaped rollout that lost an oversized line', async () => {
+    const storage = new NarrowLineBudgetCodexStorage();
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-wide-import.jsonl',
+      jsonl(...importedEvents('wide-import'), at('event_msg', { type: 'user_message', message: 'x'.repeat(1024) })),
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+
+    expect(result.retiredSourceSessionIds).toEqual([]);
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['wide-import']);
+    expect(result.warnings.map(({ operation }) => operation)).toContain('oversizedHistoryLine');
+  });
+
+  test('never retires an id another rollout emits as a row', async () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText('.codex/sessions/2026/11/08/rollout-shared-import.jsonl', jsonl(...importedEvents('shared')));
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-shared-native.jsonl',
+      jsonl(
+        at('session_meta', { id: 'shared', timestamp: '2026-11-08T17:03:19.000Z', cwd: '/work/native', source: 'cli' }),
+        ...nativeEvents,
+      ),
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['shared']);
+    expect(result.retiredSourceSessionIds).toEqual([]);
+  });
 });
 
 describe('Codex fork_context copies', () => {

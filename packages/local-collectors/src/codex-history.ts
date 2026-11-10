@@ -850,16 +850,21 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     // An imported transcript leaves every Codex output here: it is neither a
     // row nor skill or work evidence of this harness. Its id is returned so the
     // store can retire the row an earlier pass emitted for it.
-    const retiredSourceSessionIds = new Set<string>();
+    const importedSessionIds = new Set<string>();
     const sessions = readSessions.filter((session) => {
       if (!isCodexExternalImport(session)) {
         return true;
       }
       if (session.id) {
-        retiredSourceSessionIds.add(session.id);
+        importedSessionIds.add(session.id);
       }
       return false;
     });
+    // Classified per rollout; an id is retired only when no rollout kept it as a
+    // Codex session, so an import copy never retires the native thread it shares
+    // an id with (whether that thread is emitted or deferred this pass).
+    const keptSessionIds = new Set(sessions.flatMap((session) => (session.id ? [session.id] : [])));
+    const retiredSourceSessionIds = [...importedSessionIds].filter((id) => !keptSessionIds.has(id));
     const byId = new Map<string, CodexSession>();
     for (const session of sessions) {
       // A rollout and its resumed continuation share an id; the one with the
@@ -986,7 +991,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       readFailures,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
-      retiredSourceSessionIds: [...retiredSourceSessionIds],
+      retiredSourceSessionIds,
       sessions: usageSessions,
     };
   }),

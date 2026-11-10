@@ -78,8 +78,9 @@ interface SessionRow {
 interface SchemaRow {
   name: unknown;
 }
-interface CountRow {
+interface MalformedCountRow {
   n: unknown;
+  session_id: unknown;
 }
 interface MessageRow extends OpenCodeMessageColumnRow {
   id: unknown;
@@ -115,8 +116,12 @@ export interface OpenCodeCollectionResult {
    * 0090: `claude-agent`, counted by the Claude collector). They are positively
    * observed and deliberately not OpenCode usage rows; the store retires a row
    * it previously held for them. Never an id that is merely absent or
-   * unreadable, and never an id that this pass also emits as a row. A warm pass
-   * served from the row cache does not re-read the databases and reports none.
+   * unreadable, never an id whose session had a record rejected in this pass
+   * (the rejected record may be the usage that makes it an OpenCode row), and
+   * never an id that this pass also emits as a row. The row cache carries the
+   * retirements with the rows, so a warm pass declares the same ones as the
+   * cold pass that produced them: a retirement the store missed (an aborted or
+   * failed first import) is declared again rather than lost.
    */
   retiredSourceSessionIds: string[];
   rows: CollectorRow[];
@@ -134,7 +139,10 @@ export interface OpenCodeCollectionResult {
 // Bumped to 16 because a migrated message is now read from its legacy record:
 // an entry written by version 15 took the `session_message` copy, whose
 // `time.completed` is the migration instant, and dated legacy sessions wrongly.
-const OPENCODE_DB_CACHE_VERSION = 16;
+// Bumped to 17 because an entry now carries the retirements declared with its
+// rows: an entry written by version 16 has none, and a warm pass served from
+// it would never re-declare a retirement the store missed.
+const OPENCODE_DB_CACHE_VERSION = 17;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 // Observations are tens to hundreds; the bound guards a corrupt database, not
 // ordinary volume.
@@ -188,9 +196,10 @@ export const openCodeV2SkillPartSql = (limit: number) =>
 export const OPENCODE_V2_TURN_SQL = "SELECT session_id, id AS message_id FROM session_message WHERE type = 'user'";
 export const OPENCODE_V2_MESSAGE_SQL = `SELECT id, session_id, 'assistant' AS role, ${OPENCODE_MESSAGE_METRIC_COLUMNS} FROM session_message WHERE type = 'assistant' AND json_valid(data) ORDER BY session_id, time_created, id`;
 // The row is declared an assistant message by its type column, so an unreadable
-// payload is a lost metric record; the metric read above filters it out.
+// payload is a lost metric record; the metric read above filters it out. Counted
+// per session: a session with a lost record is never retired on what is left.
 export const OPENCODE_V2_MALFORMED_ASSISTANT_SQL =
-  "SELECT count(*) n FROM session_message WHERE type = 'assistant' AND NOT json_valid(data)";
+  "SELECT session_id, count(*) n FROM session_message WHERE type = 'assistant' AND NOT json_valid(data) GROUP BY session_id";
 
 interface OpenCodeTableSet {
   kind: OpenCodeSchemaKind;
@@ -235,6 +244,13 @@ interface OpenCodeDatabaseFacts {
   foreignMessageIds: Set<string>;
   meta: Map<string, SessionMeta>;
   rejectedMetricRecords: number;
+  /**
+   * Sessions with at least one rejected record in this read. What was lost may
+   * be the usage that makes the session an OpenCode row, so none of them is
+   * retired on the records that did decode (ADR 0089: retire on a positive
+   * observation only, never on a parse failure).
+   */
+  rejectedSessionIds: Set<string>;
   skillPartRows: SkillPartRow[];
   skillPartsTruncated: boolean;
   toolCount: Map<string, number>;
@@ -263,10 +279,18 @@ const readOpenCodeDatabaseFacts = (
       foreignMessageIds: new Set(),
       meta: new Map(),
       rejectedMetricRecords: 0,
+      rejectedSessionIds: new Set(),
       skillPartRows: [],
       skillPartsTruncated: false,
       toolCount: new Map(),
       turnCount: new Map(),
+    };
+    /** One rejected record; attributed to its session when the record names one. */
+    const reject = (sessionId: unknown, records = 1): void => {
+      facts.rejectedMetricRecords += records;
+      if (typeof sessionId === 'string' && sessionId.length > 0) {
+        facts.rejectedSessionIds.add(sessionId);
+      }
     };
     // Message ids already taken from a schema read earlier. The legacy tables
     // are read first (`openCodeSchemaKinds`): a message present in both is the
@@ -301,7 +325,7 @@ const readOpenCodeDatabaseFacts = (
         const additions = parseOptionalNonNegativeSafeInteger(row.summary_additions);
         const deletions = parseOptionalNonNegativeSafeInteger(row.summary_deletions);
         if (!(typeof row.id === 'string' && additions.ok && deletions.ok)) {
-          facts.rejectedMetricRecords++;
+          reject(row.id);
           continue;
         }
         // The current schema's row describes the session as it is now, so it
@@ -338,7 +362,7 @@ const readOpenCodeDatabaseFacts = (
               continue;
             }
             if (decoded.kind === 'invalid') {
-              facts.rejectedMetricRecords++;
+              reject(row.session_id);
               continue;
             }
             tokenRows++;
@@ -362,12 +386,14 @@ const readOpenCodeDatabaseFacts = (
       if (tableSet.malformedAssistantSql) {
         const malformedRows = yield* withPerfSpan(
           span('malformedMessages'),
-          db.all<CountRow>(tableSet.malformedAssistantSql),
+          db.all<MalformedCountRow>(tableSet.malformedAssistantSql),
           (rows) => ({ db: source, rows: rows.length, schema: tableSet.kind }),
         );
-        const malformed = parseOptionalNonNegativeSafeInteger(malformedRows[0]?.n);
-        // A count that does not parse is itself one unreadable record.
-        facts.rejectedMetricRecords += malformed.ok ? malformed.value : 1;
+        for (const row of malformedRows) {
+          const malformed = parseOptionalNonNegativeSafeInteger(row.n);
+          // A count that does not parse is itself one unreadable record.
+          reject(row.session_id, malformed.ok ? malformed.value : 1);
+        }
       }
 
       const turnRows = yield* withPerfSpan(span('turnCounts'), db.all<TurnRow>(tableSet.turnSql), (rows) => ({
@@ -377,7 +403,7 @@ const readOpenCodeDatabaseFacts = (
       }));
       for (const row of turnRows) {
         if (typeof row.session_id !== 'string') {
-          facts.rejectedMetricRecords++;
+          reject(row.session_id);
           continue;
         }
         if (claim(optionalId(row.message_id))) {
@@ -393,7 +419,7 @@ const readOpenCodeDatabaseFacts = (
       for (const row of toolRows) {
         const count = parseOptionalNonNegativeSafeInteger(row.n);
         if (!(typeof row.session_id === 'string' && count.ok)) {
-          facts.rejectedMetricRecords++;
+          reject(row.session_id);
           continue;
         }
         const toolMessageId = optionalId(row.message_id);
@@ -470,17 +496,15 @@ const collectFromDb = (
       const stat = dbStat(dbPath);
       const cached = cachedDbCollection(cache, dbPath, stat);
       if (cached) {
-        // The row cache carries no retirements: a warm pass reports none, and
-        // the store keeps a retired row retired until the session is re-emitted.
-        return yield* withPerfSpan(
-          'aiUsage.collect.opencode.cache.hit',
-          Effect.succeed({ ...cached, retiredSourceSessionIds: [] }),
-          (result) => ({
-            db: source,
-            observations: result.observations.length,
-            rows: result.rows.length,
-          }),
-        );
+        // The entry carries the retirements declared with its rows: the store
+        // retirement is idempotent, and re-declaring them covers a first pass
+        // whose import never reached the store.
+        return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cached), (result) => ({
+          db: source,
+          observations: result.observations.length,
+          retired: result.retiredSourceSessionIds.length,
+          rows: result.rows.length,
+        }));
       }
 
       const facts = yield* Effect.acquireUseRelease(
@@ -541,9 +565,14 @@ const collectFromDb = (
           for (const [sid, sessionFacts] of facts.factsBySession) {
             const { foreign, owned } = partitionOpenCodeUsageFacts(sessionFacts);
             if (owned.length === 0) {
-              // Every usage-bearing message belongs to another harness: the
-              // session is observed, and deliberately not an OpenCode usage row.
-              retiredSourceSessionIds.push(sid);
+              // Every usage-bearing message that decoded belongs to another
+              // harness: the session is observed, and deliberately not an
+              // OpenCode usage row. Unless a record of it was rejected: the
+              // lost record may be the OpenCode usage, and a parse failure is
+              // never grounds to retire a stored row.
+              if (!facts.rejectedSessionIds.has(sid)) {
+                retiredSourceSessionIds.push(sid);
+              }
               continue;
             }
             const summary = buildOpenCodeProjectionSummary(owned);
@@ -634,7 +663,15 @@ const collectFromDb = (
 
       const afterStat = dbStat(dbPath);
       if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
-        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords, skillObservations);
+        storeDbRows(
+          cache,
+          dbPath,
+          afterStat,
+          sessions,
+          rejectedMetricRecords,
+          skillObservations,
+          retiredSourceSessionIds,
+        );
       }
       return { ...skillObservations, rejectedMetricRecords, retiredSourceSessionIds, rows: sessions };
     }),

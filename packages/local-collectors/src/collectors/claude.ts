@@ -3,9 +3,9 @@ import path from 'node:path';
 import { scheduler } from 'node:timers/promises';
 import {
   extractClaudeSkillObservations,
-  MAX_CLAUDE_RECORDS,
   MAX_CLAUDE_SOURCE_PATHS,
   parseClaudeSessionFacts,
+  parseClaudeTranscript,
 } from '@ai-usage/local-machine/claude-session-facts';
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
@@ -111,7 +111,10 @@ interface ClaudeCache {
 // 23: the project is the checkout root of the launch folder (worktrees and subdirectories fold into
 // their repository), `<synthetic>` records no longer count as model attributions or calls, and a
 // cleanly parsed transcript without usage is retained as a retirement.
-const CLAUDE_CACHE_VERSION = 23;
+// 24: a retirement needs the parser's explicit empty observation. Version 23 also retired
+// transcripts the parser rejected (no timestamped record, malformed or missing usage) and lost
+// their rejected usage counts.
+const CLAUDE_CACHE_VERSION = 24;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
@@ -525,18 +528,20 @@ const parseClaudeFile = (
       rows: [],
       sourcePaths: [],
     };
-    const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
-    if (!initialFacts) {
-      // A record that failed to parse or was dropped for size may be the usage; a
-      // transcript over the reader budget was refused, not read. Neither is a
-      // positive "no usage" observation.
-      result.parsedWithoutUsage =
-        records.length > 0 &&
-        records.length <= MAX_CLAUDE_RECORDS &&
-        rejectedLines === 0 &&
-        transcriptRead.oversizedLines === 0;
+    const parsed = parseClaudeTranscript({ isAgentFile, records, repository: null, sourceSessionId });
+    if (parsed.kind !== 'facts') {
+      // Only the parser's explicit empty observation retires a session, and only
+      // when every line reached it: a line that failed to parse or was dropped for
+      // size may be the usage. A rejected transcript (no timestamps, a reply whose
+      // usage was malformed or missing, over budget) is not a "no usage" observation,
+      // and its rejected usage records are still reported.
+      result.parsedWithoutUsage = parsed.kind === 'empty' && rejectedLines === 0 && transcriptRead.oversizedLines === 0;
+      if (parsed.kind === 'rejected') {
+        result.rejectedMetricRecords = parsed.rejectedMetricRecords;
+      }
       return { lines, result };
     }
+    const initialFacts = parsed.facts;
     const repository = resolveRepository(initialFacts.source.sourcePath);
     result.repositoryKey = repositoryCacheKey(repository);
     result.repositorySourcePath = initialFacts.source.sourcePath;

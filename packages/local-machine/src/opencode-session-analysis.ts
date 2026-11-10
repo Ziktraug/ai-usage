@@ -737,20 +737,27 @@ const detailFromDatabase = (
         if (!read) {
           return null;
         }
-        const { childRows, childrenOmitted, directUserMessageIds, messageRows, promptRows, sessionRow, toolRows } =
-          read;
+        const { childRows, directUserMessageIds, messageRows, promptRows, sessionRow, toolRows } = read;
+        let { childrenOmitted } = read;
         const children: SessionDetailChildLink[] = [];
         for (const row of childRows) {
           const id = boundedString(row.id, MAX_ID_LENGTH);
-          if (id && id !== sourceSessionId && !children.some((child) => child.sourceSessionId === id)) {
-            children.push({
-              agentType: null,
-              evidence: 'opencode-session-parent',
-              label: boundedString(row.title),
-              sourceSessionId: id,
-              spawnTurnIndex: null,
-            });
+          if (!(id && id !== sourceSessionId) || children.some((child) => child.sourceSessionId === id)) {
+            continue;
           }
+          // Each schema was read up to the bound; their union is bounded again
+          // here, since the detail contract caps the deduplicated list.
+          if (children.length >= MAX_CHILD_ROWS) {
+            childrenOmitted = true;
+            break;
+          }
+          children.push({
+            agentType: null,
+            evidence: 'opencode-session-parent',
+            label: boundedString(row.title),
+            sourceSessionId: id,
+            spawnTurnIndex: null,
+          });
         }
 
         // The detail keeps every turn, foreign-owned ones included: it is a

@@ -303,6 +303,12 @@ export const reviveSkillObservationsResult = (value: unknown): { observations: S
   return { observations, valid: true };
 };
 
+/** A cached retirement list: every element a non-empty string. Anything else invalidates the entry. */
+const parseSessionIdList = (value: unknown): string[] | null =>
+  Array.isArray(value) && value.every((candidate) => typeof candidate === 'string' && candidate.length > 0)
+    ? value
+    : null;
+
 export interface DbStat {
   dev: number;
   ino: number;
@@ -356,6 +362,13 @@ export interface CachedSkillObservations {
 
 export interface DbRowCacheEntry extends DbStat, CachedSkillObservations {
   rejectedMetricRecords: number;
+  /**
+   * Source session ids the cold pass declared retired (ADR 0089) alongside these
+   * rows. Cached with them because a warm pass must declare the same
+   * retirements: the store retires idempotently, and a first import that was
+   * aborted or failed would otherwise lose them until the database changes.
+   */
+  retiredSourceSessionIds: string[];
   rows: CollectorRow[];
 }
 
@@ -383,6 +396,7 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
               observations?: unknown;
               rejected?: unknown;
               rejectedMetricRecords?: unknown;
+              retiredSourceSessionIds?: unknown;
               rows: unknown;
               truncated?: unknown;
             }
@@ -410,6 +424,7 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
       const revived = reviveCollectorRowsResult(entry.rows);
       const observations = reviveSkillObservationsResult(entry.observations);
       const observationRejects = parseNonNegativeSafeInteger(entry.rejected);
+      const retiredSourceSessionIds = parseSessionIdList(entry.retiredSourceSessionIds);
       if (
         !(
           rejectedMetricRecords.ok &&
@@ -417,6 +432,7 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
           revived.rejectedMetricRecords === 0 &&
           observations.valid &&
           observationRejects.ok &&
+          retiredSourceSessionIds !== null &&
           typeof entry.truncated === 'boolean'
         )
       ) {
@@ -427,6 +443,7 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
         observations: observations.observations,
         rejected: observationRejects.value,
         rejectedMetricRecords: rejectedMetricRecords.value,
+        retiredSourceSessionIds,
         rows: revived.rows,
         truncated: entry.truncated,
       };
@@ -468,7 +485,13 @@ export const cachedDbCollection = (
   cache: DbRowCache | null,
   dbPath: string,
   stat: DbStat | null,
-): (CachedSkillObservations & { rejectedMetricRecords: number; rows: CollectorRow[] }) | null => {
+):
+  | (CachedSkillObservations & {
+      rejectedMetricRecords: number;
+      retiredSourceSessionIds: string[];
+      rows: CollectorRow[];
+    })
+  | null => {
   if (!(cache && stat)) {
     return null;
   }
@@ -488,6 +511,7 @@ export const cachedDbCollection = (
       observations: cached.observations,
       rejected: cached.rejected,
       rejectedMetricRecords: cached.rejectedMetricRecords,
+      retiredSourceSessionIds: cached.retiredSourceSessionIds,
       rows: cached.rows,
       truncated: cached.truncated,
     };
@@ -497,7 +521,10 @@ export const cachedDbCollection = (
 
 const NO_SKILL_OBSERVATIONS: CachedSkillObservations = { observations: [], rejected: 0, truncated: false };
 
-/** Store freshly collected rows for a db path and mark the cache dirty. No-op without a cache or stat. */
+/**
+ * Store freshly collected rows for a db path and mark the cache dirty. No-op without a cache or stat.
+ * The retirements the same pass declared ride along so a cache hit re-declares them.
+ */
 export const storeDbRows = (
   cache: DbRowCache | null,
   dbPath: string,
@@ -505,10 +532,11 @@ export const storeDbRows = (
   rows: CollectorRow[],
   rejectedMetricRecords = 0,
   skillObservations: CachedSkillObservations = NO_SKILL_OBSERVATIONS,
+  retiredSourceSessionIds: string[] = [],
 ): void => {
   if (!(cache && stat)) {
     return;
   }
-  cache.entries[dbPath] = { ...stat, ...skillObservations, rejectedMetricRecords, rows };
+  cache.entries[dbPath] = { ...stat, ...skillObservations, rejectedMetricRecords, retiredSourceSessionIds, rows };
   cache.dirty = true;
 };

@@ -395,9 +395,10 @@ export const prepareSkillObservationImport = (input: {
 };
 
 /**
- * Exported for the adapter-level tests: no shipped collector declares retirements yet, so the test
- * injects an adapter whose collection carries `retiredSourceSessionIds` and checks it reaches the
- * store. The registry builds the real sources through `createScheduledSourceRegistry`.
+ * Exported for the adapter-level tests: they inject an adapter whose collection carries
+ * `retiredSourceSessionIds` and check the list reaches the store without depending on what the
+ * shipped collectors (Claude, Codex and OpenCode declare retirements; Cursor never does) happen to
+ * retire. The registry builds the real sources through `createScheduledSourceRegistry`.
  */
 export const createSessionSource = (input: {
   adapter: () => Effect.Effect<HarnessAdapter, SourceRunError>;

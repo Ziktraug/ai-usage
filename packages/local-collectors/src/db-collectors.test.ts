@@ -65,7 +65,8 @@ interface OpenCodeMessageFixture {
   [column: string]: unknown;
 }
 interface OpenCodeTableFixture {
-  malformedAssistantRows?: number;
+  /** Per-session counts of `type = 'assistant'` rows whose payload is not valid JSON. */
+  malformedAssistantRows?: Array<{ n: number; session_id: string }>;
   messages: OpenCodeMessageFixture[];
   sessions: OpenCodeSessionFixture[];
   skillParts?: Array<{ data: string; id?: string; message_id: string; session_id: string; time_created?: number }>;
@@ -95,7 +96,7 @@ const writeOpenCodeV2Tables = (storage: TestMemoryStorage, dbPath: string, fixtu
   storage.writeDatabaseRows(dbPath, OPENCODE_V2_TOOL_COUNT_SQL, fixture.tools ?? []);
   storage.writeDatabaseRows(dbPath, OPENCODE_V2_TURN_SQL, fixture.turns ?? []);
   storage.writeDatabaseRows(dbPath, OPENCODE_V2_MESSAGE_SQL, fixture.messages);
-  storage.writeDatabaseRows(dbPath, OPENCODE_V2_MALFORMED_ASSISTANT_SQL, [{ n: fixture.malformedAssistantRows ?? 0 }]);
+  storage.writeDatabaseRows(dbPath, OPENCODE_V2_MALFORMED_ASSISTANT_SQL, fixture.malformedAssistantRows ?? []);
   storage.writeDatabaseRows(dbPath, openCodeV2SkillPartSql(MAX_OPENCODE_SKILL_PARTS), fixture.skillParts ?? []);
 };
 
@@ -945,6 +946,78 @@ describe('DB-backed Harness collectors', () => {
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['both']);
     expect(result.rows[0]).toMatchObject({ calls: 1, provider: 'Codex sub (OC)', tokIn: 9 });
     expect(result.retiredSourceSessionIds).toEqual([]);
+  });
+
+  test('never retires an OpenCode session touched by a rejected message (legacy schema)', () => {
+    const storage = new TestMemoryStorage();
+    const claudeAgentTurn = {
+      cost: 0,
+      created: 1_793_000_000_000,
+      model_id: 'opus',
+      provider_id: 'claude-agent',
+      token_input: 5,
+      token_output: 1,
+    };
+    writeOpenCodeLegacyDatabase(storage, OPENCODE_DB, {
+      sessions: [
+        { id: 'damaged', title: 'Damaged', directory: '/work', summary_additions: 0, summary_deletions: 0 },
+        { id: 'claude-only', title: 'Claude only', directory: '/work', summary_additions: 0, summary_deletions: 0 },
+      ],
+      messages: [
+        // The native message that would make this an OpenCode row does not decode.
+        assistantRow('damaged-openai', 'damaged', {
+          cost: 0,
+          created: 1_792_000_000_000,
+          model_id: 'gpt-5.5',
+          provider_id: 'openai',
+          token_input: -1,
+          token_output: 2,
+        }),
+        assistantRow('damaged-claude', 'damaged', claudeAgentTurn),
+        assistantRow('claude-only-1', 'claude-only', claudeAgentTurn),
+      ],
+    });
+
+    const result = runWithStorage(collectOpenCodeResult, storage);
+
+    expect(result.rows).toEqual([]);
+    // A parse failure is not a positive observation: the damaged session keeps its stored row.
+    expect(result.retiredSourceSessionIds).toEqual(['claude-only']);
+    expect(result.warnings.map((warning) => [warning.operation, warning.rejectedRecords])).toEqual([
+      ['metricValidation', 1],
+    ]);
+  });
+
+  test('never retires an OpenCode session touched by a malformed assistant row (session_v2)', () => {
+    const storage = new TestMemoryStorage();
+    const claudeAgentTurn = {
+      cost: 0,
+      created: 1_793_000_000_000,
+      model_id: 'opus',
+      provider_id: 'claude-agent',
+      token_input: 5,
+      token_output: 1,
+    };
+    writeOpenCodeV2Database(storage, OPENCODE_DB, {
+      sessions: [
+        { id: 'damaged', title: 'Damaged', directory: '/work', summary_additions: 0, summary_deletions: 0 },
+        { id: 'claude-only', title: 'Claude only', directory: '/work', summary_additions: 0, summary_deletions: 0 },
+      ],
+      // The row the metric read excludes by `json_valid(data)` is counted per session.
+      malformedAssistantRows: [{ n: 1, session_id: 'damaged' }],
+      messages: [
+        assistantRow('damaged-claude', 'damaged', claudeAgentTurn),
+        assistantRow('claude-only-1', 'claude-only', claudeAgentTurn),
+      ],
+    });
+
+    const result = runWithStorage(collectOpenCodeResult, storage);
+
+    expect(result.rows).toEqual([]);
+    expect(result.retiredSourceSessionIds).toEqual(['claude-only']);
+    expect(result.warnings.map((warning) => [warning.operation, warning.rejectedRecords])).toEqual([
+      ['metricValidation', 1],
+    ]);
   });
 
   test('reads session_v2 and the legacy session table once per session and once per message', () => {

@@ -2068,9 +2068,17 @@ export const isCodexUsageOwnedByRoot = (
  * row; the collector retires its id instead. A thread the operator continued
  * in Codex keeps its native turns and stays a Codex session. Evaluated on a
  * finished session: `turns` and the token counters are settled by `finish`.
+ *
+ * Retiring is a positive claim about the whole rollout, so a read that lost
+ * anything is never an import: a record dropped as oversized or a token_count
+ * that failed validation may have been the native usage.
  */
 export const isCodexExternalImport = (session: CodexSession): boolean =>
-  session.importedTasks > 0 && session.turns === 0 && session.tin + session.tcr + session.tout === 0;
+  session.importedTasks > 0 &&
+  session.turns === 0 &&
+  session.tin + session.tcr + session.tout === 0 &&
+  session.oversizedLines === 0 &&
+  session.rejectedMetricRecords === 0;
 
 /**
  * Whether `isCodexUsageOwnedByRoot` cannot be decided this pass: the session

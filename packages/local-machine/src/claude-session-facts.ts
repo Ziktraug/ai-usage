@@ -151,6 +151,36 @@ export interface ClaudeCodexLaunch {
   sourceSessionId: string;
 }
 
+/**
+ * Why a transcript yields no facts and is not an explicit empty observation either.
+ *
+ * - `no-session-id`: the caller gave no session identity.
+ * - `record-budget`: more records than the reader accepts; the transcript was refused, not read.
+ * - `no-timestamped-record`: no record carries a parseable `timestamp`, so nothing could be placed
+ *   in time (an empty file, a `bridge-session`-only stub, or a format change).
+ * - `rejected-usage`: at least one model reply carried `usage` that failed validation and nothing
+ *   else made the session a row; the usage may be real and the count is reported.
+ * - `usage-absent`: a model reply (not `<synthetic>`) carried no `usage` field at all; whether it
+ *   consumed tokens is unknown.
+ */
+export type ClaudeTranscriptRejection =
+  | 'no-session-id'
+  | 'no-timestamped-record'
+  | 'record-budget'
+  | 'rejected-usage'
+  | 'usage-absent';
+
+/**
+ * The outcome of reading one transcript. `facts` is a usage session; `empty` is a positive
+ * observation that the transcript holds timestamped records, no model usage, no human prompt and
+ * nothing it had to reject (a session opened and closed without a prompt, or answered only by a
+ * `<synthetic>` local reply); `rejected` is neither, and must never be read as "no usage".
+ */
+export type ClaudeTranscriptParseResult =
+  | { kind: 'empty' }
+  | { kind: 'facts'; facts: ClaudeSessionFacts }
+  | { kind: 'rejected'; reason: ClaudeTranscriptRejection; rejectedMetricRecords: number };
+
 interface ClaudeEvent {
   at: Date;
   index: number;
@@ -207,6 +237,8 @@ interface ClaudeAssistantFacts {
   /** Prompt key of any attributable event, for records outside every counted message. */
   resolveTurnKey: (event: ClaudeEvent) => string | null;
   unattributed: number;
+  /** First observations of a non-synthetic model reply that carried no `usage` field. */
+  usageAbsentRecords: number;
 }
 
 interface ClaudeTurnFacts {
@@ -699,6 +731,7 @@ const collectClaudeAssistants = (
   let partial = false;
   let rejectedMetricRecords = 0;
   let unattributed = 0;
+  let usageAbsentRecords = 0;
   for (const current of events) {
     const { record } = current;
     if (record.type !== 'assistant') {
@@ -726,6 +759,7 @@ const collectClaudeAssistants = (
       continue;
     }
     if (!message.usage) {
+      usageAbsentRecords += 1;
       continue;
     }
     const tokens = parseUsage(message.usage);
@@ -762,6 +796,7 @@ const collectClaudeAssistants = (
     rejectedMetricRecords,
     resolveTurnKey: (event) => promptKeyFor(event, graph, resolver.resolve, promptFacts.promptIdsByRecordedId),
     unattributed,
+    usageAbsentRecords,
   };
 };
 
@@ -1991,15 +2026,29 @@ export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInpu
   return { observations, rejected, truncated };
 };
 
+/** The facts of a usage session, or `null` when the transcript is empty or rejected; see `parseClaudeTranscript`. */
 export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {
-  if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
-    return null;
+  const result = parseClaudeTranscript(input);
+  return result.kind === 'facts' ? result.facts : null;
+};
+
+const rejectedTranscript = (
+  reason: ClaudeTranscriptRejection,
+  rejectedMetricRecords = 0,
+): ClaudeTranscriptParseResult => ({ kind: 'rejected', reason, rejectedMetricRecords });
+
+export const parseClaudeTranscript = (input: ClaudeSessionInput): ClaudeTranscriptParseResult => {
+  if (!input.sourceSessionId) {
+    return rejectedTranscript('no-session-id');
+  }
+  if (input.records.length > MAX_CLAUDE_RECORDS) {
+    return rejectedTranscript('record-budget');
   }
   const events = parseClaudeEvents(input.records);
   const start = events[0]?.at;
   const end = events.at(-1)?.at;
   if (!(start && end)) {
-    return null;
+    return rejectedTranscript('no-timestamped-record');
   }
 
   const graph = createClaudeGraphIndex(events);
@@ -2008,7 +2057,16 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
   const { assistants } = assistantFacts;
   const { prompts, promptsTruncated } = promptFacts;
   if (assistants.length === 0 && prompts.length === 0) {
-    return null;
+    // Nothing made this a session. That is a positive "no usage" observation
+    // only when no model reply was dropped on the way: a reply whose usage
+    // failed validation, or carried none, may be the usage.
+    if (assistantFacts.rejectedMetricRecords > 0) {
+      return rejectedTranscript('rejected-usage', assistantFacts.rejectedMetricRecords);
+    }
+    if (assistantFacts.usageAbsentRecords > 0) {
+      return rejectedTranscript('usage-absent');
+    }
+    return { kind: 'empty' };
   }
 
   const mutableTurns = createClaudeTurns(
@@ -2162,7 +2220,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     turns: detailTurns,
     turnsStatus: turnsPartial ? 'partial' : 'recorded',
   };
-  return {
+  const facts: ClaudeSessionFacts = {
     codexLaunches: links.codexLaunches,
     codexLaunchesTruncated: links.codexLaunchesTruncated,
     detailFacts,
@@ -2202,4 +2260,5 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       ...(metadata.vcs ? { vcs: metadata.vcs } : {}),
     },
   };
+  return { kind: 'facts', facts };
 };

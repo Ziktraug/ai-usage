@@ -17,6 +17,7 @@ import {
 import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import {
   createOpenCodeUnknownSchemaDatabase,
+  createOpenCodeV2Database,
   seedOpenCodeV2Scenario,
 } from '@ai-usage/local-machine/testing/opencode-v2-database';
 import { parseSessionDetail } from '@ai-usage/report-core/session-detail';
@@ -666,5 +667,70 @@ describe('OpenCode session detail', () => {
     });
     expect(detail.coverage.interactionAttribution.status).toBe('unavailable');
     expect(detail.interactions).toEqual([]);
+  });
+
+  test('caps the deduplicated children of both schemas at the detail contract bound', async () => {
+    const home = await makeHome();
+    const database = await createOpenCodeV2Database(home, { legacy: true });
+    const parent = 'many-children';
+    const at = Date.parse('2026-09-01T09:00:00.000Z');
+    try {
+      const insertLegacySession = database.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const insertV2Session = database.prepare(
+        'INSERT INTO session_v2 (id, project_id, parent_id, slug, directory, title, version, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      );
+      database.transaction(() => {
+        // A migrated parent: present in both session tables, so both child lists are read.
+        insertLegacySession.run(parent, null, 'Parent', '/work/parent', 0, 0, at, at);
+        insertV2Session.run(parent, 'project', null, 'slug-parent', '/work/parent', 'Parent', '1', at, at);
+        database.prepare('INSERT INTO message VALUES (?, ?, ?, ?)').run(
+          'parent-assistant',
+          parent,
+          at,
+          JSON.stringify({
+            cost: 0,
+            modelID: 'gpt-5.5',
+            parentID: null,
+            providerID: 'openai',
+            role: 'assistant',
+            time: { completed: at + 1000, created: at },
+            tokens: { input: 4, output: 2 },
+          }),
+        );
+        // Each schema stays under its own bound of 512; only their union exceeds it.
+        for (let index = 0; index < 300; index++) {
+          insertLegacySession.run(`legacy-child-${index}`, parent, null, '/work/parent', 0, 0, at + index, at + index);
+          insertV2Session.run(
+            `v2-child-${index}`,
+            'project',
+            parent,
+            `slug-${index}`,
+            '/work/parent',
+            null,
+            '1',
+            at,
+            at,
+          );
+        }
+      })();
+    } finally {
+      database.close();
+    }
+
+    const analysis = await runAtHome(home, readOpenCodeSessionAnalysis(parent));
+
+    if (!analysis) {
+      throw new Error('Expected analysis for the parent session');
+    }
+    const { detail } = analysis;
+    expect(detail.children).toHaveLength(512);
+    expect(new Set(detail.children.map((child) => child.sourceSessionId)).size).toBe(512);
+    expect(detail.coverage.childDiscovery).toEqual({
+      omittedCount: null,
+      reasons: ['harness-no-spawn-evidence', 'child-budget'],
+      status: 'partial',
+    });
+    // The capped list satisfies the detail contract instead of failing its parse.
+    expect(parseSessionDetail(detail)).toEqual(detail);
   });
 });

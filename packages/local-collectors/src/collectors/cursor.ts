@@ -54,7 +54,9 @@ const MAX_CURSOR_WORKSPACES = 512;
 // Bumped to 8: rows now carry the billed model(s) from `usageData`, Cursor's metered cost as the
 // quota perspective, the workspace folder as project, and token-less composers keep their model.
 // Rows include calculated costs; invalidate them when newly priced models land.
-const CURSOR_DB_CACHE_VERSION = 8;
+// Bumped to 9: the shared cache entry now carries the (always empty for Cursor) retirement list
+// and an entry without it is rejected on read; the bump makes that one-time re-parse explicit.
+const CURSOR_DB_CACHE_VERSION = 9;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -219,14 +221,16 @@ const matchFailure =
 /**
  * Composer → workspace folder, from `workspaceStorage/<hash>/{workspace.json,state.vscdb}`.
  * Read-only and bounded; a workspace that cannot be read costs its own attribution and a warning,
- * never the collection.
+ * never the collection. `readFailed` says whether any read failed: the attribution is then a
+ * product of the failure, not of the databases, and must not be cached against the state database.
  */
 const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, workspaceStorageDir: string | null) =>
   Effect.gen(function* () {
     const projects = new Map<string, string>();
     const warnings: LocalHistoryWarning[] = [];
+    let readFailed = false;
     if (!workspaceStorageDir) {
-      return { projects, warnings };
+      return { projects, readFailed, warnings };
     }
     const listed = yield* storage.readDir(workspaceStorageDir).pipe(matchFailure());
     if (listed._tag === 'failure') {
@@ -236,7 +240,7 @@ const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, worksp
           message: 'Failed to list Cursor workspace storage; sessions carry no project',
         }),
       );
-      return { projects, warnings };
+      return { projects, readFailed: true, warnings };
     }
     const directories = listed.value
       .filter((entry) => entry.isDirectory)
@@ -260,6 +264,7 @@ const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, worksp
       }
       const description = yield* storage.readText(descriptionPath, WORKSPACE_JSON_MAX_BYTES).pipe(matchFailure());
       if (description._tag === 'failure') {
+        readFailed = true;
         warnings.push(
           localHistoryWarningFromError(description.error, {
             harness: 'cursor',
@@ -278,6 +283,7 @@ const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, worksp
         (db) => db.close,
       ).pipe(matchFailure());
       if (composers._tag === 'failure') {
+        readFailed = true;
         warnings.push(
           localHistoryWarningFromError(composers.error, {
             harness: 'cursor',
@@ -294,7 +300,7 @@ const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, worksp
         }
       }
     }
-    return { projects, warnings };
+    return { projects, readFailed, warnings };
   });
 
 const collectCursorSessionsFromDb = (
@@ -523,7 +529,12 @@ const collectCursorSessionsFromDb = (
       }),
       (mappedSessions) => ({ rows: mappedSessions.length }),
     );
-    return { rejectedMetricRecords, sessions, warnings: workspaces.warnings };
+    return {
+      rejectedMetricRecords,
+      sessions,
+      warnings: workspaces.warnings,
+      workspaceReadFailed: workspaces.readFailed,
+    };
   });
 
 /**
@@ -554,7 +565,10 @@ const collectCursorRowsFromDb = (
     const result = yield* collectCursorSessionsFromDb(storage, dbPath, workspaceStorageDir);
     const rows = cursorSessionsToRows(result.sessions);
     const afterStat = dbStat(dbPath);
-    if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
+    // The entry is keyed on the state database alone, and a hit carries no warnings. Rows attributed
+    // while a workspace read failed would be served as complete until that database changed, so they
+    // are not stored: the next pass reads the workspaces again and warns again if they still fail.
+    if (!result.workspaceReadFailed && JSON.stringify(stat) === JSON.stringify(afterStat)) {
       storeDbRows(cache, dbPath, afterStat, rows, result.rejectedMetricRecords);
     }
     yield* withPerfSpan(

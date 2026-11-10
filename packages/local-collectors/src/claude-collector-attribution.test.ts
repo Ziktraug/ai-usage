@@ -275,6 +275,30 @@ describe('Claude retired sessions', () => {
     expect(rowFor(result.rows, 'history-only')).toHaveLength(1);
   });
 
+  test('never retires a transcript it rejected: no timestamps, malformed usage, or a reply without usage', async () => {
+    const { reads, run, rowFor, transcript } = await fixture();
+    await transcript('bridge-only.jsonl', { type: 'bridge-session', sessionId: 'bridge-only' }, { type: 'mode' });
+    await transcript('bad-usage.jsonl', {
+      ...assistant(1, '/clone'),
+      message: { ...assistant(1, '/clone').message, usage: { input_tokens: -1, output_tokens: 'many' } },
+    });
+    await transcript('no-usage.jsonl', {
+      ...assistant(1, '/clone'),
+      message: { id: 'message-1', model: 'claude-sonnet-4-6', content: [{ type: 'text', text: 'Done' }] },
+    });
+    await transcript('idle.jsonl', ...housekeeping('idle'));
+    const cold = await run();
+    expect(cold.retiredSourceSessionIds).toEqual(['idle']);
+    for (const sourceSessionId of ['bridge-only', 'bad-usage', 'no-usage']) {
+      expect(rowFor(cold.rows, sourceSessionId)).toHaveLength(0);
+    }
+    expect(cold.warnings.filter(({ operation }) => operation === 'metricValidation')).toHaveLength(1);
+    reads.clear();
+    const warm = await run();
+    expect(reads.size).toBe(0);
+    expect(warm).toEqual(cold);
+  });
+
   test('stops retiring a session once its transcript gains usage', async () => {
     const { run, rowFor, transcript } = await fixture();
     const filePath = await transcript('late.jsonl', ...housekeeping('late'));

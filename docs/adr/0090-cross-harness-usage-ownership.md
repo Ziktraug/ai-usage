@@ -55,10 +55,15 @@ session as a transcript but not as a usage row. For OpenCode this means:
 
 ## Consequences
 
-The OpenCode row cache is re-parsed (version 15). The 56 double-counted rows
-are retired on the first cold pass after the upgrade; a warm pass served from
-the row cache declares no retirement, which is harmless because retirement is
-sticky until re-emission. The `Claude sub (OC)` provider label disappears:
+The OpenCode row cache is re-parsed (version 15, then 17). The 56 double-counted
+rows are retired on the first cold pass after the upgrade. The cache entry
+carries the retirements declared with its rows, so a warm pass declares the same
+ones: the store retirement is idempotent, and a first pass whose import was
+aborted or failed is covered by the next pass instead of losing the list until
+the database changes. A session with a rejected record (a message that did not
+decode, a malformed `session_message` payload) is never retired on the records
+that did decode: the lost record may be the usage that makes it an OpenCode row
+(ADR 0089). The `Claude sub (OC)` provider label disappears:
 no OpenCode row can be dominated by `claude-agent` any more. Skill observations
 from a `claude-agent` session are still OpenCode's: the skill tool is OpenCode's
 own, and observations are not usage.
