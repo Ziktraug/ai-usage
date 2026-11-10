@@ -163,6 +163,9 @@ describe('DB-backed Harness collectors', () => {
     expect(opencode?.status).toBe('warning');
     expect(opencode?.warnings[0]?.message).toContain('Failed to read OpenCode live database');
     expect(result.warnings.some((warning) => warning.harness === 'opencode')).toBe(true);
+    // No shipped collector declares retirements yet: successful and failed harnesses alike carry an
+    // empty list, never an absent field (ADR 0089).
+    expect(result.harnesses.map((harness) => harness.retiredSourceSessionIds)).toEqual([[], [], []]);
   });
 
   test('collects Claude prompt-history fallbacks when detailed usage files are missing', () => {

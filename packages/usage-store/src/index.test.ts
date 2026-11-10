@@ -44,6 +44,7 @@ import {
   queryUsageMachineFleet,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
+  retireLocalRows,
   USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   USAGE_STORE_SCHEMA_VERSION,
   UsageStoreError,
@@ -2737,5 +2738,250 @@ describe('provider quota storage', () => {
     expect(latest.map(({ firstObservedAt, lastObservedAt }) => ({ firstObservedAt, lastObservedAt }))).toEqual([
       { firstObservedAt: '2026-07-15T12:03:00.000Z', lastObservedAt: '2026-07-15T12:03:00.000Z' },
     ]);
+  });
+});
+
+describe('targeted row retirement', () => {
+  const claudeRow = (sourceSessionId: string): UsageRowWithOptionalSource => ({
+    ...makeRow({ sourceSessionId }),
+    harness: 'Claude',
+    source: { harnessKey: 'claude', sourceSessionId },
+  });
+
+  const readStoredRow = async (dbPath: string, sourceSessionId: string) => {
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      return db
+        .query(
+          `SELECT content_hash, row_json, status, last_seen_at, updated_at FROM usage_rows
+           WHERE origin_machine_id = ? AND harness_key = 'codex' AND source_session_id = ?`,
+        )
+        .get(machineA.id, sourceSessionId) as {
+        content_hash: string;
+        last_seen_at: string;
+        row_json: string;
+        status: string;
+        updated_at: string;
+      } | null;
+    } finally {
+      db.close();
+    }
+  };
+
+  const activeSessionIds = async (dbPath: string, originMachineIds?: string[]) =>
+    (await Effect.runPromise(queryReportRows({ dbPath, ...(originMachineIds ? { originMachineIds } : {}) }))).rows
+      .map((row) => row.source.sourceSessionId)
+      .sort();
+
+  test('retires only the listed active local rows of one machine and harness, then reads stay valid', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-retire-'));
+    const dbPath = usageStorePath(home);
+    const importedAt = new Date('2026-06-10T12:00:00.000Z');
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt,
+        machine: machineA,
+        rows: [
+          makeRow({ sourceSessionId: 'keep' }),
+          makeRow({ sourceSessionId: 'retire-1' }),
+          makeRow({ sourceSessionId: 'retire-2' }),
+          claudeRow('claude-shared'),
+        ],
+      }),
+    );
+    await Effect.runPromise(
+      importPeerMergeBundle({
+        dbPath,
+        localMachineId: machineA.id,
+        bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'retire-1' })]),
+      }),
+    );
+    const before = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+    const retiredAt = new Date('2026-06-11T12:00:00.000Z');
+
+    const result = await Effect.runPromise(
+      retireLocalRows({
+        dbPath,
+        harnessKey: 'codex',
+        machine: machineA,
+        retiredAt,
+        sourceSessionIds: ['retire-1', 'retire-2', 'retire-2', 'claude-shared', 'never-stored'],
+      }),
+    );
+    const after = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+    const active = await Effect.runPromise(queryReportRows({ dbPath }));
+    const tombstones = await Effect.runPromise(
+      queryReportRows({ dbPath, originMachineIds: [machineA.id], statuses: ['deleted'] }),
+    );
+    const stored = await readStoredRow(dbPath, 'retire-1');
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+
+    // `claude-shared` is a Claude row and `never-stored` has no row: both are unmatched, not errors.
+    expect(result).toEqual({ alreadyRetired: 0, retired: 2, skipped: 0, unmatched: 2 });
+    expect(after.usageStoreGeneration).toBe(before.usageStoreGeneration + 1);
+    expect(after.machineFleetGeneration).toBe(before.machineFleetGeneration + 1);
+    // Machine A keeps its Codex `keep` row and its Claude row; the portable copy of `retire-1` on
+    // machine B is untouched.
+    expect(active.skipped).toBe(0);
+    expect(active.rows.map((row) => [row.source.machineId, row.source.sourceSessionId]).sort()).toEqual([
+      [machineA.id, 'claude-shared'],
+      [machineA.id, 'keep'],
+      [machineB.id, 'retire-1'],
+    ]);
+    expect(tombstones.skipped).toBe(0);
+    expect(tombstones.rows.map((row) => row.source.sourceSessionId).sort()).toEqual(['retire-1', 'retire-2']);
+    expect(stored).not.toBeNull();
+    const parsed = JSON.parse(stored?.row_json ?? '{}') as Record<string, unknown>;
+    const { contentHash, ...content } = parsed;
+    expect(stored?.status).toBe('deleted');
+    expect(parsed.status).toBe('deleted');
+    expect(contentHash).toBe(stored?.content_hash);
+    expect(stored?.content_hash).toBe(usageContentHash(content));
+    expect(stored?.last_seen_at).toBe(retiredAt.toISOString());
+    expect(stored?.updated_at).toBe(retiredAt.toISOString());
+    expect(fleet.skipped).toBe(0);
+    expect(fleet.machines.find((item) => item.id === machineA.id)).toMatchObject({
+      lastSeenAt: retiredAt.toISOString(),
+      sessionCount: 2,
+    });
+  });
+
+  test('is idempotent and never touches other machines, other harnesses or portable rows', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-retire-idempotent-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'retire-1' }), claudeRow('claude-1')],
+      }),
+    );
+    await Effect.runPromise(
+      importPeerMergeBundle({
+        dbPath,
+        localMachineId: machineA.id,
+        bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'peer-1' })]),
+      }),
+    );
+    const first = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineA, sourceSessionIds: ['retire-1'] }),
+    );
+    const generations = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+
+    const second = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineA, sourceSessionIds: ['retire-1'] }),
+    );
+    // Same ids under another harness, another machine, and a portable row of the machine it belongs to.
+    const otherHarness = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'claude', machine: machineA, sourceSessionIds: ['retire-1'] }),
+    );
+    const otherMachine = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineB, sourceSessionIds: ['claude-1', 'retire-1'] }),
+    );
+    const portable = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineB, sourceSessionIds: ['peer-1'] }),
+    );
+    const unchanged = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+
+    expect(first).toEqual({ alreadyRetired: 0, retired: 1, skipped: 0, unmatched: 0 });
+    expect(second).toEqual({ alreadyRetired: 1, retired: 0, skipped: 0, unmatched: 0 });
+    expect(otherHarness).toEqual({ alreadyRetired: 0, retired: 0, skipped: 0, unmatched: 1 });
+    expect(otherMachine).toEqual({ alreadyRetired: 0, retired: 0, skipped: 0, unmatched: 2 });
+    expect(portable).toEqual({ alreadyRetired: 0, retired: 0, skipped: 0, unmatched: 1 });
+    expect(unchanged).toEqual(generations);
+    expect(await activeSessionIds(dbPath)).toEqual(['claude-1', 'peer-1']);
+  });
+
+  test('a later collection that re-emits a retired session reactivates it through the ordinary import', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-retire-reactivate-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'again' });
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
+    await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineA, sourceSessionIds: ['again'] }),
+    );
+    const retiredGenerations = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+
+    const reimported = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
+    const reactivatedGenerations = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+    const stored = await readStoredRow(dbPath, 'again');
+    const reactivated = await activeSessionIds(dbPath, [machineA.id]);
+    const repeated = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
+    const retiredAgain = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineA, sourceSessionIds: ['again'] }),
+    );
+
+    expect(reimported).toMatchObject({ inserted: 0, updated: 1, unchanged: 0, deleted: 0 });
+    expect(reactivatedGenerations.usageStoreGeneration).toBe(retiredGenerations.usageStoreGeneration + 1);
+    expect(stored?.status).toBe('active');
+    expect((JSON.parse(stored?.row_json ?? '{}') as { status?: unknown }).status).toBe('active');
+    expect(reactivated).toEqual(['again']);
+    expect(repeated).toMatchObject({ unchanged: 1, updated: 0 });
+    expect(retiredAgain).toEqual({ alreadyRetired: 0, retired: 1, skipped: 0, unmatched: 0 });
+  });
+
+  test('retires an id list spanning more than two lookup batches in one transaction', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-retire-batches-'));
+    const dbPath = usageStorePath(home);
+    const rowCount = 1205;
+    const sourceSessionIds = Array.from({ length: rowCount }, (_, index) => `bulk-${index}`);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [
+          ...sourceSessionIds.map((sourceSessionId) => makeRow({ sourceSessionId })),
+          makeRow({ sourceSessionId: 'keep' }),
+        ],
+      }),
+    );
+    const before = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+
+    const result = await Effect.runPromise(
+      retireLocalRows({
+        dbPath,
+        harnessKey: 'codex',
+        machine: machineA,
+        sourceSessionIds: [...sourceSessionIds, 'missing-1', 'missing-2'],
+      }),
+    );
+    const after = await Effect.runPromise(queryUsageStoreGenerations({ dbPath }));
+    const tombstones = await Effect.runPromise(queryReportRows({ dbPath, statuses: ['deleted'] }));
+
+    expect(result).toEqual({ alreadyRetired: 0, retired: rowCount, skipped: 0, unmatched: 2 });
+    expect(after.usageStoreGeneration).toBe(before.usageStoreGeneration + 1);
+    expect(await activeSessionIds(dbPath)).toEqual(['keep']);
+    expect(tombstones.skipped).toBe(0);
+    expect(tombstones.rows).toHaveLength(rowCount);
+  });
+
+  test('rejects invalid input with a typed error and does nothing for an empty id list', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-retire-invalid-'));
+    const dbPath = usageStorePath(home);
+
+    const emptyList = await Effect.runPromise(
+      retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineA, sourceSessionIds: [] }),
+    );
+    const emptyMachine = await Effect.runPromise(
+      Effect.flip(
+        retireLocalRows({ dbPath, harnessKey: 'codex', machine: { id: '', label: '' }, sourceSessionIds: ['x'] }),
+      ),
+    );
+    const emptyHarness = await Effect.runPromise(
+      Effect.flip(retireLocalRows({ dbPath, harnessKey: '', machine: machineA, sourceSessionIds: ['x'] })),
+    );
+    const emptyId = await Effect.runPromise(
+      Effect.flip(retireLocalRows({ dbPath, harnessKey: 'codex', machine: machineA, sourceSessionIds: ['x', ''] })),
+    );
+
+    expect(emptyList).toEqual({ alreadyRetired: 0, retired: 0, skipped: 0, unmatched: 0 });
+    expect(lstatSync(dbPath, { throwIfNoEntry: false })).toBeUndefined();
+    for (const error of [emptyMachine, emptyHarness, emptyId]) {
+      expect(error).toBeInstanceOf(UsageStoreError);
+      expect(error.reason).toBe('invalid-input');
+      expect(error.operation).toBe('retireLocalRows');
+    }
   });
 });
