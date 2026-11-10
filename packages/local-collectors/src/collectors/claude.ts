@@ -1,10 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { scheduler } from 'node:timers/promises';
-import { extractClaudeSkillObservations, parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
+import {
+  extractClaudeSkillObservations,
+  MAX_CLAUDE_RECORDS,
+  MAX_CLAUDE_SOURCE_PATHS,
+  parseClaudeSessionFacts,
+} from '@ai-usage/local-machine/claude-session-facts';
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
-import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
+import { LocalHistoryStorage, readRegularFileText, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
 import type { SessionVcsRepository } from '@ai-usage/report-core/session-vcs';
@@ -50,6 +55,17 @@ interface ClaudeFileResult {
   observationsTruncated: boolean;
   /** Cached for the same reason as the reject counts: a warm scan must not look complete. */
   oversizedLines: number;
+  /**
+   * Every line parsed, within budget, and the transcript still holds no usage and no human
+   * prompt: the file positively describes a session that is not a usage row. Never set for a
+   * missing, unreadable, oversized or budget-refused transcript.
+   */
+  parsedWithoutUsage: boolean;
+  /**
+   * The checkout root is filesystem state outside the transcript's size+mtime key, like the
+   * repository: a hit re-resolves it for the recorded folders and re-parses when it changed.
+   */
+  projectRoot: string | null;
   rejectedMetricRecords: number;
   /** Cached so a warm re-scan reports the same partial-data state as a cold one. */
   rejectedObservations: number;
@@ -60,6 +76,8 @@ interface ClaudeFileResult {
   repositoryKey: string | null;
   repositorySourcePath: string | null;
   rows: CollectorRow[];
+  /** The session's distinct working folders in order of first observation; the first is the launch folder. */
+  sourcePaths: string[];
 }
 interface ClaudeCacheEntry extends FileFingerprint, ClaudeFileResult {}
 interface ClaudeCache {
@@ -90,7 +108,10 @@ interface ClaudeCache {
 // retain matching native thread evidence when a resumed command ends in error.
 // Bumped to 21 to reprice rows after the GPT-5.2/gpt-4.1/o4-mini/Haiku 5.5 pricing update.
 // 22: several `cwd` of one clone (subdirectories, worktrees) no longer mark the VCS context partial.
-const CLAUDE_CACHE_VERSION = 22;
+// 23: the project is the checkout root of the launch folder (worktrees and subdirectories fold into
+// their repository), `<synthetic>` records no longer count as model attributions or calls, and a
+// cleanly parsed transcript without usage is retained as a retirement.
+const CLAUDE_CACHE_VERSION = 23;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
@@ -133,10 +154,15 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
   const oversizedLines = parseNonNegativeSafeInteger(value.oversizedLines);
   const rejectedMetricRecords = parseNonNegativeSafeInteger(value.rejectedMetricRecords);
   const rejectedObservations = parseNonNegativeSafeInteger(value.rejectedObservations);
-  const { repositoryKey, repositorySourcePath } = value;
+  const { projectRoot, repositoryKey, repositorySourcePath, sourcePaths } = value;
   if (
     !(
       size.ok &&
+      Array.isArray(sourcePaths) &&
+      sourcePaths.length <= MAX_CLAUDE_SOURCE_PATHS &&
+      sourcePaths.every((folder: unknown) => typeof folder === 'string' && folder.length > 0) &&
+      typeof value.parsedWithoutUsage === 'boolean' &&
+      (projectRoot === null || typeof projectRoot === 'string') &&
       typeof value.mtimeMs === 'number' &&
       Number.isFinite(value.mtimeMs) &&
       oversizedLines.ok &&
@@ -166,11 +192,14 @@ const reviveClaudeCacheEntry = (value: unknown, provider: ClaudeProvider): Claud
     observations: observations.observations,
     observationsTruncated: value.observationsTruncated,
     oversizedLines: oversizedLines.value,
+    parsedWithoutUsage: value.parsedWithoutUsage,
+    projectRoot,
     rejectedMetricRecords: rejectedMetricRecords.value,
     rejectedObservations: rejectedObservations.value,
     repositoryKey,
     repositorySourcePath,
     rows: revived.rows,
+    sourcePaths,
   };
 };
 
@@ -191,6 +220,77 @@ const createClaudeRepositoryResolver = (): ClaudeRepositoryResolver => {
     }
     return resolved.get(sourcePath) ?? null;
   };
+};
+
+const MAX_PROJECT_ROOT_SEARCH_DEPTH = 32;
+const MAX_GIT_POINTER_BYTES = 4096;
+const GIT_POINTER = /^gitdir:\s*(.+?)\s*$/m;
+const LINKED_WORKTREE_GIT_DIR = /^(.*)[/\\]\.git[/\\]worktrees[/\\][^/\\]+$/;
+
+/**
+ * The checkout root a folder belongs to: the directory holding `.git`. A linked worktree (`git
+ * worktree add`, including Claude Code's `.claude/worktrees/<name>` and sibling folders outside the
+ * clone) carries a `.git` file pointing into `<root>/.git/worktrees/<name>`; it resolves to that
+ * main root so every worktree of one repository is the same project. A deleted worktree inside the
+ * clone still walks up to the clone. `null` when no checkout encloses the folder.
+ */
+export const resolveClaudeProjectRoot = (folder: string | null): string | null => {
+  if (!(folder && path.isAbsolute(folder) && !folder.includes('\0'))) {
+    return null;
+  }
+  let current = path.resolve(folder);
+  for (let depth = 0; depth <= MAX_PROJECT_ROOT_SEARCH_DEPTH; depth += 1) {
+    const gitPath = path.join(current, '.git');
+    try {
+      const gitStat = fs.lstatSync(gitPath);
+      if (gitStat.isDirectory()) {
+        return current;
+      }
+      if (gitStat.isFile()) {
+        const pointer = GIT_POINTER.exec(readRegularFileText(gitPath, MAX_GIT_POINTER_BYTES))?.[1];
+        const gitDirectory = pointer ? path.resolve(current, pointer) : null;
+        const linked = gitDirectory ? LINKED_WORKTREE_GIT_DIR.exec(gitDirectory)?.[1] : undefined;
+        return linked ? linked : current;
+      }
+    } catch {
+      // Missing or unsafe checkout metadata is absence, never session failure.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return null;
+};
+
+type ClaudeProjectRootResolver = (folder: string) => string | null;
+
+/** Memoised per scan: transcripts launched in one folder share a single lookup. */
+const createClaudeProjectRootResolver = (): ClaudeProjectRootResolver => {
+  const resolved = new Map<string, string | null>();
+  return (folder) => {
+    if (!resolved.has(folder)) {
+      resolved.set(folder, resolveClaudeProjectRoot(folder));
+    }
+    return resolved.get(folder) ?? null;
+  };
+};
+
+/**
+ * The session's project is the checkout of the first recorded folder that lies in one. The launch
+ * folder is the operator's stated intent and stays fixed for the session's lifetime, unlike the
+ * last `cd`; skipping folders outside any checkout covers sessions launched from a scratch
+ * workspace or a parent folder before moving into the repository.
+ */
+const claudeProjectRootFor = (sourcePaths: readonly string[], resolveProjectRoot: ClaudeProjectRootResolver) => {
+  for (const folder of sourcePaths) {
+    const root = resolveProjectRoot(folder);
+    if (root !== null) {
+      return root;
+    }
+  }
+  return null;
 };
 
 const writeClaudeCache = (
@@ -360,6 +460,13 @@ export interface ClaudeCollectionResult {
    * not a new collection source. The source vocabulary is unchanged.
    */
   observations: SkillObservation[];
+  /**
+   * Source session ids whose transcript exists, parsed cleanly and holds neither usage nor a human
+   * prompt (mode, permission and system records only): positively observed and deliberately not a
+   * usage row, so a row stored for them earlier may be retired. Never a session that is merely
+   * absent, unreadable, over budget, or only known from the prompt-history fallback.
+   */
+  retiredSourceSessionIds: string[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
@@ -377,13 +484,14 @@ const parseClaudeFile = (
   filePath: string,
   provider: ClaudeProvider,
   resolveRepository: ClaudeRepositoryResolver,
+  resolveProjectRoot: ClaudeProjectRootResolver,
 ): Effect.Effect<{ lines: number; result: ClaudeFileResult }, LocalHistoryError> =>
   Effect.gen(function* () {
     const sourceSessionId = path.basename(filePath, '.jsonl');
     const isAgentFile = path.basename(filePath).startsWith('agent-');
     const records: unknown[] = [];
     let lines = 0;
-    let rejectedObservations = 0;
+    let rejectedLines = 0;
     const transcriptRead = yield* storage.readLines(filePath, (line) => {
       if (!line) {
         return;
@@ -396,7 +504,7 @@ const parseClaudeFile = (
         // A live JSONL file can expose its final record while Claude Code is
         // still appending it. It may be a Skill call, so dropping it cannot
         // support an exact invocation-absence claim.
-        rejectedObservations++;
+        rejectedLines++;
       }
     });
     // Extract independently: a transcript can record a skill invocation without
@@ -408,19 +516,32 @@ const parseClaudeFile = (
       observations: extraction.observations,
       observationsTruncated: extraction.truncated,
       oversizedLines: transcriptRead.oversizedLines,
+      parsedWithoutUsage: false,
+      projectRoot: null,
       rejectedMetricRecords: 0,
-      rejectedObservations: rejectedObservations + extraction.rejected,
+      rejectedObservations: rejectedLines + extraction.rejected,
       repositoryKey: null,
       repositorySourcePath: null,
       rows: [],
+      sourcePaths: [],
     };
     const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
     if (!initialFacts) {
+      // A record that failed to parse or was dropped for size may be the usage; a
+      // transcript over the reader budget was refused, not read. Neither is a
+      // positive "no usage" observation.
+      result.parsedWithoutUsage =
+        records.length > 0 &&
+        records.length <= MAX_CLAUDE_RECORDS &&
+        rejectedLines === 0 &&
+        transcriptRead.oversizedLines === 0;
       return { lines, result };
     }
     const repository = resolveRepository(initialFacts.source.sourcePath);
     result.repositoryKey = repositoryCacheKey(repository);
     result.repositorySourcePath = initialFacts.source.sourcePath;
+    result.sourcePaths = [...initialFacts.source.sourcePaths];
+    result.projectRoot = claudeProjectRootFor(result.sourcePaths, resolveProjectRoot);
     const facts = repository
       ? (parseClaudeSessionFacts({
           isAgentFile,
@@ -463,7 +584,9 @@ const parseClaudeFile = (
       models: report.models,
       modelSegments: report.modelSegments,
       origin: report.sidechain ? 'subagent' : 'human',
-      project: base(source.sourcePath),
+      // The checkout the session started working in, whatever folder it ended in:
+      // a worktree or package of one repository is that repository's work.
+      project: base(result.projectRoot ?? source.sourcePaths[0] ?? source.sourcePath),
       tokens: report.tokens,
       cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
       calls: report.calls,
@@ -612,6 +735,65 @@ const reconcileClaudeLineage = (
   return { rows: linkedRows, warnings };
 };
 
+interface ClaudeParsedFile {
+  filePath: string;
+  result: ClaudeFileResult;
+}
+
+const rowTokenTotal = (row: CollectorRow): number => row.tokIn + row.tokOut + row.tokCr + row.tokCw;
+const rowEndTime = (row: CollectorRow): number => (row.endDate ?? row.date)?.getTime() ?? 0;
+
+/** Negative when `left` is the more complete copy of one session; the path breaks exact ties. */
+const compareClaudeCopies = (left: ClaudeParsedFile, right: ClaudeParsedFile): number => {
+  const leftRow = left.result.rows[0];
+  const rightRow = right.result.rows[0];
+  if (!(leftRow && rightRow)) {
+    return (
+      Number(rightRow !== undefined) - Number(leftRow !== undefined) || left.filePath.localeCompare(right.filePath)
+    );
+  }
+  return (
+    rowTokenTotal(rightRow) - rowTokenTotal(leftRow) ||
+    rowEndTime(rightRow) - rowEndTime(leftRow) ||
+    left.filePath.localeCompare(right.filePath)
+  );
+};
+
+/**
+ * One transcript per session. A sub-agent transcript is copied under every parent that forked or
+ * resumed the conversation, so the same session id can appear in two `subagents/` folders; the
+ * copies are identical or one is a prefix of the other. Keeping the most complete copy (most
+ * deduplicated usage, then the later last event, then the path) makes the result independent of
+ * the walk order instead of letting the store keep whichever copy it saw last. A session is
+ * retired only when every copy positively parsed without usage.
+ */
+const selectClaudeTranscripts = (
+  files: readonly ClaudeParsedFile[],
+): { duplicates: number; retained: ClaudeParsedFile[]; retiredSourceSessionIds: string[] } => {
+  const copiesBySession = new Map<string, ClaudeParsedFile[]>();
+  for (const file of files) {
+    const sourceSessionId = path.basename(file.filePath, '.jsonl');
+    const copies = copiesBySession.get(sourceSessionId) ?? [];
+    copies.push(file);
+    copiesBySession.set(sourceSessionId, copies);
+  }
+  const retained: ClaudeParsedFile[] = [];
+  const retiredSourceSessionIds: string[] = [];
+  let duplicates = 0;
+  for (const [sourceSessionId, copies] of copiesBySession) {
+    const winner = [...copies].sort(compareClaudeCopies)[0];
+    if (!winner) {
+      continue;
+    }
+    retained.push(winner);
+    duplicates += copies.length - 1;
+    if (winner.result.rows.length === 0 && copies.every((copy) => copy.result.parsedWithoutUsage)) {
+      retiredSourceSessionIds.push(sourceSessionId);
+    }
+  }
+  return { duplicates, retained, retiredSourceSessionIds: retiredSourceSessionIds.sort() };
+};
+
 export const collectClaudeResult = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePaths(storage);
@@ -642,6 +824,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   const declaredChildren = new Map<CollectorRow, ClaudeFileResult>();
   const nextFiles: Record<string, ClaudeCacheEntry> = {};
   const observations: SkillObservation[] = [];
+  const retiredSourceSessionIds: string[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   let rejectedMetricRecords = 0;
   let rejectedObservations = 0;
@@ -655,6 +838,8 @@ export const collectClaudeResult = Effect.gen(function* () {
       let parsed = 0;
       let hits = 0;
       const resolveRepository = createClaudeRepositoryResolver();
+      const resolveProjectRoot = createClaudeProjectRootResolver();
+      const transcripts: ClaudeParsedFile[] = [];
       for (const filePath of files) {
         const fingerprint = fileFingerprint(filePath);
         const cached =
@@ -665,7 +850,8 @@ export const collectClaudeResult = Effect.gen(function* () {
           fingerprint &&
           cached.size === fingerprint.size &&
           cached.mtimeMs === fingerprint.mtimeMs &&
-          cached.repositoryKey === repositoryCacheKey(resolveRepository(cached.repositorySourcePath))
+          cached.repositoryKey === repositoryCacheKey(resolveRepository(cached.repositorySourcePath)) &&
+          cached.projectRoot === claudeProjectRootFor(cached.sourcePaths, resolveProjectRoot)
         ) {
           result = cached;
           nextFiles[filePath] = cached;
@@ -674,7 +860,7 @@ export const collectClaudeResult = Effect.gen(function* () {
           if (parsed > 0) {
             yield* Effect.promise(() => scheduler.yield());
           }
-          const collected = yield* parseClaudeFile(storage, filePath, provider, resolveRepository);
+          const collected = yield* parseClaudeFile(storage, filePath, provider, resolveRepository, resolveProjectRoot);
           parsed++;
           lines += collected.lines;
           result = collected.result;
@@ -682,6 +868,10 @@ export const collectClaudeResult = Effect.gen(function* () {
             nextFiles[filePath] = { ...fingerprint, ...result };
           }
         }
+        transcripts.push({ filePath, result });
+      }
+      const selected = selectClaudeTranscripts(transcripts);
+      for (const { result } of selected.retained) {
         rows.push(...result.rows);
         for (const row of result.rows) {
           declaredChildren.set(row, result);
@@ -692,14 +882,17 @@ export const collectClaudeResult = Effect.gen(function* () {
         observationsTruncated ||= result.observationsTruncated;
         oversizedLines += result.oversizedLines;
       }
+      retiredSourceSessionIds.push(...selected.retiredSourceSessionIds);
       const pruned = Object.keys(cache?.files ?? {}).filter((filePath) => !Object.hasOwn(nextFiles, filePath)).length;
       return {
         files: files.length,
         parsed,
         hits,
         pruned,
+        duplicates: selected.duplicates,
         lines,
         observations: observations.length,
+        retired: retiredSourceSessionIds.length,
         sessions: rows.length,
       };
     }),
@@ -748,6 +941,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   return {
     observationCompleteness: claudeObservationCompleteness(rejectedObservations, observationsTruncated),
     observations,
+    retiredSourceSessionIds,
     rows: lineage.rows,
     warnings: [warning, observationWarning, oversizedWarning, truncationWarning, ...lineage.warnings].filter(
       (value) => value !== null,

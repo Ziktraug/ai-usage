@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
+import {
+  CLAUDE_SYNTHETIC_MODEL,
+  MAX_CLAUDE_SOURCE_PATHS,
+  parseClaudeSessionFacts,
+} from '@ai-usage/local-machine/claude-session-facts';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import { normalizeSessionVcsRepository } from '@ai-usage/report-core/session-vcs';
 
@@ -1075,4 +1079,128 @@ test.each([
   });
   expect(facts?.source.vcs?.pullRequests).toHaveLength(1);
   expect(facts?.source.vcs?.pullRequests[0]?.provenance).toBe(proven ? 'session-pr-link' : undefined);
+});
+
+describe('parseClaudeSessionFacts working folders', () => {
+  const prompt = (index: number, cwd: string) =>
+    event({
+      type: 'user',
+      timestamp: new Date(Date.UTC(2026, 6, 1, 15, 0, index)).toISOString(),
+      uuid: `user-${index}`,
+      cwd,
+      message: { content: `Prompt ${index}` },
+    });
+
+  test('records distinct folders in order of first observation and keeps the last as sourcePath', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [prompt(0, '/clone'), prompt(1, '/clone/packages/app'), prompt(2, '/clone'), prompt(3, '/elsewhere')],
+      repository: null,
+      sourceSessionId: 'folders',
+    });
+    expect(facts?.source.sourcePaths).toEqual(['/clone', '/clone/packages/app', '/elsewhere']);
+    expect(facts?.source.sourcePath).toBe('/elsewhere');
+  });
+
+  test('bounds the distinct folders without losing the last one', () => {
+    const facts = parseClaudeSessionFacts({
+      records: Array.from({ length: MAX_CLAUDE_SOURCE_PATHS + 5 }, (_, index) => prompt(index, `/folder-${index}`)),
+      repository: null,
+      sourceSessionId: 'many-folders',
+    });
+    expect(facts?.source.sourcePaths).toHaveLength(MAX_CLAUDE_SOURCE_PATHS);
+    expect(facts?.source.sourcePaths[0]).toBe('/folder-0');
+    expect(facts?.source.sourcePath).toBe(`/folder-${MAX_CLAUDE_SOURCE_PATHS + 4}`);
+  });
+
+  test('reports no folders for a transcript that recorded no cwd', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [
+        event({ type: 'user', timestamp: '2026-07-01T15:00:00.000Z', uuid: 'user-0', message: { content: 'Hello' } }),
+      ],
+      repository: null,
+      sourceSessionId: 'no-cwd',
+    });
+    expect(facts?.source.sourcePaths).toEqual([]);
+    expect(facts?.source.sourcePath).toBeNull();
+  });
+});
+
+describe('parseClaudeSessionFacts synthetic records', () => {
+  const synthetic = (index: number) =>
+    event({
+      type: 'assistant',
+      timestamp: `2026-07-01T15:0${index}:30.000Z`,
+      uuid: `synthetic-${index}`,
+      parentUuid: `user-${index}`,
+      requestId: `req-synthetic-${index}`,
+      error: 'rate_limit',
+      isApiErrorMessage: true,
+      message: {
+        id: `synthetic-message-${index}`,
+        model: CLAUDE_SYNTHETIC_MODEL,
+        content: [{ type: 'text', text: "You've hit your monthly spend limit" }],
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    });
+  const user = (index: number) =>
+    event({
+      type: 'user',
+      timestamp: `2026-07-01T15:0${index}:00.000Z`,
+      uuid: `user-${index}`,
+      cwd: '/clone',
+      message: { content: `Prompt ${index}` },
+    });
+  const real = (index: number) =>
+    event({
+      type: 'assistant',
+      timestamp: `2026-07-01T15:0${index}:20.000Z`,
+      uuid: `assistant-${index}`,
+      parentUuid: `user-${index}`,
+      requestId: `req-${index}`,
+      message: {
+        id: `message-${index}`,
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'text', text: 'Answer' }],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    });
+
+  test('keeps the session of a human prompt answered only by a synthetic record, with no model or call', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [user(0), synthetic(0)],
+      repository: null,
+      sourceSessionId: 'spend-limit',
+    });
+    expect(facts).not.toBeNull();
+    expect(facts?.report).toMatchObject({
+      calls: 0,
+      model: 'unknown',
+      modelSegments: [],
+      models: [],
+      tokens: { cr: 0, cw: 0, in: 0, out: 0 },
+      turns: 1,
+    });
+    expect(facts?.projection).toMatchObject({ calls: 0, modelSegments: [], turns: 1 });
+    expect(facts?.detailFacts.phases).toEqual([]);
+    expect(facts?.detailFacts.turns[0]).toMatchObject({ calls: 0 });
+  });
+
+  test('excludes synthetic records from model attribution, calls and segments next to real usage', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [user(0), real(0), user(1), synthetic(1)],
+      repository: null,
+      sourceSessionId: 'mixed',
+    });
+    expect(facts?.report).toMatchObject({ calls: 1, model: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'] });
+    expect(facts?.report.modelSegments.map(({ model }) => model)).toEqual(['claude-sonnet-4-6']);
+    expect(facts?.report.rejectedMetricRecords).toBe(0);
+    expect(facts?.detailFacts.phases.map(({ model }) => model)).toEqual(['claude-sonnet-4-6']);
+    expect(facts?.detailFacts.turns).toHaveLength(2);
+  });
+
+  test('yields no session for synthetic records without a human prompt', () => {
+    expect(
+      parseClaudeSessionFacts({ records: [synthetic(0)], repository: null, sourceSessionId: 'synthetic-only' }),
+    ).toBeNull();
+  });
 });

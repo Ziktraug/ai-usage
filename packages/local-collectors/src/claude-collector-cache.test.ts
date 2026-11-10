@@ -182,7 +182,7 @@ describe('Claude per-file collector cache', () => {
     }
     await writeFile(cachePath, JSON.stringify(cache));
     expect(await run()).toEqual(cold);
-    expect((await readCache(cachePath)).version).toBe(22);
+    expect((await readCache(cachePath)).version).toBe(23);
     expect(reads).toEqual(
       new Map([
         [alpha, 2],
@@ -256,7 +256,7 @@ describe('Claude per-file collector cache', () => {
         { harness: 'codex', sourceSessionId: delegatedId(0) },
       ]);
       const cache = await readCache(cachePath);
-      expect(cache.version).toBe(22);
+      expect(cache.version).toBe(23);
       cache.version = version;
       const cachedRows = record(cache.files[alpha]).rows;
       if (!Array.isArray(cachedRows)) {
@@ -273,7 +273,7 @@ describe('Claude per-file collector cache', () => {
           [beta, 2],
         ]),
       );
-      expect((await readCache(cachePath)).version).toBe(22);
+      expect((await readCache(cachePath)).version).toBe(23);
       expect(await run()).toEqual(cold);
       expect(await run()).toEqual(cold);
       expect(reads).toEqual(
@@ -344,7 +344,7 @@ describe('Claude per-file collector cache', () => {
     reads.clear();
     expect(await run()).toEqual(cold);
     expect([...reads.keys()].sort()).toEqual([alpha, beta, child].sort());
-    expect((await readCache(cachePath)).version).toBe(22);
+    expect((await readCache(cachePath)).version).toBe(23);
   });
 
   test('keeps competing declarations unresolved on cold and warm scans, then rechecks the remaining evidence', async () => {
@@ -456,16 +456,17 @@ describe('Claude per-file collector cache', () => {
     reads.clear();
     expect(await run()).toEqual(cold);
     expect(reads.size).toBe(0);
+    // A second copy of one session is not a second identity: the more complete copy
+    // stands alone and only the cycle remains in conflict.
     const duplicateDirectory = path.join(directory, 'duplicate');
     await mkdir(duplicateDirectory);
     await writeFile(path.join(duplicateDirectory, 'agent-right.jsonl'), jsonl(assistant('duplicate')));
     const duplicate = await run();
-    expect(
-      duplicate.rows
-        .filter((row) => row.source?.sourceSessionId === 'agent-right')
-        .every((row) => !row.source?.parentSourceSessionId),
-    ).toBe(true);
-    expect(duplicate.warnings.some((warning) => warning.operation === 'claude.lineage-conflict')).toBe(true);
+    expect(duplicate.rows.filter((row) => row.source?.sourceSessionId === 'agent-right')).toHaveLength(1);
+    expect(duplicate.rows).toEqual(cold.rows);
+    expect(duplicate.warnings).toEqual([
+      expect.objectContaining({ operation: 'claude.lineage-conflict', affectedSessions: 2 }),
+    ]);
   });
 
   test('parses every transcript on a cold run and writes one entry per file', async () => {
@@ -482,7 +483,7 @@ describe('Claude per-file collector cache', () => {
     );
     expect(result.rows).toHaveLength(2);
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(22);
+    expect(cache.version).toBe(23);
     expect(cache.provider).toBe('Claude sub');
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
     expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(
@@ -603,7 +604,7 @@ describe('Claude per-file collector cache', () => {
     expect(Object.keys((await readCache(cachePath)).files)).toEqual([beta]);
   });
 
-  test('ignores version 14 caches and rewrites them as version 22 after a full parse', async () => {
+  test('ignores version 14 caches and rewrites them as version 23 after a full parse', async () => {
     const { alpha, beta, cachePath, reads, run } = await fixture();
     const cold = await run();
     await writeFile(
@@ -619,7 +620,7 @@ describe('Claude per-file collector cache', () => {
       ]),
     );
     const cache = await readCache(cachePath);
-    expect(cache.version).toBe(22);
+    expect(cache.version).toBe(23);
     expect(Object.keys(cache.files)).toEqual([...reads.keys()]);
   });
 
