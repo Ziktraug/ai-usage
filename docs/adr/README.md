@@ -120,6 +120,7 @@ was deleted.
 | [0088](0088-incremental-jira-synchronization.md) | Incremental Jira synchronization with durable pending reads | 2026-10-28 | Accepted; amends 0054, 0079; extends 0009, 0075 |
 | [0089](0089-collector-declared-row-retirement.md) | Usage rows are retired only by explicit collector declaration, never by absence | 2026-11-10 | Accepted; extends 0009, 0016, 0075 |
 | [0090](0090-cross-harness-usage-ownership.md) | One harness owns a session's usage; OpenCode retires `claude-agent` sessions the Claude collector counts | 2026-11-10 | Accepted; extends 0075 |
+| [0091](0091-imported-transcripts-are-not-harness-usage.md) | Transcripts a harness imported from another harness are not its usage; collectors retire them explicitly | 2026-11-10 | Accepted; extends 0009, 0075 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

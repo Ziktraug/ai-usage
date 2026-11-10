@@ -865,7 +865,7 @@ test('rejects a symlink to an archive and an archive that is not exactly one fra
   }
 });
 
-test('refuses a frame that omits its content size even though the decoder accepts it', async () => {
+test('reads a frame that omits its content size, bounded by what it actually emits', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-archive-undeclared-'));
   try {
     const text = 'first\nsecond\n';
@@ -875,6 +875,16 @@ test('refuses a frame that omits its content size even though the decoder accept
     expect((await decodeWithReaderDecoder(undeclared)).toString()).toBe(text);
     const undeclaredPath = path.join(root, 'undeclared.jsonl.zst');
     fs.writeFileSync(undeclaredPath, undeclared);
+    // Codex 0.163 wrote some archives this way (three real rollouts of
+    // 2026-10-26 start `28 b5 2f fd 00 58`); `node:zlib` with the content size
+    // flag cleared produces the same descriptor byte as those files.
+    const compressedLines = '{"n":1}\n{"n":2}\n{"n":3}\n'.repeat(2048);
+    const compressed = zstdCompressSync(Buffer.from(compressedLines), {
+      params: { [zlibConstants.ZSTD_c_contentSizeFlag]: 0 },
+    });
+    expect(compressed.readUInt8(4)).toBe(0x00);
+    const compressedPath = path.join(root, 'compressed-undeclared.jsonl.zst');
+    fs.writeFileSync(compressedPath, compressed);
     // Frame_Header_Descriptor 0x20: single segment with a 1-byte content size
     // that overstates the Raw block by one byte.
     const mismatchedPath = path.join(root, 'mismatched.jsonl.zst');
@@ -884,12 +894,31 @@ test('refuses a frame that omits its content size even though the decoder accept
     );
     const storage = createLocalHistoryStorage(root);
 
-    const result = await Effect.runPromise(Effect.result(storage.readLines(undeclaredPath, () => undefined)));
-    expect(result._tag).toBe('Failure');
-    if (result._tag === 'Failure') {
-      expect(result.failure).toMatchObject({ operation: 'readLines.decompress', path: undeclaredPath });
-      expect(String((result.failure.cause as Error).cause)).toContain('does not declare its content size');
+    const visited: string[] = [];
+    const result = await Effect.runPromise(storage.readLines(undeclaredPath, (line) => visited.push(line)));
+    expect(visited).toEqual(['first', 'second']);
+    expect(result.bytes).toBe(text.length);
+
+    const compressedVisited: string[] = [];
+    const compressedResult = await Effect.runPromise(
+      storage.readLines(compressedPath, (line) => compressedVisited.push(line)),
+    );
+    expect(compressedVisited).toEqual(compressedLines.split('\n').filter(Boolean));
+    expect(compressedResult.bytes).toBe(compressedLines.length);
+
+    // Without a declaration the bound is enforced on the decoded bytes as they
+    // stream: decoding stops at the limit and the read fails as a bound
+    // violation instead of being handed out truncated.
+    const boundedVisited: string[] = [];
+    const bounded = await Effect.runPromise(
+      Effect.result(storage.readLines(compressedPath, (line) => boundedVisited.push(line), { maxBytes: 4096 })),
+    );
+    expect(bounded._tag).toBe('Failure');
+    if (bounded._tag === 'Failure') {
+      expect(bounded.failure).toMatchObject({ operation: 'readLines.decompress', path: compressedPath });
+      expect(String((bounded.failure.cause as Error).cause)).toContain('exceeds its 4096-byte limit');
     }
+    expect(boundedVisited.length).toBeLessThan(compressedLines.split('\n').length - 1);
 
     const mismatched = await Effect.runPromise(Effect.result(storage.readLines(mismatchedPath, () => undefined)));
     expect(mismatched._tag).toBe('Failure');

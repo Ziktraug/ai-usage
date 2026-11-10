@@ -493,8 +493,12 @@ const readZstdContentSize = (archive: Buffer, offset: number, width: number): nu
 };
 
 interface ZstdFrameLayout {
-  /** The Frame_Content_Size the frame declares; the decompressed length must equal it. */
-  readonly declaredContentSize: number;
+  /**
+   * The Frame_Content_Size the frame declares, which the decompressed length
+   * must equal; `null` when the frame omits it, so only the running decoded
+   * total can bound the read.
+   */
+  readonly declaredContentSize: number | null;
   /** Offset one past the frame's last byte (its checksum when present). */
   readonly frameEnd: number;
 }
@@ -505,9 +509,11 @@ interface ZstdFrameLayout {
  * before any block is walked, and where the frame ends, found by walking its
  * block headers. The caller requires that end to be the end of the archive, so
  * the declaration bounds everything the decompressor can emit. A missing
- * magic number, a reserved bit or block type, a header or block running past
- * the end, or a frame that omits its content size (every Codex archive
- * declares it) is refused like any corrupt archive.
+ * magic number, a reserved bit or block type, or a header or block running
+ * past the end is refused like any corrupt archive. A frame that omits its
+ * content size (Codex 0.163 wrote a few such archives in October 2026) is laid
+ * out with `declaredContentSize: null`; the caller then bounds the decoded
+ * bytes as they stream.
  */
 const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: number): ZstdFrameLayout => {
   const malformed = (reason: string): HistoryArchiveError => new HistoryArchiveError(filePath, new Error(reason));
@@ -528,16 +534,13 @@ const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: numb
   // biome-ignore lint/suspicious/noBitwiseOperators: Dictionary_ID_Flag is bits 1-0.
   const dictionaryIdFlag = descriptor & 0x03;
   const contentSizeBytes = zstdContentSizeBytes(contentSizeFlag, singleSegment, filePath);
-  if (contentSizeBytes === 0) {
-    throw malformed(`History archive does not declare its content size: ${filePath}`);
-  }
   let offset = 5 + (singleSegment ? 0 : 1) + zstdDictionaryIdBytes(dictionaryIdFlag, filePath);
   if (archive.length < offset + contentSizeBytes) {
     throw malformed('Truncated zstd frame header');
   }
-  const declaredContentSize = readZstdContentSize(archive, offset, contentSizeBytes);
+  const declaredContentSize = contentSizeBytes === 0 ? null : readZstdContentSize(archive, offset, contentSizeBytes);
   offset += contentSizeBytes;
-  if (declaredContentSize > maxBytes) {
+  if (declaredContentSize !== null && declaredContentSize > maxBytes) {
     throw new Error(`History input exceeds its ${maxBytes}-byte limit: ${filePath}`);
   }
   for (;;) {
@@ -585,18 +588,18 @@ const ZSTD_STREAM_FORMAT = 'zstd' satisfies Bun.CompressionFormat as Compression
 
 /**
  * Decode a history archive as a stream and hand its decoded bytes to
- * `onChunk` in order. The archive must be exactly one zstd frame that
- * declares its content size: the frame is walked before anything is decoded,
- * and the declared size is refused above `maxBytes` and above
- * `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`. The compressed bytes are fed to
- * `DecompressionStream('zstd')` 64 KiB at a time and its output is pulled one
- * chunk at a time, so memory follows the compressed archive plus one decoded
- * chunk rather than the whole decoded content. A decoded chunk reaches
- * `onChunk` only once the running total is still within the declaration, and
- * the total must equal the declaration when the stream ends; the decoder
- * itself refuses truncated input, trailing bytes, a bad content checksum and
- * an output that disagrees with the declared size. Resolves to the decoded
- * byte count.
+ * `onChunk` in order. The archive must be exactly one zstd frame: the frame is
+ * walked before anything is decoded, and a declared content size is refused
+ * above `maxBytes` and above `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES`. The
+ * compressed bytes are fed to `DecompressionStream('zstd')` 64 KiB at a time
+ * and its output is pulled one chunk at a time, so memory follows the
+ * compressed archive plus one decoded chunk rather than the whole decoded
+ * content. A decoded chunk reaches `onChunk` only while the running total is
+ * still within the bound — the declaration when the frame carries one, the
+ * smaller of the two limits otherwise — and a declared total must be met
+ * exactly when the stream ends; the decoder itself refuses truncated input,
+ * trailing bytes, a bad content checksum and an output that disagrees with a
+ * declared size. Resolves to the decoded byte count.
  *
  * Every failure of the archive itself (the frame walk, the decoder, the size
  * checks) is a `HistoryArchiveError`; a failure thrown by `onChunk` passes
@@ -621,11 +624,8 @@ export const streamHistoryArchive = async (
   onChunk: (chunk: Uint8Array) => void,
   signal?: AbortSignal,
 ): Promise<number> => {
-  const layout = zstdSingleFrameLayout(
-    compressed,
-    filePath,
-    Math.min(maxBytes, HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES),
-  );
+  const decodedBound = Math.min(maxBytes, HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES);
+  const layout = zstdSingleFrameLayout(compressed, filePath, decodedBound);
   if (layout.frameEnd !== compressed.length) {
     throw new HistoryArchiveError(filePath, new Error(`History archive is not a single zstd frame: ${filePath}`));
   }
@@ -664,10 +664,16 @@ export const streamHistoryArchive = async (
         break;
       }
       decoded += next.value.byteLength;
-      if (decoded > layout.declaredContentSize) {
+      if (layout.declaredContentSize !== null && decoded > layout.declaredContentSize) {
         throw new HistoryArchiveError(
           filePath,
           new Error(`History archive content exceeds its declared size: ${filePath}`),
+        );
+      }
+      if (decoded > decodedBound) {
+        throw new HistoryArchiveError(
+          filePath,
+          new Error(`History archive content exceeds its ${decodedBound}-byte limit: ${filePath}`),
         );
       }
       onChunk(next.value);
@@ -679,7 +685,7 @@ export const streamHistoryArchive = async (
       await reader.cancel().then(ignoreCancellationOutcome, ignoreCancellationOutcome);
     }
   }
-  if (decoded !== layout.declaredContentSize) {
+  if (layout.declaredContentSize !== null && decoded !== layout.declaredContentSize) {
     throw new HistoryArchiveError(
       filePath,
       new Error(`History archive content does not match its declared size: ${filePath}`),
@@ -691,12 +697,12 @@ export const streamHistoryArchive = async (
 /**
  * Read a zstd archive of newline-delimited text with the same file hardening
  * and per-line bound as the plain reader. A readable archive is exactly one
- * zstd frame that declares its content size, which every Codex archive does.
- * `maxBytes` bounds the compressed file, which is read whole (the frame walk
- * needs all of it); the declared size is refused above the smaller of
- * `maxBytes` and `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES` before any decoding,
- * and the decoded length must equal the declaration, so the bound holds for
- * every archive. Its lines then stream past a constant buffer like a plain
+ * zstd frame. `maxBytes` bounds the compressed file, which is read whole (the
+ * frame walk needs all of it); a declared size is refused above the smaller of
+ * `maxBytes` and `HISTORY_ARCHIVE_MAX_DECOMPRESSED_BYTES` before any decoding
+ * and the decoded length must equal it, while a frame without a declaration
+ * is cut off at that same bound as it decodes, so the bound holds for every
+ * archive. Its lines then stream past a constant buffer like a plain
  * file's (see `streamHistoryArchive`). `bytes` reports the decoded count so
  * byte budgets follow what the parser saw. `signal` stops decoding between
  * chunks when the read is interrupted.
