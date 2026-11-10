@@ -26,6 +26,13 @@ export interface CodexCollectionResult {
    * not a new collection source. The source vocabulary is unchanged.
    */
   observations: SkillObservation[];
+  /**
+   * Source session ids this pass positively observed and classified as not
+   * Codex usage (transcripts Codex Desktop imported from another harness, ADR
+   * 0091). Never an id that is merely absent or unreadable. The store marks
+   * the matching rows deleted; a session re-emitted later becomes active again.
+   */
+  retiredSourceSessionIds: string[];
   rows: ReturnType<typeof sessionToUsageRow>[];
   warnings: LocalHistoryWarning[];
   workObservations: CodexWorkObservation[];
@@ -37,6 +44,7 @@ export const collectCodexResult = Effect.gen(function* () {
       workObservations: [],
       observationCompleteness: completeSkillObservationCollection(),
       observations: [],
+      retiredSourceSessionIds: [],
       rows: [],
       warnings: [],
     };
@@ -62,6 +70,7 @@ export const collectCodexResult = Effect.gen(function* () {
     workObservations: result.workObservations,
     observationCompleteness: result.observationCompleteness,
     observations: result.observations,
+    retiredSourceSessionIds: result.retiredSourceSessionIds,
     rows: result.sessions.map(sessionToUsageRow),
     warnings: [
       warning,

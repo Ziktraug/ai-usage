@@ -118,6 +118,7 @@ was deleted.
 | [0086](0086-retire-cursor-commit-attribution.md) | Retire Cursor commit attribution while preserving stored data and old artifacts | 2026-11-02 | Accepted; extends 0075 |
 | [0087](0087-svelte-async-rendering.md) | Defer Svelte async rendering over TanStack Query pending a clean global browser gate | 2026-11-04 | Deferred; preserves 0076 |
 | [0088](0088-incremental-jira-synchronization.md) | Incremental Jira synchronization with durable pending reads | 2026-10-28 | Accepted; amends 0054, 0079; extends 0009, 0075 |
+| [0091](0091-imported-transcripts-are-not-harness-usage.md) | Transcripts a harness imported from another harness are not its usage; collectors retire them explicitly | 2026-11-10 | Accepted; extends 0009, 0075 |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the

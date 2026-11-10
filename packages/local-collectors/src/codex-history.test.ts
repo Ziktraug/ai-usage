@@ -4104,3 +4104,224 @@ describe('Codex compressed rollouts', () => {
     }
   });
 });
+
+describe('Codex external imports', () => {
+  // Codex Desktop materializes a Claude Code transcript as a rollout whose
+  // tasks are `external-import-turn-N` and whose single token_count carries no
+  // usage (ADR 0091). The real corpus (309 imports, 2026-11-10) has no other
+  // rollout with such a task, and no import carries a turn_context.
+  const importedAt = '2026-11-08T15:55:58.482Z';
+  const at = (type: string, payload: Record<string, unknown>, timestamp = importedAt) => ({ timestamp, type, payload });
+  const zeroUsage = { input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0 };
+  const importedEvents = (id: string) => [
+    at('session_meta', {
+      id,
+      timestamp: '2026-11-08T15:55:58.477Z',
+      cwd: '/work/imported',
+      originator: 'Codex Desktop',
+      cli_version: '0.167.0-alpha.3.2',
+      source: 'vscode',
+      history_mode: 'legacy',
+    }),
+    at('event_msg', { type: 'task_started', turn_id: 'external-import-turn-1', started_at: 1_794_149_444 }),
+    at('event_msg', { type: 'user_message', message: 'Please restore the engineering journey narrative' }),
+    at('response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Please restore' }] }),
+    at('response_item', {
+      type: 'function_call',
+      call_id: 'imported-question',
+      name: 'request_user_input_async',
+      arguments: JSON.stringify({ questions: [{ title: 'Imported question?' }] }),
+    }),
+    at('event_msg', { type: 'agent_message', message: 'Restored.' }),
+    at('event_msg', {
+      type: 'token_count',
+      info: {
+        total_token_usage: { ...zeroUsage, reasoning_output_tokens: 0, total_tokens: 20_744 },
+        last_token_usage: { ...zeroUsage, reasoning_output_tokens: 0, total_tokens: 20_744 },
+        model_context_window: null,
+      },
+      rate_limits: null,
+    }),
+    at('event_msg', {
+      type: 'task_complete',
+      turn_id: 'external-import-turn-1',
+      started_at: 1_794_149_444,
+      completed_at: 1_794_149_650,
+    }),
+  ];
+  const nativeEvents = [
+    at(
+      'event_msg',
+      { type: 'task_started', turn_id: 'native-turn', started_at: 1_794_157_400 },
+      '2026-11-08T17:03:20.000Z',
+    ),
+    at('turn_context', { turn_id: 'native-turn', model: 'gpt-5.6-sol' }, '2026-11-08T17:03:20.100Z'),
+    at(
+      'event_msg',
+      {
+        type: 'token_count',
+        info: {
+          total_token_usage: { total_tokens: 1000, input_tokens: 800, cached_input_tokens: 600, output_tokens: 200 },
+          last_token_usage: { total_tokens: 1000, input_tokens: 800, cached_input_tokens: 600, output_tokens: 200 },
+        },
+      },
+      '2026-11-08T17:03:30.000Z',
+    ),
+    at(
+      'event_msg',
+      { type: 'task_complete', turn_id: 'native-turn', started_at: 1_794_157_400, completed_at: 1_794_157_460 },
+      '2026-11-08T17:04:20.000Z',
+    ),
+  ];
+
+  test('retires an imported transcript instead of emitting a zero-token Codex row', async () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-claude-import.jsonl',
+      jsonl(...importedEvents('claude-import')),
+    );
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-native.jsonl',
+      jsonl(
+        at('session_meta', {
+          id: 'native-thread',
+          timestamp: '2026-11-08T17:03:19.000Z',
+          cwd: '/work/native',
+          source: 'vscode',
+        }),
+        ...nativeEvents,
+      ),
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+
+    expect(result.rows.map((row) => row.source?.sourceSessionId)).toEqual(['native-thread']);
+    expect(result.retiredSourceSessionIds).toEqual(['claude-import']);
+    expect(result.workObservations.map((observation) => observation.sourceSessionId)).toEqual(['native-thread']);
+    expect(result.warnings).toEqual([]);
+  });
+
+  test('keeps a Codex thread that continued an imported transcript, counting only its native turns', async () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/11/08/rollout-continued.jsonl',
+      jsonl(...importedEvents('continued-import'), ...nativeEvents),
+    );
+
+    const result = await runWithStorage(collectCodexResult, storage);
+    const row = result.rows[0];
+
+    expect(result.retiredSourceSessionIds).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+    expect(row?.source?.sourceSessionId).toBe('continued-import');
+    expect({ cr: row?.tokCr, in: row?.tokIn, out: row?.tokOut }).toEqual({ cr: 600, in: 200, out: 200 });
+    expect(row?.turns).toBe(1);
+    expect(row?.partial).toBe(false);
+    expect(row?.models).toEqual(['gpt-5.6-sol']);
+  });
+
+  test('a cached pass still retires the import', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'codex-import-cache-'));
+    try {
+      const directory = path.join(home, '.codex', 'sessions', '2026', '11', '08');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(path.join(directory, 'rollout-claude-import.jsonl'), jsonl(...importedEvents('cached-import')));
+
+      const cold = await runWithRealStorage(collectCodexResult, home);
+      const warm = await runWithRealStorage(collectCodexResult, home);
+
+      expect(cold.retiredSourceSessionIds).toEqual(['cached-import']);
+      expect(warm).toEqual(cold);
+      expect(warm.rows).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Codex fork_context copies', () => {
+  // Codex <= 0.147 spawned a thread_spawn child by forking the parent's
+  // history: the child rollout starts with the parent's own task and
+  // token_count events (same turn ids, same cumulative counter, stamped at the
+  // rewrite instant) and its own turns follow. The copied counter starts where
+  // the parent's did, so a first cumulative total equal to its last delta does
+  // NOT mean the history is the child's: on the real corpus (2026-11-10) every
+  // copied turn id and cumulative value is present in the parent's rollout.
+  const birth = '2026-07-20T05:49:45.627Z';
+  const written = '2026-07-20T05:49:48.369Z';
+  const birthSeconds = 1_784_526_585;
+  const at = (type: string, payload: Record<string, unknown>, timestamp = written) => ({ timestamp, type, payload });
+  const usage = (total: number) => ({
+    total_tokens: total,
+    input_tokens: total * 0.8,
+    cached_input_tokens: total * 0.6,
+    output_tokens: total * 0.2,
+  });
+  const tokens = (total: number, last: number, timestamp = written) =>
+    at(
+      'event_msg',
+      { type: 'token_count', info: { total_token_usage: usage(total), last_token_usage: usage(last) } },
+      timestamp,
+    );
+
+  test('counts only the turns the child started, not the copied parent history', async () => {
+    const storage = new TestMemoryStorage();
+    const parentTurn = [
+      at('event_msg', { type: 'task_started', turn_id: 'parent-turn', started_at: birthSeconds - 3600 }),
+      at('turn_context', { turn_id: 'parent-turn', model: 'gpt-5.6-sol' }),
+      tokens(100, 100),
+      tokens(300, 200),
+      at('event_msg', {
+        type: 'task_complete',
+        turn_id: 'parent-turn',
+        started_at: birthSeconds - 3600,
+        completed_at: birthSeconds - 3000,
+      }),
+    ];
+    storage.writeText(
+      '.codex/sessions/2026/07/20/rollout-parent.jsonl',
+      jsonl(
+        at('session_meta', {
+          id: 'fork-parent',
+          timestamp: '2026-07-20T04:49:45.000Z',
+          cwd: '/work/fork',
+          source: 'cli',
+        }),
+        ...parentTurn,
+      ),
+    );
+    storage.writeText(
+      '.codex/sessions/2026/07/20/rollout-child.jsonl',
+      jsonl(
+        at('session_meta', {
+          id: 'fork-child',
+          timestamp: birth,
+          cwd: '/work/fork',
+          cli_version: '0.144.5',
+          forked_from_id: 'fork-parent',
+          parent_thread_id: 'fork-parent',
+          source: { subagent: { thread_spawn: { parent_thread_id: 'fork-parent', agent_nickname: 'Pauli' } } },
+          thread_source: 'subagent',
+        }),
+        ...parentTurn,
+        at('event_msg', { type: 'task_started', turn_id: 'own-turn', started_at: birthSeconds + 3 }),
+        at('turn_context', { turn_id: 'own-turn', model: 'gpt-5.6-sol' }),
+        tokens(350, 50, '2026-07-20T05:50:10.000Z'),
+        at(
+          'event_msg',
+          { type: 'task_complete', turn_id: 'own-turn', started_at: birthSeconds + 3, completed_at: birthSeconds + 63 },
+          '2026-07-20T05:50:48.000Z',
+        ),
+      ),
+    );
+
+    const sessions = await runWithStorage(readCodexUsageSessions, storage);
+    const child = sessions.find((session) => session.source.sourceSessionId === 'fork-child');
+    const parent = sessions.find((session) => session.source.sourceSessionId === 'fork-parent');
+
+    expect(child?.tokens).toEqual({ cr: 30, cw: 0, in: 10, out: 10 });
+    expect(child?.turns).toBe(1);
+    expect(child?.partial).toBe(false);
+    expect(parent?.tokens).toEqual({ cr: 180, cw: 0, in: 60, out: 60 });
+  });
+});

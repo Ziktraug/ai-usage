@@ -68,6 +68,13 @@ export interface CodexSession {
   firstUser: string | null;
   hasTokenUsage: boolean;
   id: string | null;
+  /**
+   * Tasks Codex materialized from another harness's transcript
+   * (`external-import-turn-N`). They carry that harness's conversation, never
+   * Codex usage, so they open no turn and attribute no tokens; a rollout made
+   * only of them is not a Codex session (`isCodexExternalImport`).
+   */
+  importedTasks: number;
   lastRejectedMetricAt?: string;
   /** `session_meta.source` when it is a plain string: `exec` for `codex exec`, `cli`, `vscode`… */
   launchSource: string | null;
@@ -160,6 +167,12 @@ const CODEX_DETAIL_DUPLICATE_PROMPT_WINDOW_MS = 1000;
 // timestamp rounding around that boundary.
 const CODEX_REPLAYED_TASK_EVENT_LAG_MS = 2000;
 const CODEX_SYNTHETIC_TASK_ID = /^rollout-\d+$/u;
+// Codex Desktop materializes another harness's transcript (a Claude Code
+// session under `~/.claude/projects`) as a rollout whose tasks carry this id
+// and whose single token_count reports no usage. On the real corpus
+// (2026-11-10) the 309 rollouts with such a task are exactly the entries of
+// `~/.codex/external_agent_session_imports.json`, and no other rollout has one.
+const CODEX_EXTERNAL_IMPORT_TASK_ID = /^external-import-turn-\d+$/u;
 
 const TRAILING_REPLACEMENT_CHARACTER = /\uFFFD$/u;
 
@@ -503,6 +516,7 @@ const emptySession = (): CodexSession => ({
   tcr: 0,
   tout: 0,
   hasTokenUsage: false,
+  importedTasks: 0,
 });
 
 const emptyDetailTokens = (): SessionDetailTokenCounts => ({
@@ -1398,6 +1412,13 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
     if (payload.type === 'task_started') {
       const turnId = nonEmpty(payload.turn_id) ?? `turn-${lines}`;
+      if (CODEX_EXTERNAL_IMPORT_TASK_ID.test(turnId)) {
+        // Another harness's turn: counted so the rollout can be classified,
+        // never opened, so neither its prompts nor the zero-usage token_count
+        // that follows it become Codex evidence or mark the session partial.
+        session.importedTasks += 1;
+        return;
+      }
       const recordedTaskStart = unixDate(payload.started_at);
       const taskStart = recordedTaskStart ?? date;
       const rolloutStart = childRollout ? childBirth : session.start;
@@ -2038,6 +2059,18 @@ export const isCodexUsageOwnedByRoot = (
   const root = rootId ? sessionsById.get(rootId) : undefined;
   return Boolean(rootId && root && root.id !== session.id && root.hasTokenUsage && root.maxTotal >= session.maxTotal);
 };
+
+/**
+ * A rollout Codex Desktop materialized from another harness's transcript
+ * (ADR 0091): every task is an `external-import-turn-N`, no native turn ever
+ * received a turn_context and no token usage was recorded. Its conversation is
+ * that harness's usage, collected under that harness, so it is not a Codex
+ * row; the collector retires its id instead. A thread the operator continued
+ * in Codex keeps its native turns and stays a Codex session. Evaluated on a
+ * finished session: `turns` and the token counters are settled by `finish`.
+ */
+export const isCodexExternalImport = (session: CodexSession): boolean =>
+  session.importedTasks > 0 && session.turns === 0 && session.tin + session.tcr + session.tout === 0;
 
 /**
  * Whether `isCodexUsageOwnedByRoot` cannot be decided this pass: the session

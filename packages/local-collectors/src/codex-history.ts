@@ -16,6 +16,7 @@ import {
   codexStateDbCandidates,
   codexThreadMetadataFromRow,
   createCodexSessionParser,
+  isCodexExternalImport,
   isCodexUsageOwnedByRoot,
   isCodexUsageOwnershipUndecided,
   isRecord,
@@ -168,7 +169,9 @@ interface SqliteDatabase {
 // An unchanged rollout must also recover lost generations and partial status.
 // Version 27 also records loss from recognized native requests/outputs with invalid timestamps.
 // 28: sessions keep `session_meta.source`, so `codex exec` runs are told apart from interactive ones.
-const CODEX_SESSION_CACHE_VERSION = 28;
+// 29: sessions count `external-import-turn-N` tasks, so transcripts Codex Desktop
+// imported from another harness are retired instead of emitted as empty rows.
+const CODEX_SESSION_CACHE_VERSION = 29;
 
 // The runtime's op-count yielding cannot split one long synchronous
 // decompress-and-parse, and a cold pass over thousands of rollouts chains many
@@ -358,6 +361,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       value.rejectedMetricRecords,
       value.rejectedSkillObservationRecords,
       value.oversizedLines,
+      value.importedTasks,
     ].map(parseNonNegativeSafeInteger);
     const start = reviveDate(value.start);
     const end = reviveDate(value.end);
@@ -413,11 +417,12 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
       oversizedLines,
+      importedTasks,
     ] = counters;
     if (!(turns?.ok && tools?.ok && maxTotal?.ok && tin?.ok && tcr?.ok && tout?.ok && rejectedMetricRecords?.ok)) {
       return null;
     }
-    if (!(rejectedSkillObservationRecords?.ok && oversizedLines?.ok)) {
+    if (!(rejectedSkillObservationRecords?.ok && oversizedLines?.ok && importedTasks?.ok)) {
       return null;
     }
     return {
@@ -452,6 +457,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       rejectedSkillObservationRecords: rejectedSkillObservationRecords.value,
       oversizedLines: oversizedLines.value,
       hasTokenUsage: value.hasTokenUsage,
+      importedTasks: importedTasks.value,
       skillObservations: skillObservations.observations,
       skillObservationCompleteness,
       ...(vcs ? { vcs } : {}),
@@ -812,6 +818,13 @@ export interface CodexUsageSessionsResult {
   readFailures: readonly LocalHistoryError[];
   rejectedMetricRecords: number;
   rejectedSkillObservationRecords: number;
+  /**
+   * Session ids this pass read and classified as not Codex usage: transcripts
+   * Codex Desktop imported from another harness (ADR 0091). Only positively
+   * observed rollouts, never an id that is merely absent or unreadable; the
+   * store marks their rows deleted and a later native re-emission revives them.
+   */
+  retiredSourceSessionIds: string[];
   sessions: CodexCollectedSession[];
   /** Local-only auxiliary attention evidence from the same parser pass. */
   workObservations: CodexWorkObservation[];
@@ -832,11 +845,26 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       readFailures,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
-      sessions,
+      sessions: readSessions,
     } = yield* readCodexSessions(metadata);
+    // An imported transcript leaves every Codex output here: it is neither a
+    // row nor skill or work evidence of this harness. Its id is returned so the
+    // store can retire the row an earlier pass emitted for it.
+    const retiredSourceSessionIds = new Set<string>();
+    const sessions = readSessions.filter((session) => {
+      if (!isCodexExternalImport(session)) {
+        return true;
+      }
+      if (session.id) {
+        retiredSourceSessionIds.add(session.id);
+      }
+      return false;
+    });
     const byId = new Map<string, CodexSession>();
     for (const session of sessions) {
-      if (session.id) {
+      // A rollout and its resumed continuation share an id; the one with the
+      // larger cumulative counter is the more complete reading of the thread.
+      if (session.id && (byId.get(session.id)?.maxTotal ?? -1) < session.maxTotal) {
         byId.set(session.id, session);
       }
     }
@@ -958,6 +986,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       readFailures,
       rejectedMetricRecords,
       rejectedSkillObservationRecords,
+      retiredSourceSessionIds: [...retiredSourceSessionIds],
       sessions: usageSessions,
     };
   }),
@@ -968,6 +997,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     oversizedLines: result.oversizedLines,
     rejectedMetricRecords: result.rejectedMetricRecords,
     rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
+    retiredSourceSessions: result.retiredSourceSessionIds.length,
     sessions: result.sessions.length,
     unreadableFiles: result.readFailures.length,
   }),
