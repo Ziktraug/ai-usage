@@ -297,6 +297,7 @@ export const seedOpenCodeV2Scenario = async (home: string): Promise<OpenCodeV2Sc
 
     // "shared": one message migrated (kept in message/part too), one legacy-only exchange.
     const a = sharedStartMs;
+    const dayMs = 86_400_000;
     insertLegacySession.run(ids.shared, null, 'Shared (legacy title)', '/work/shared', 0, 0, a, a);
     insertV2Session(
       database,
@@ -336,10 +337,13 @@ export const seedOpenCodeV2Scenario = async (home: string): Promise<OpenCodeV2Sc
     );
     toolPart('shared-migrated-tool-1', 'shared-migrated', ids.shared, a + 1000, 'read', 'call_a');
     toolPart('shared-migrated-tool-2', 'shared-migrated', ids.shared, a + 1000, 'bash', 'call_b');
+    // The migration copy keeps the tokens and `created` but stamps `completed`
+    // with the migration instant; readers must take the legacy record.
+    const migrationStampMs = a + 30 * dayMs;
     insertV2Message(
       database,
       {
-        data: v2AssistantData(codex, { input: 100, output: 10 }, { completed: a + 6000, created: a + 1000 }, [
+        data: v2AssistantData(codex, { input: 100, output: 10 }, { completed: migrationStampMs, created: a + 1000 }, [
           { id: 'call_a', name: 'read', state: { status: 'completed' }, type: 'tool' },
           { id: 'call_b', name: 'bash', state: { status: 'completed' }, type: 'tool' },
         ]),
@@ -378,7 +382,6 @@ export const seedOpenCodeV2Scenario = async (home: string): Promise<OpenCodeV2Sc
     toolPart('shared-legacy-only-tool', 'shared-legacy-only', ids.shared, a + 11_000, 'edit', 'call_c');
 
     // "legacy-only": never migrated, no user message.
-    const dayMs = 86_400_000;
     insertLegacySession.run(ids.legacyOnly, null, 'Only in legacy', '/work/legacy', 2, 1, a - dayMs, a - dayMs);
     insertLegacyMessage.run(
       'legacy-assistant',

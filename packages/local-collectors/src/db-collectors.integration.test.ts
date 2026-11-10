@@ -223,6 +223,11 @@ describe('real SQLite harness collectors', () => {
       tools: 3,
       turns: 2,
     });
+    // The migrated message's end time comes from its legacy record, not from
+    // the migration stamp its session_message copy carries.
+    const a = scenario.times.sharedStartMs;
+    expect(byId.get(scenario.ids.shared)?.date?.getTime()).toBe(a + 1000);
+    expect(byId.get(scenario.ids.shared)?.endDate?.getTime()).toBe(a + 16_000);
     expect(byId.get(scenario.ids.legacyOnly)).toMatchObject({ calls: 1, name: 'Only in legacy', tokIn: 20, turns: 0 });
     expect(byId.get(scenario.ids.v2Only)).toMatchObject({
       calls: 1,

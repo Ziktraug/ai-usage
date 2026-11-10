@@ -33,6 +33,8 @@ const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
 const OPENCODE_LEGACY_TABLES = ['session', 'message', 'part'] as const;
 const OPENCODE_V2_TABLES = ['session_v2', 'session_message'] as const;
+/** The `time.completed` OpenCode's migration wrote on every copied message. */
+const MIGRATION_STAMP_MS = 1_785_000_000_000;
 
 interface OpenCodeSessionFixture {
   directory: string;
@@ -959,7 +961,9 @@ describe('DB-backed Harness collectors', () => {
       tools: [{ session_id: 'shared', message_id: 'shared-migrated', n: 2 }],
       turns: [{ session_id: 'shared', message_id: 'shared-user' }],
       messages: [
-        assistantRow('shared-migrated', 'shared', migrated),
+        // The migration copied the message with its tokens but stamped its
+        // completion with the migration instant; the legacy record is the truth.
+        assistantRow('shared-migrated', 'shared', { ...migrated, completed: MIGRATION_STAMP_MS }),
         assistantRow('v2-only-assistant', 'v2-only', {
           cost: 0,
           created: 1_790_000_000_000,
@@ -1030,6 +1034,10 @@ describe('DB-backed Harness collectors', () => {
     // The migrated message is counted once; the legacy-only message is added.
     expect(shared).toMatchObject({ calls: 2, tokIn: 150, tokOut: 15, tools: 3, turns: 2 });
     expect(shared?.date?.getTime()).toBe(1_779_000_000_000);
+    // Dates and duration come from the legacy record, not the migration stamp.
+    expect(shared?.endDate?.getTime()).toBe(1_780_000_010_000);
+    expect(shared?.durationMs).toBe(15_000);
+    expect(shared?.partial).toBe(false);
     expect(byId.get('legacy-only')).toMatchObject({
       calls: 1,
       provider: 'Anthropic API',

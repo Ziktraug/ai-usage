@@ -578,14 +578,16 @@ describe('OpenCode session detail', () => {
     }
     const { detail } = analysis;
     expect(parseSessionDetail(detail)).toEqual(detail);
+    // A migrated prompt is read from its legacy part record, so it keeps the
+    // part's identity; the migration copy of the same message is skipped.
     expect(detail.prompts.map(({ id, text }) => ({ id, text }))).toEqual([
-      { id: 'shared-user', text: 'go' },
+      { id: 'shared-user-part', text: 'go' },
       { id: 'shared-legacy-user-part', text: 'more' },
     ]);
     expect(detail.turns.map(({ calls, promptIds, tokens, tools }) => ({ calls, promptIds, tokens, tools }))).toEqual([
       {
         calls: 1,
-        promptIds: ['shared-user'],
+        promptIds: ['shared-user-part'],
         tokens: { cacheRead: 0, cacheWrite: 0, input: 100, output: 10, total: 110 },
         tools: 2,
       },

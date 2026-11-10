@@ -580,20 +580,26 @@ const readOpenCodeDetailRows = (
     const toolRows: OpenCodeDetailToolRow[] = [];
     const childRows: OpenCodeDetailChildRow[] = [];
     let childrenOmitted = false;
-    const currentMessageIds = new Set<string>();
+    // Legacy first (`openCodeSchemaKinds`): a message in both schemas is read
+    // from its original record, not from the migration copy whose
+    // `time.completed` is the migration instant.
+    const claimedMessageIds = new Set<string>();
 
     for (const kind of kinds) {
       const queries = OPENCODE_DETAIL_QUERIES[kind];
       const isCurrent = kind === 'v2';
+      // Several rows of one schema may share a message id (a message's prompt
+      // parts); only an id taken by an earlier schema is a duplicate.
+      const schemaMessageIds = new Set<string>();
       const claim = (messageId: string | null): boolean => {
         if (messageId === null) {
           return true;
         }
-        if (isCurrent) {
-          currentMessageIds.add(messageId);
-          return true;
+        if (claimedMessageIds.has(messageId)) {
+          return false;
         }
-        return !currentMessageIds.has(messageId);
+        schemaMessageIds.add(messageId);
+        return true;
       };
 
       const sessionRows = yield* db.all<OpenCodeDetailSessionRow>(queries.sessionSql, [sourceSessionId, 2]);
@@ -605,7 +611,10 @@ const readOpenCodeDetailRows = (
         // A schema without the session row holds none of its messages either.
         continue;
       }
-      sessionRow ??= found;
+      // The current schema's row describes the session as it is now.
+      if (isCurrent || sessionRow === null) {
+        sessionRow = found;
+      }
 
       const messageRows = yield* db.all<OpenCodeDetailMessageRow>(queries.messageSql, [
         sourceSessionId,
@@ -677,6 +686,9 @@ const readOpenCodeDetailRows = (
       ]);
       childrenOmitted ||= schemaChildRows.length > MAX_CHILD_ROWS;
       childRows.push(...schemaChildRows.slice(0, MAX_CHILD_ROWS));
+      for (const messageId of schemaMessageIds) {
+        claimedMessageIds.add(messageId);
+      }
     }
     if (!sessionRow) {
       return null;
