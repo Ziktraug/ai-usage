@@ -33,7 +33,16 @@ import type { UsageModelSegment, UsageRowSource } from '@ai-usage/report-core/ty
 import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from './metric-validation';
 import { dominant, usablePrompt } from './text';
 
-const MAX_CLAUDE_RECORDS = 100_000;
+/** Records a transcript may hold before the reader declines it; exported so a collector can tell a budget refusal from a positive parse. */
+export const MAX_CLAUDE_RECORDS = 100_000;
+/**
+ * Claude Code writes an assistant record with this model when it answers locally instead of
+ * calling the API (spend or session limits, OAuth refresh failures). It carries zero usage and is
+ * not a model attribution.
+ */
+export const CLAUDE_SYNTHETIC_MODEL = '<synthetic>';
+/** Distinct working folders retained per session; a session rarely visits more than a dozen. */
+export const MAX_CLAUDE_SOURCE_PATHS = 64;
 // Prompt identities group activity into rounds, so they share the turn budget.
 // Bodies are bounded separately: past the total byte budget an identity is
 // kept with an empty body and the omission is reported through coverage.
@@ -118,6 +127,12 @@ export interface ClaudeSourceFacts {
   delegatedSessions?: UsageRowSource['delegatedSessions'];
   parentSourceSessionId: string | null;
   sourcePath: string | null;
+  /**
+   * The distinct `cwd` values the transcript recorded, in order of first observation and bounded
+   * by `MAX_CLAUDE_SOURCE_PATHS`. The first is the folder the session was launched in, which is
+   * also how Claude Code files the transcript; `sourcePath` is the last one.
+   */
+  sourcePaths: readonly string[];
   vcs?: SessionVcsContext;
 }
 
@@ -690,7 +705,7 @@ const collectClaudeAssistants = (
       continue;
     }
     const message = isRecord(record.message) ? record.message : null;
-    if (!message) {
+    if (!message || message.model === CLAUDE_SYNTHETIC_MODEL) {
       continue;
     }
     const messageId = typeof message.id === 'string' ? message.id : null;
@@ -1721,7 +1736,9 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
     }
     if (typeof record.cwd === 'string') {
       sourcePath = record.cwd;
-      observedSourcePaths.add(record.cwd);
+      if (observedSourcePaths.size < MAX_CLAUDE_SOURCE_PATHS || observedSourcePaths.has(record.cwd)) {
+        observedSourcePaths.add(record.cwd);
+      }
     }
     if (typeof record.gitBranch === 'string') {
       branchObservations.push({ name: record.gitBranch, observedAt: iso(current.at) });
@@ -1775,7 +1792,14 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
         repository: input.repository,
       })
     : undefined;
-  return { parentSourceSessionId, sidechain, sourcePath, title, ...(vcs ? { vcs } : {}) };
+  return {
+    parentSourceSessionId,
+    sidechain,
+    sourcePath,
+    sourcePaths: [...observedSourcePaths],
+    title,
+    ...(vcs ? { vcs } : {}),
+  };
 };
 
 /**
@@ -2174,6 +2198,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
         : {}),
       parentSourceSessionId: metadata.parentSourceSessionId,
       sourcePath: metadata.sourcePath,
+      sourcePaths: metadata.sourcePaths,
       ...(metadata.vcs ? { vcs: metadata.vcs } : {}),
     },
   };
