@@ -34,6 +34,7 @@ export {
   recordWorkFactRun,
   requestDelegationJob,
   requestReviewAttempt,
+  retireLocalRows,
   setLocalProjectionReadFaultInjectorForTesting,
   setServedReportPublicationFaultInjectorForTesting,
   setServedReportReadFaultInjectorForTesting,

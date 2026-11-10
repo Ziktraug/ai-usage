@@ -88,6 +88,7 @@ import {
   recordJiraIntake,
   recordJiraSyncState,
   recordWorkFactRun,
+  retireLocalRows,
   type ServedLocalProjectSource,
   seedWorkThreads,
   type UsageStoreError,
@@ -304,6 +305,8 @@ const collectHarness = (
     // indistinguishable from having observed nothing (ADR 0022).
     observationCompleteness?: SkillObservationCollectionCompleteness;
     observations?: readonly SkillObservation[];
+    /** Collector-declared retirements (ADR 0089); absent or empty when the pass retires nothing. */
+    retiredSourceSessionIds?: readonly string[];
     rows: CollectorRow[];
     warnings: readonly SanitizableSourceWarning[];
   },
@@ -391,7 +394,12 @@ export const prepareSkillObservationImport = (input: {
   };
 };
 
-const createSessionSource = (input: {
+/**
+ * Exported for the adapter-level tests: no shipped collector declares retirements yet, so the test
+ * injects an adapter whose collection carries `retiredSourceSessionIds` and checks it reaches the
+ * store. The registry builds the real sources through `createScheduledSourceRegistry`.
+ */
+export const createSessionSource = (input: {
   adapter: () => Effect.Effect<HarnessAdapter, SourceRunError>;
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
@@ -449,6 +457,38 @@ const createSessionSource = (input: {
         machine: input.machine,
         rows,
       }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      // Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
+      // collector positively declared, never what it stopped emitting. A session both emitted and
+      // declared retired in one pass is a collector defect; the emitted row wins (it was observed as
+      // usage) and the conflict is reported as a warning instead of being dropped silently.
+      const emittedSessionIds = new Set(
+        rows.flatMap((row) => (row.source?.sourceSessionId == null ? [] : [row.source.sourceSessionId])),
+      );
+      const declaredRetirements = collection.retiredSourceSessionIds ?? [];
+      const conflictingRetirements = declaredRetirements.filter((sessionId) => emittedSessionIds.has(sessionId));
+      const retirements = declaredRetirements.filter((sessionId) => !emittedSessionIds.has(sessionId));
+      yield* abortIfRequested(context.signal);
+      const retired = yield* retireLocalRows({
+        dbPath: input.dbPath,
+        harnessKey: adapter.metadata.key,
+        machine: input.machine,
+        retiredAt: input.now(),
+        sourceSessionIds: retirements,
+      }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      if (retired.retired > 0) {
+        yield* reportProgress(context, {
+          completed: rows.length,
+          message: `Retired ${retired.retired} ${retired.retired === 1 ? 'session' : 'sessions'} the collector no longer counts as ${input.label}.`,
+          phase: 'importing',
+          total: rows.length,
+        });
+      }
+      const retirementWarnings: SanitizableSourceWarning[] = [
+        ...(conflictingRetirements.length > 0
+          ? [{ operation: 'rowRetirement.emittedAndRetired', rejectedRecords: conflictingRetirements.length }]
+          : []),
+        ...(retired.skipped > 0 ? [{ operation: 'rowRetirement.storeRefused', rejectedRecords: retired.skipped }] : []),
+      ];
       // Skill observations are an auxiliary fact family with their own table,
       // written on the same engine-owned pass as the rows they were parsed
       // beside. The engine is the only writer (ADR 0009), so this is the one
@@ -512,11 +552,16 @@ const createSessionSource = (input: {
           collection: { id: codexCollectionId, phase: 'complete' },
         }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       }
-      const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
+      const warnings = sanitizeSourceWarnings(input.label, [
+        ...collection.warnings,
+        ...retentionWarnings,
+        ...retirementWarnings,
+      ]);
       return {
         changed:
           imported.inserted > 0 ||
           imported.updated > 0 ||
+          retired.retired > 0 ||
           importedObservations.inserted > 0 ||
           importedObservations.updated > 0 ||
           importedWork.changed > 0 ||

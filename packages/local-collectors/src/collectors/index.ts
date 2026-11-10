@@ -37,6 +37,13 @@ export { collectClaudeRetentionWarnings } from './claude';
 interface HarnessAdapterCollection {
   observationCompleteness?: SkillObservationCollectionCompleteness;
   observations?: SkillObservation[];
+  /**
+   * Source session ids this pass POSITIVELY OBSERVED in the source and deliberately classifies as
+   * "not a usage row of this harness" (counted under another harness, an import of another tool's
+   * session). Never an id that is merely absent, unreadable or transiently filtered: the store
+   * retires only what is listed here, so absence never erases history (ADR 0089). Absent means none.
+   */
+  retiredSourceSessionIds?: readonly string[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
   workObservations?: CodexWorkObservation[];
@@ -65,6 +72,8 @@ export interface HarnessCollectionResult {
   observationCompleteness: SkillObservationCollectionCompleteness | null;
   /** Empty whenever `observability` is `not-observable`. */
   observations: SkillObservation[];
+  /** Explicitly declared retirements; see `HarnessAdapterCollection`. Empty on failure or when none. */
+  retiredSourceSessionIds: readonly string[];
   rows: Row[];
   status: HarnessCollectionStatus;
   warnings: LocalHistoryWarning[];
@@ -117,6 +126,7 @@ type HarnessAdapterOutcome =
       _tag: 'success';
       observationCompleteness?: SkillObservationCollectionCompleteness;
       observations: SkillObservation[];
+      retiredSourceSessionIds: readonly string[];
       rows: CollectorRow[];
       warnings: LocalHistoryWarning[];
     }
@@ -137,6 +147,7 @@ const collectAdapter = (
           ? {}
           : { observationCompleteness: result.observationCompleteness }),
         observations: result.observations ?? [],
+        retiredSourceSessionIds: result.retiredSourceSessionIds ?? [],
         rows: result.rows,
         warnings: result.warnings,
       }),
@@ -168,6 +179,7 @@ const collectHarnessResult = (
           observability,
           observationCompleteness: null,
           observations: [],
+          retiredSourceSessionIds: [],
           rows: [],
           warnings: [
             localHistoryWarningFromError(outcome.error, {
@@ -187,6 +199,7 @@ const collectHarnessResult = (
         // A harness that cannot observe contributes nothing even if an adapter
         // somehow handed something back, so the two fields can never disagree.
         observations: observability === 'observable' ? outcome.observations : [],
+        retiredSourceSessionIds: outcome.retiredSourceSessionIds,
         rows: outcome.rows,
         warnings: outcome.warnings,
         durationMs,
@@ -196,6 +209,7 @@ const collectHarnessResult = (
     (result) => ({
       observability: result.observability,
       observations: result.observations.length,
+      retiredSourceSessionIds: result.retiredSourceSessionIds.length,
       rows: result.rows.length,
       status: result.status,
       warnings: result.warnings.length,

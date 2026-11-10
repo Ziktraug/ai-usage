@@ -98,6 +98,30 @@ export interface ImportLocalRowsInput {
   rows: UsageRowWithOptionalSource[];
 }
 
+/**
+ * Explicit, collector-declared retirement (ADR 0089). Only sessions a collector positively observed
+ * and classified as "not a usage row of this harness" belong here; a session that is merely absent
+ * from a source must never be listed, because source retention pruning must not erase history.
+ */
+export interface RetireLocalRowsInput {
+  readonly dbPath: string;
+  readonly harnessKey: string;
+  readonly machine: UsageMachine;
+  readonly retiredAt?: Date;
+  readonly sourceSessionIds: readonly string[];
+}
+
+export interface RetireLocalRowsResult {
+  /** Listed sessions whose local-observed row was already `deleted`; left untouched. */
+  readonly alreadyRetired: number;
+  /** Active local-observed rows of this machine and harness marked `deleted` by this call. */
+  readonly retired: number;
+  /** Matched active rows whose stored JSON failed strict validation; left untouched. */
+  readonly skipped: number;
+  /** Listed sessions with no active or retired local-observed row of this machine and harness. */
+  readonly unmatched: number;
+}
+
 export interface UpdateUsageMachineLabelInput {
   readonly dbPath: string;
   readonly machine: UsageMachine;
@@ -828,6 +852,7 @@ export interface UsageStore {
   queryUsageStoreGenerations: (
     input?: QueryUsageStoreGenerationInput,
   ) => Effect.Effect<UsageStoreGenerations, UsageStoreError>;
+  retireLocalRows: (input: RetireLocalRowsInput) => Effect.Effect<RetireLocalRowsResult, UsageStoreError>;
   updateUsageMachineLabel: (
     input: UpdateUsageMachineLabelInput,
   ) => Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError>;
@@ -2735,6 +2760,139 @@ export const updateUsageMachineLabel = (
   );
 };
 
+interface StoredRetirementCandidate {
+  row_json: string;
+  row_key: string;
+  source_session_id: string;
+  status: StoredUsageRowStatus;
+}
+
+const emptyRetireLocalRowsResult = (): RetireLocalRowsResult => ({
+  alreadyRetired: 0,
+  retired: 0,
+  skipped: 0,
+  unmatched: 0,
+});
+
+/**
+ * Marks `deleted` every active, local-observed row of one origin machine and harness whose
+ * `source_session_id` is listed. One IMMEDIATE transaction; idempotent; portable rows, other machines
+ * and other harnesses are never touched; superseded rows are left alone and count as unmatched.
+ * The stored JSON is rewritten with `status: 'deleted'` and a recomputed content hash so the row keeps
+ * passing the strict re-validation every report read applies. A later collection that emits the
+ * session again as a normal row reactivates it through the ordinary import path.
+ */
+export const retireLocalRows = (input: RetireLocalRowsInput): Effect.Effect<RetireLocalRowsResult, UsageStoreError> => {
+  if (input.machine.id.length === 0 || input.harnessKey.length === 0) {
+    return Effect.fail(
+      usageStoreError(
+        'retireLocalRows',
+        input.dbPath,
+        'Machine identity and harness key must be non-empty.',
+        'invalid-input',
+      ),
+    );
+  }
+  const sourceSessionIds = [...new Set(input.sourceSessionIds)];
+  if (sourceSessionIds.some((sourceSessionId) => sourceSessionId.length === 0)) {
+    return Effect.fail(
+      usageStoreError('retireLocalRows', input.dbPath, 'Source session ids must be non-empty.', 'invalid-input'),
+    );
+  }
+  if (sourceSessionIds.length === 0) {
+    return Effect.succeed(emptyRetireLocalRowsResult());
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const retiredAt = (input.retiredAt ?? new Date()).toISOString();
+        const update = db.query(`
+          UPDATE usage_rows
+          SET content_hash = ?, row_json = ?, status = 'deleted', last_seen_at = ?, updated_at = ?
+          WHERE row_key = ? AND status = 'active' AND source_authority = 'local-observed'
+        `);
+        // The update trigger clears fleet metadata on every row rewrite; re-validate it like the import does.
+        const validateFleetMetadata = db.query(`
+          UPDATE usage_rows
+          SET machine_label = ?, fleet_metadata_valid = 1
+          WHERE row_key = ?
+        `);
+        const result = { ...emptyRetireLocalRowsResult() };
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const batch of chunkRows(sourceSessionIds, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
+            const placeholders = batch.map(() => '?').join(', ');
+            const candidates = db
+              .query(`
+                SELECT row_json, row_key, source_session_id, status
+                FROM usage_rows
+                WHERE origin_machine_id = ?
+                  AND harness_key = ?
+                  AND source_authority = 'local-observed'
+                  AND status IN ('active', 'deleted')
+                  AND source_session_id IN (${placeholders})
+                ORDER BY row_key
+              `)
+              .all(input.machine.id, input.harnessKey, ...batch) as StoredRetirementCandidate[];
+            const matched = new Set<string>();
+            for (const candidate of candidates) {
+              matched.add(candidate.source_session_id);
+              if (candidate.status === 'deleted') {
+                result.alreadyRetired++;
+                continue;
+              }
+              let parsed: unknown;
+              try {
+                parsed = JSON.parse(candidate.row_json) as unknown;
+              } catch {
+                result.skipped++;
+                continue;
+              }
+              if (
+                !(
+                  isSerializedMergeRow(parsed) &&
+                  parsed.status === 'active' &&
+                  parsed.source.machineId === input.machine.id &&
+                  parsed.source.harnessKey === input.harnessKey
+                )
+              ) {
+                result.skipped++;
+                continue;
+              }
+              const { contentHash: _contentHash, ...content } = parsed;
+              const retiredContent = { ...content, status: 'deleted' as const };
+              const retired = { ...retiredContent, contentHash: usageContentHash(retiredContent) };
+              if (!isSerializedMergeRow(retired)) {
+                throw new Error('Retired usage row failed strict validation.');
+              }
+              update.run(retired.contentHash, JSON.stringify(retired), retiredAt, retiredAt, candidate.row_key);
+              validateFleetMetadata.run(retired.source.machineLabel || retired.source.machineId, candidate.row_key);
+              result.retired++;
+            }
+            result.unmatched += batch.length - matched.size;
+          }
+          if (result.retired > 0) {
+            if (usageMachineFleetOrderChanged(db, [input.machine.id])) {
+              rebuildUsageMachineFleetOrder(db);
+            }
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'machine_fleet_generation'").run();
+          }
+          db.exec('COMMIT');
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+        return result;
+      },
+      catch: (cause) =>
+        cause instanceof UsageStoreError
+          ? cause
+          : usageStoreError('retireLocalRows', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
+
 export const importPeerMergeBundle = (
   input: ImportPeerMergeBundleInput,
 ): Effect.Effect<ImportResult, UsageStoreError> => {
@@ -3802,6 +3960,7 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
     queryUsageStoreGenerations({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  retireLocalRows: (input) => retireLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
   updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
 });

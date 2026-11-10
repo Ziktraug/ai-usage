@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
+import type { HarnessAdapter } from '@ai-usage/local-collectors/collectors';
 import { claudeAccountFingerprint } from '@ai-usage/local-collectors/executor-observations';
 import {
   BoundedProcessError,
@@ -14,9 +15,11 @@ import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-mach
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { canonicalInstantFromDate, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import { HARNESS_METADATA } from '@ai-usage/report-core/harness-metadata';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
+import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import type { WorkThreadLinkInput } from '@ai-usage/report-core/work-thread';
 import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
@@ -44,7 +47,12 @@ import {
 } from '@ai-usage/usage-store/writer';
 import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
-import { createScheduledSourceRegistry, prepareSkillObservationImport, type SourceRunContext } from './source-adapters';
+import {
+  createScheduledSourceRegistry,
+  createSessionSource,
+  prepareSkillObservationImport,
+  type SourceRunContext,
+} from './source-adapters';
 import {
   isolatedSourceOptions,
   isReviewThreadsFixtureRead,
@@ -3031,3 +3039,106 @@ test.each([
     }
   },
 );
+
+describe('collector-declared row retirement', () => {
+  const openCodeRow = (sourceSessionId: string) => ({
+    ...normalizeUsageRow({
+      calls: 1,
+      cost: actualCost(null),
+      date: new Date('2026-07-16T09:00:00.000Z'),
+      durationMs: 60_000,
+      endDate: new Date('2026-07-16T09:01:00.000Z'),
+      harness: 'OpenCode',
+      model: 'claude-sonnet-4-6',
+      name: `Session ${sourceSessionId}`,
+      project: 'fixture',
+      provider: 'Anthropic',
+      tokens: { in: 10, out: 5, cr: 0, cw: 0 },
+    }),
+    source: { harnessKey: 'opencode', sourceSessionId },
+  });
+  const sessionIds = async (dbPath: string, statuses?: ('active' | 'deleted')[]) =>
+    (
+      await Effect.runPromise(
+        queryReportRows({ dbPath, originMachineIds: [machine.id], ...(statuses ? { statuses } : {}) }),
+      )
+    ).rows
+      .map((row) => row.source.sourceSessionId)
+      .sort();
+
+  test('retires declared sessions after the import, reports it, lets an emitted row win a conflict, and reactivates on re-emission', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-source-retirement-'));
+    try {
+      const dbPath = usageStorePath(home);
+      // The adapter stands in for a collector that reclassifies one of its sessions between passes.
+      let collection: {
+        retiredSourceSessionIds?: readonly string[];
+        rows: ReturnType<typeof openCodeRow>[];
+        warnings: never[];
+      } = { rows: [openCodeRow('usage-1'), openCodeRow('reclassified')], warnings: [] };
+      const adapter: HarnessAdapter = {
+        collect: Effect.sync(() => collection.rows),
+        collectResult: Effect.sync(() => collection),
+        metadata: HARNESS_METADATA.opencode,
+      };
+      const source = createSessionSource({
+        adapter: () => Effect.succeed(adapter),
+        dbPath,
+        detect: Effect.succeed({ availability: 'detected', reason: { code: 'none' } }),
+        id: 'opencode.sessions',
+        label: 'OpenCode sessions',
+        machine,
+        now: () => new Date('2026-07-16T10:00:00.000Z'),
+        storage: createLocalHistoryStorage(home),
+      });
+
+      const first = await Effect.runPromise(source.run(progressContext([])));
+      const afterFirst = await sessionIds(dbPath);
+
+      // Second pass: `reclassified` is positively observed but no longer a usage row of this
+      // harness; `usage-1` is (defectively) both emitted and retired; `never-stored` has no row.
+      collection = {
+        retiredSourceSessionIds: ['reclassified', 'usage-1', 'never-stored'],
+        rows: [openCodeRow('usage-1')],
+        warnings: [],
+      };
+      const progress: unknown[] = [];
+      const second = await Effect.runPromise(source.run(progressContext(progress)));
+      const afterSecond = { active: await sessionIds(dbPath), deleted: await sessionIds(dbPath, ['deleted']) };
+      // Third pass, same declaration: idempotent, nothing changes.
+      const third = await Effect.runPromise(source.run(progressContext([])));
+
+      // Fourth pass: the collector emits `reclassified` as a usage row again.
+      collection = { rows: [openCodeRow('usage-1'), openCodeRow('reclassified')], warnings: [] };
+      const fourth = await Effect.runPromise(source.run(progressContext([])));
+      const afterFourth = { active: await sessionIds(dbPath), deleted: await sessionIds(dbPath, ['deleted']) };
+
+      expect(first).toMatchObject({ changed: true, inputCount: 2, outputCount: 2, warnings: [] });
+      expect(afterFirst).toEqual(['reclassified', 'usage-1']);
+      expect(second).toMatchObject({
+        changed: true,
+        inputCount: 1,
+        outputCount: 1,
+        warnings: [{ code: 'rowRetirement.emittedAndRetired' }],
+      });
+      expect(progress).toEqual([
+        { phase: 'reading' },
+        { completed: 1, phase: 'normalizing', total: 1 },
+        { completed: 0, phase: 'importing', total: 1 },
+        {
+          completed: 1,
+          message: 'Retired 1 session the collector no longer counts as OpenCode sessions.',
+          phase: 'importing',
+          total: 1,
+        },
+      ]);
+      expect(afterSecond).toEqual({ active: ['usage-1'], deleted: ['reclassified'] });
+      expect(third).toMatchObject({ changed: false, warnings: [{ code: 'rowRetirement.emittedAndRetired' }] });
+      expect(fourth).toMatchObject({ changed: true, inputCount: 2, outputCount: 2, warnings: [] });
+      expect(afterFourth).toEqual({ active: ['reclassified', 'usage-1'], deleted: [] });
+      expect(JSON.stringify([first, second, third, fourth])).not.toContain(home);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+});
