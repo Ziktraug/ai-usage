@@ -36,22 +36,29 @@ export const OPENCODE_V2_SKILL_CONTENT_PREDICATE = `${OPENCODE_V2_TOOL_CONTENT_P
  * messages in `session_message`, whose `type` column carries the role. A
  * migrated database holds both: every legacy session also exists in
  * `session_v2`, and a session's messages may be split between `message` and
- * `session_message`. Readers therefore list the tables first, read the current
- * schema before the legacy one, and deduplicate by session id for metadata and
- * by message id for usage.
+ * `session_message`. Readers therefore list the tables first and deduplicate by
+ * session id for metadata (the current row describes the session as it is now)
+ * and by message id for usage, where the legacy copy wins: the migration copied
+ * every message with its tokens intact but stamped `time.completed` with the
+ * migration instant, so the `session_message` copy of a legacy message carries
+ * the wrong end time, duration and pricing date.
  */
 export const OPENCODE_SCHEMA_SQL = "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name";
 
 export type OpenCodeSchemaKind = 'legacy' | 'v2';
 
-/** The schemas a database holds, current first so that a migrated message is taken from it and skipped in the legacy tables. */
+/**
+ * The schemas a database holds, in read order: legacy first, so that a message
+ * present in both tables is taken from its original record and its migrated
+ * copy is skipped by message id.
+ */
 export const openCodeSchemaKinds = (tables: ReadonlySet<string>): OpenCodeSchemaKind[] => {
   const kinds: OpenCodeSchemaKind[] = [];
-  if (tables.has('session_v2') && tables.has('session_message')) {
-    kinds.push('v2');
-  }
   if (tables.has('session') && tables.has('message') && tables.has('part')) {
     kinds.push('legacy');
+  }
+  if (tables.has('session_v2') && tables.has('session_message')) {
+    kinds.push('v2');
   }
   return kinds;
 };

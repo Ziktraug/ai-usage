@@ -131,7 +131,10 @@ export interface OpenCodeCollectionResult {
 // read from the legacy tables only and misses every session since the migration.
 // Bumped to 15 for cross-harness ownership (ADR 0090): an entry written by
 // version 14 counts `claude-agent` messages that the Claude collector also counts.
-const OPENCODE_DB_CACHE_VERSION = 15;
+// Bumped to 16 because a migrated message is now read from its legacy record:
+// an entry written by version 15 took the `session_message` copy, whose
+// `time.completed` is the migration instant, and dated legacy sessions wrongly.
+const OPENCODE_DB_CACHE_VERSION = 16;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 // Observations are tens to hundreds; the bound guards a corrupt database, not
 // ordinary volume.
@@ -265,23 +268,28 @@ const readOpenCodeDatabaseFacts = (
       toolCount: new Map(),
       turnCount: new Map(),
     };
-    // Message ids already taken from the current schema; the same ids in the
-    // legacy tables are the pre-migration copies of those messages.
-    const currentMessageIds = new Set<string>();
+    // Message ids already taken from a schema read earlier. The legacy tables
+    // are read first (`openCodeSchemaKinds`): a message present in both is the
+    // original there and a migration copy with a stamped `time.completed` in
+    // `session_message`.
+    const claimedMessageIds = new Set<string>();
     const limit = openCodeSkillPartLimit();
 
     for (const tableSet of tableSets) {
       const span = (name: string) => `aiUsage.collect.opencode.db.query.${name}`;
       const isCurrent = tableSet.kind === 'v2';
+      // Several rows of one schema may share a message id (a message's skill
+      // parts); only an id taken by an earlier schema is a duplicate.
+      const schemaMessageIds = new Set<string>();
       const claim = (messageId: string | null): boolean => {
         if (messageId === null) {
           return true;
         }
-        if (isCurrent) {
-          currentMessageIds.add(messageId);
-          return true;
+        if (claimedMessageIds.has(messageId)) {
+          return false;
         }
-        return !currentMessageIds.has(messageId);
+        schemaMessageIds.add(messageId);
+        return true;
       };
 
       const sessionRows = yield* withPerfSpan(span('sessions'), db.all<SessionRow>(tableSet.sessionSql), (rows) => ({
@@ -296,8 +304,9 @@ const readOpenCodeDatabaseFacts = (
           facts.rejectedMetricRecords++;
           continue;
         }
-        // The current schema was read first: its row describes the session as it is now.
-        if (facts.meta.has(row.id)) {
+        // The current schema's row describes the session as it is now, so it
+        // replaces the legacy row read before it.
+        if (!isCurrent && facts.meta.has(row.id)) {
           continue;
         }
         facts.meta.set(row.id, {
@@ -407,6 +416,9 @@ const readOpenCodeDatabaseFacts = (
         if (claim(optionalId(row.message_id))) {
           facts.skillPartRows.push(row);
         }
+      }
+      for (const messageId of schemaMessageIds) {
+        claimedMessageIds.add(messageId);
       }
     }
 

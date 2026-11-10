@@ -44,10 +44,14 @@ session as a transcript but not as a usage row. For OpenCode this means:
   A session with no owned usage has no detail, since there is no row to
   reconcile it against.
 - The legacy `message` table and `session_message` are deduplicated by message
-  id, the current schema first. On the operator's database every one of the
-  18 984 messages present in both tables carries identical tokens, and no
-  legacy-era session has a `session_message` row the legacy table lacks, so
-  legacy totals are unchanged.
+  id, the legacy record first. On the operator's database every one of the
+  18 984 messages present in both tables carries identical tokens and
+  `time.created`, but 12 756 of the migration copies carry a different
+  `time.completed` (8 770 of them the migration instant itself), so taking the
+  copy would move 55 legacy sessions to the migration date and inflate their
+  durations. Reading the legacy record first leaves legacy rows identical to
+  the store; no legacy-era session has a `session_message` row the legacy
+  table lacks.
 
 ## Consequences
 
