@@ -163,12 +163,41 @@ describe('work thread SSR presentation', () => {
   test('week cells retain session chips and draw the day milestone with a fully named task link', () => {
     const title =
       'Improve the synthetic report with a sufficiently long task title that needs to wrap while remaining completely accessible';
+    const source = { key: 'github.com/acme/app#67', label: 'PR #67' };
     const marks = [
-      { at: list.generatedAt, fact: null, harness: 'claude', kind: 'session', label: 'Compare approaches' },
-      { at: list.generatedAt, fact: null, harness: 'codex', kind: 'session', label: 'Review the approach' },
-      { at: list.generatedAt, fact: 'pull-request-opened', harness: null, kind: 'event', label: 'PR #67 opened' },
-      { at: list.generatedAt, fact: 'pull-request-merged', harness: null, kind: 'event', label: 'PR #67 merged' },
-      { at: list.generatedAt, fact: null, harness: null, kind: 'event', label: 'Waiting' },
+      {
+        at: list.generatedAt,
+        fact: null,
+        harness: 'claude',
+        kind: 'session',
+        label: 'Compare approaches',
+        source: null,
+      },
+      {
+        at: list.generatedAt,
+        fact: null,
+        harness: 'codex',
+        kind: 'session',
+        label: 'Review the approach',
+        source: null,
+      },
+      {
+        at: list.generatedAt,
+        fact: 'pull-request-opened',
+        harness: null,
+        kind: 'event',
+        label: 'PR #67 opened',
+        source,
+      },
+      {
+        at: list.generatedAt,
+        fact: 'pull-request-merged',
+        harness: null,
+        kind: 'event',
+        label: 'PR #67 merged',
+        source,
+      },
+      { at: list.generatedAt, fact: null, harness: null, kind: 'event', label: 'Waiting', source: null },
     ];
     const body = html(List, {
       dataset: list,
@@ -184,10 +213,13 @@ describe('work thread SSR presentation', () => {
     expect(body).toContain(`title="${title}"`);
     expect(body).toContain('2 sessions, PR #67 opened, PR #67 merged, 1 follow-up change. Show activity.');
     expect(body).toContain('wt-day-button');
-    // One glyph per day: the merge outranks the opening, and a milestone replaces the follow-up dot.
+    // One glyph per pull request and day: the merge outranks the opening, on the PR's own track.
     expect([...body.matchAll(DAY_MILESTONE_PATTERN)].map((match) => match[1])).toEqual(['pull-request-merged']);
+    expect(body).toContain('>PR #67</span>');
+    // The follow-up change rides on the session chip instead of taking a row of its own.
     expect(body).not.toMatch(DAY_EVENT_DOT_PATTERN);
-    expect(body).toContain('>2</span>');
+    expect(body).toContain('class="wt-event-badge"');
+    expect(body).toContain('>2');
   });
   test('a row leads with its short project and reaches back past the week, without source captions', () => {
     const old = new Date(Date.parse(list.generatedAt) - 40 * 86_400_000).toISOString();
@@ -195,7 +227,9 @@ describe('work thread SSR presentation', () => {
       ...payments.row,
       thread: { ...payments.row.thread, projectLabel: 'exaprint/Exalibur' },
       firstActivityAt: old,
-      marks: [{ at: old, fact: null, harness: 'codex', kind: 'session' as const, label: 'Old exploration' }],
+      marks: [
+        { at: old, fact: null, harness: 'codex', kind: 'session' as const, label: 'Old exploration', source: null },
+      ],
     };
     const body = html(List, {
       dataset: list,

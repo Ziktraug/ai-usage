@@ -974,6 +974,7 @@ export const createSyntheticWorkThreadStore = (
         harness: episode.harness,
         kind: 'session' as const,
         label: episode.title,
+        source: null,
       })),
       ...record.events
         .filter((event) => visibleThreadEvent(record, event))
@@ -983,6 +984,7 @@ export const createSyntheticWorkThreadStore = (
           harness: null,
           kind: 'event' as const,
           label: eventMarkLabel(event),
+          source: null,
         })),
       ...factEvents.map((fact) => ({
         at: fact.at,
@@ -990,6 +992,7 @@ export const createSyntheticWorkThreadStore = (
         harness: null,
         kind: 'event' as const,
         label: workThreadFactEventLabel(fact),
+        source: { key: fact.key, label: fact.label },
       })),
     ]
       .sort((left, right) => left.at.localeCompare(right.at))

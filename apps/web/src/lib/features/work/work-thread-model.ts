@@ -165,7 +165,7 @@ export const threadTimeline = (
   });
 };
 
-/** Most telling first: when one day holds several milestones, the lane draws the first of them. */
+/** Most telling first: when one day holds several milestones of a pull request, its track draws the first. */
 const MILESTONE_RANK: readonly WorkThreadFactEventKind[] = [
   'pull-request-merged',
   'pull-request-closed',
@@ -178,21 +178,91 @@ const MILESTONE_RANK: readonly WorkThreadFactEventKind[] = [
 ];
 
 /**
- * What one day of a task's lane shows: its sessions, the most telling source milestone (drawn as
- * its own glyph) and every milestone named in the accessible description, so the day reads the
- * same without opening it.
+ * What one day of a task's lane shows: its sessions, its follow-up changes, and every mark named in
+ * the accessible description, so the day reads the same without opening it. Milestones are drawn
+ * on their pull request's track (`threadPullRequestTracks`).
  */
 export const threadDayMarks = (marks: readonly WorkThreadMark[], dayLabel: string) => {
   const sessions = marks.filter((mark) => mark.kind === 'session');
   const milestones = marks.filter((mark) => mark.kind === 'event' && mark.fact !== null);
   const others = marks.length - sessions.length - milestones.length;
-  const milestone = MILESTONE_RANK.find((kind) => milestones.some((mark) => mark.fact === kind)) ?? null;
   const parts = [
     `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`,
     ...milestones.map((mark) => mark.label ?? 'Pull request milestone'),
     ...(others > 0 ? [`${others} ${others === 1 ? 'follow-up change' : 'follow-up changes'}`] : []),
   ];
-  return { sessions, milestone, others, description: `${dayLabel}: ${parts.join(', ')}. Show activity.` };
+  return { sessions, others, description: `${dayLabel}: ${parts.join(', ')}. Show activity.` };
+};
+
+/** Beyond this, the least recent pull requests are left to the day details rather than growing the row. */
+export const THREAD_LANE_MAX_TRACKS = 3;
+
+export interface ThreadPullRequestTrack {
+  /** Where its latest milestone leaves it; an open pull request continues to today. */
+  readonly end: 'merged' | 'closed' | 'open';
+  readonly firstDay: string;
+  readonly key: string;
+  readonly label: string;
+  readonly lastDay: string;
+  /** Its first visible milestone is not the opening, so the track leads in from earlier. */
+  readonly openedEarlier: boolean;
+  /** The most telling milestone of each day, by day key. */
+  readonly steps: ReadonlyMap<string, WorkThreadFactEventKind>;
+}
+
+const TRACK_ENDS: Partial<Record<WorkThreadFactEventKind, ThreadPullRequestTrack['end']>> = {
+  'pull-request-merged': 'merged',
+  'pull-request-closed': 'closed',
+};
+
+/** One track per pull request, its milestones in order, earliest pull request first. */
+export const threadPullRequestTracks = (
+  marks: readonly WorkThreadMark[],
+  timeZone: string,
+): { readonly tracks: readonly ThreadPullRequestTrack[]; readonly hidden: number } => {
+  const sources = new Map<
+    string,
+    { label: string; days: Map<string, WorkThreadFactEventKind[]>; first: WorkThreadFactEventKind; last: string }
+  >();
+  for (const mark of [...marks].sort((left, right) => left.at.localeCompare(right.at))) {
+    if (mark.fact === null) {
+      continue;
+    }
+    const key = mark.source?.key ?? '';
+    const source = sources.get(key) ?? {
+      label: mark.source?.label ?? 'Pull request',
+      days: new Map<string, WorkThreadFactEventKind[]>(),
+      first: mark.fact,
+      last: mark.at,
+    };
+    const day = threadDayKey(mark.at, timeZone);
+    source.days.set(day, [...(source.days.get(day) ?? []), mark.fact]);
+    source.last = mark.at;
+    sources.set(key, source);
+  }
+  const tracks = [...sources]
+    .sort(([, left], [, right]) => right.last.localeCompare(left.last))
+    .slice(0, THREAD_LANE_MAX_TRACKS)
+    .map(([key, source]): ThreadPullRequestTrack => {
+      const days = [...source.days.keys()];
+      const latest = [...source.days.values()].at(-1)?.at(-1);
+      return {
+        key,
+        label: source.label,
+        steps: new Map(
+          [...source.days].map(([day, facts]) => [
+            day,
+            facts.reduce((best, kind) => (MILESTONE_RANK.indexOf(kind) < MILESTONE_RANK.indexOf(best) ? kind : best)),
+          ]),
+        ),
+        firstDay: days[0] ?? '',
+        lastDay: days.at(-1) ?? '',
+        openedEarlier: source.first !== 'pull-request-opened',
+        end: TRACK_ENDS[latest ?? 'pull-request-opened'] ?? 'open',
+      };
+    })
+    .sort((left, right) => left.firstDay.localeCompare(right.firstDay));
+  return { tracks, hidden: sources.size - tracks.length };
 };
 
 export const bucketThreadMarks = (marks: readonly WorkThreadMark[], timeZone: string) => {

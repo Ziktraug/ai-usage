@@ -509,7 +509,7 @@ describe('work-thread reader', () => {
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
     expect(detail?.row.marks).toEqual([
-      { at: at(-2), fact: null, harness: 'codex', kind: 'session', label: 'Investigate the parser' },
+      { at: at(-2), fact: null, harness: 'codex', kind: 'session', label: 'Investigate the parser', source: null },
     ]);
     expect(list.rows[0]).toEqual(detail?.row);
   });
@@ -545,8 +545,22 @@ describe('work-thread reader', () => {
         },
       ]);
       expect(detail?.row.marks).toEqual([
-        { at: at(-72), fact: 'pull-request-opened', harness: null, kind: 'event', label: 'PR #7 opened' },
-        { at: at(-3), fact: 'pull-request-merged', harness: null, kind: 'event', label: 'PR #7 merged' },
+        {
+          at: at(-72),
+          fact: 'pull-request-opened',
+          harness: null,
+          kind: 'event',
+          label: 'PR #7 opened',
+          source: { key: 'github.com/fixture/repo#7', label: 'PR #7' },
+        },
+        {
+          at: at(-3),
+          fact: 'pull-request-merged',
+          harness: null,
+          kind: 'event',
+          label: 'PR #7 merged',
+          source: { key: 'github.com/fixture/repo#7', label: 'PR #7' },
+        },
       ]);
       expect(detail?.row.firstActivityAt).toBe(at(-72));
       expect(list.rows[0]).toEqual(detail?.row);
@@ -753,7 +767,7 @@ describe('work-thread reader', () => {
     const kept = WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow - 1;
     expect(detail?.row.marks).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'session')).toEqual([
-      { at: at(-crowd - 30), fact: null, harness: 'codex', kind: 'session', label: 'root' },
+      { at: at(-crowd - 30), fact: null, harness: 'codex', kind: 'session', label: 'root', source: null },
     ]);
     expect(detail?.row.marks.filter((mark) => mark.kind === 'event').map((mark) => mark.at)).toEqual(
       Array.from({ length: kept }, (_, index) => at(-kept + index)),
@@ -827,7 +841,7 @@ describe('work-thread reader', () => {
       });
       expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 2 });
       expect(detail?.row.marks).toEqual([
-        { at: at(-6), fact: null, harness: 'claude', kind: 'session', label: 'Claude parent' },
+        { at: at(-6), fact: null, harness: 'claude', kind: 'session', label: 'Claude parent', source: null },
       ]);
       expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('ok');
       expect(list.rows.find((row) => row.thread.threadId === threadId)).toEqual(detail?.row);
@@ -940,7 +954,7 @@ describe('work-thread reader', () => {
       expect(detail?.episodes[0]?.children).toEqual([]);
       expect(detail?.row).toMatchObject({ sessionCount: 1, delegatedSessionCount: 0 });
       expect(detail?.row.marks).toEqual([
-        { at: at(-6), fact: null, harness: 'claude', kind: 'session', label: 'Claude parent' },
+        { at: at(-6), fact: null, harness: 'claude', kind: 'session', label: 'Claude parent', source: null },
       ]);
       expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
     },
@@ -2481,7 +2495,9 @@ describe('work-thread reader', () => {
     }
     const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     expect(detail?.episodes[0]?.children).toHaveLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeChildren);
-    expect(detail?.row.marks).toEqual([{ at: at(-2), fact: null, harness: 'codex', kind: 'session', label: 'parent' }]);
+    expect(detail?.row.marks).toEqual([
+      { at: at(-2), fact: null, harness: 'codex', kind: 'session', label: 'parent', source: null },
+    ]);
     expect(detail?.sources.find((source) => source.source === 'sessions')?.state).toBe('truncated');
     const explicit = await create(dbPath, [
       sessionLink('parent'),
