@@ -401,6 +401,10 @@ test('a task lane shows its pull request milestones up to the merge without open
   await expect(lane.locator('.wt-day-button:has([data-milestone="pull-request-merged"])')).toHaveAccessibleName(
     MERGED_DAY_PATTERN,
   );
+  // The milestones sit on one track that ends at the merge, below the sessions.
+  await expect(lane.locator('.wt-pr-line[data-end="merged"]')).toHaveCount(1);
+  await expect(lane.locator('.wt-pr-tail')).toHaveCount(0);
+  await expect(lane.locator('.wt-pr-tag')).toHaveText('PR #1479');
 });
 
 test('episode durations and PR fact events use their own evidence dates', async ({ page }) => {

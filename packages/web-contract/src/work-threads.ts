@@ -153,6 +153,7 @@ export const workThreadRowSchema = strictObject({
         harness: nullable(text),
         kind: picklist(['session', 'event']),
         label: nullable(pipe(string(), minLength(1), maxLength(WORK_THREAD_VIEW_BOUNDS.maxEpisodeText))),
+        source: nullable(strictObject({ key: text, label: text })),
       }),
     ),
     maxLength(WORK_THREAD_VIEW_BOUNDS.maxMarksPerRow),
