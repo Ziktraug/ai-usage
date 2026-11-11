@@ -30,6 +30,7 @@ import {
   projectShortLabel,
   remainderCopy,
   remainderEvidenceCopy,
+  THREAD_LANE_MAX_TRACKS,
   THREAD_TIMELINE_MIN_DAYS,
   taskSourceStatuses,
   threadDate,
@@ -43,6 +44,7 @@ import {
   threadListQuery,
   threadMoreUrl,
   threadPageCursors,
+  threadPullRequestTracks,
   threadRefs,
   threadSituationCopy,
   threadSourceAvailability,
@@ -143,7 +145,7 @@ describe('task presentation model', () => {
     expect(threadDayKey(at, 'America/Los_Angeles')).toBe('2026-10-23');
     expect(threadDayKey(at, 'Europe/Paris')).toBe('2026-10-24');
     const marks = bucketThreadMarks(
-      [{ at, fact: null, kind: 'session', harness: 'codex', label: null }],
+      [{ at, fact: null, kind: 'session', harness: 'codex', label: null, source: null }],
       'America/Los_Angeles',
     );
     expect(marks.get('2026-10-23')).toHaveLength(1);
@@ -152,7 +154,14 @@ describe('task presentation model', () => {
     const first = parseCanonicalInstant('2026-10-25T00:30:00.000Z');
     const second = parseCanonicalInstant('2026-10-25T01:30:00.000Z');
     const marks = bucketThreadMarks(
-      [first, second].map((at) => ({ at, fact: null, kind: 'session' as const, harness: 'codex', label: null })),
+      [first, second].map((at) => ({
+        at,
+        fact: null,
+        kind: 'session' as const,
+        harness: 'codex',
+        label: null,
+        source: null,
+      })),
       'Europe/Paris',
     );
     expect(marks.get('2026-10-25')).toHaveLength(2);
@@ -684,13 +693,14 @@ describe('the shared task history', () => {
     );
   });
 
-  test('a day of the lane draws its most telling milestone and names every mark', () => {
+  test('a day of the lane counts its sessions and follow-up changes and names every mark', () => {
     const mark = (overrides: Partial<WorkThreadMark>): WorkThreadMark => ({
       at: openedAt,
       fact: null,
       harness: null,
       kind: 'event',
       label: 'Waiting',
+      source: null,
       ...overrides,
     });
     const day = threadDayMarks(
@@ -702,17 +712,95 @@ describe('the shared task history', () => {
       ],
       'Oct 23',
     );
-    expect(day.milestone).toBe('pull-request-merged');
     expect(day.sessions).toHaveLength(1);
     expect(day.others).toBe(1);
     expect(day.description).toBe(
       'Oct 23: 1 session, PR #72 approved by reviewer, PR #72 merged, 1 follow-up change. Show activity.',
     );
     expect(threadDayMarks([mark({}), mark({})], 'Oct 24')).toMatchObject({
-      milestone: null,
       others: 2,
       description: 'Oct 24: 0 sessions, 2 follow-up changes. Show activity.',
     });
+  });
+  test('each pull request gets one track of its milestones, from its opening to where it ends', () => {
+    const day = (offset: number, hour = 9) =>
+      parseCanonicalInstant(
+        `2026-10-${String(10 + offset).padStart(2, '0')}T${String(hour).padStart(2, '0')}:00:00.000Z`,
+      );
+    const pr = (number: number, observed: WorkThreadMark['at'], milestone: WorkThreadMark['fact']): WorkThreadMark => ({
+      at: observed,
+      fact: milestone,
+      harness: null,
+      kind: 'event',
+      label: `PR #${number} ${milestone}`,
+      source: { key: `github.com/acme/app#${number}`, label: `PR #${number}` },
+    });
+    const { tracks, hidden } = threadPullRequestTracks(
+      [
+        { at: day(0), fact: null, harness: 'codex', kind: 'session', label: 'Explore', source: null },
+        pr(81, day(1), 'pull-request-opened'),
+        pr(81, day(4, 9), 'pull-request-approved'),
+        pr(81, day(4, 15), 'pull-request-merged'),
+        pr(92, day(3), 'pull-request-ready'),
+        pr(92, day(6), 'pull-request-changes-requested'),
+        pr(95, day(7), 'pull-request-opened'),
+        pr(95, day(8), 'pull-request-closed'),
+      ],
+      'UTC',
+    );
+    expect(hidden).toBe(0);
+    expect(
+      tracks.map(({ label, firstDay, lastDay, openedEarlier, end, steps }) => ({
+        label,
+        firstDay,
+        lastDay,
+        openedEarlier,
+        end,
+        steps: [...steps.values()],
+      })),
+    ).toEqual([
+      {
+        label: 'PR #81',
+        firstDay: '2026-10-11',
+        lastDay: '2026-10-14',
+        openedEarlier: false,
+        end: 'merged',
+        // The merge outranks the approval of the same day.
+        steps: ['pull-request-opened', 'pull-request-merged'],
+      },
+      {
+        label: 'PR #92',
+        firstDay: '2026-10-13',
+        lastDay: '2026-10-16',
+        openedEarlier: true,
+        end: 'open',
+        steps: ['pull-request-ready', 'pull-request-changes-requested'],
+      },
+      {
+        label: 'PR #95',
+        firstDay: '2026-10-17',
+        lastDay: '2026-10-18',
+        openedEarlier: false,
+        end: 'closed',
+        steps: ['pull-request-opened', 'pull-request-closed'],
+      },
+    ]);
+  });
+  test('a lane keeps the most recently active pull requests and leaves the others to the day details', () => {
+    const marks = Array.from(
+      { length: THREAD_LANE_MAX_TRACKS + 2 },
+      (_, index): WorkThreadMark => ({
+        at: parseCanonicalInstant(`2026-10-${String(10 + index).padStart(2, '0')}T09:00:00.000Z`),
+        fact: 'pull-request-opened',
+        harness: null,
+        kind: 'event',
+        label: `PR #${index} opened`,
+        source: { key: `github.com/acme/app#${index}`, label: `PR #${index}` },
+      }),
+    );
+    const { tracks, hidden } = threadPullRequestTracks(marks, 'UTC');
+    expect(hidden).toBe(2);
+    expect(tracks.map((track) => track.label)).toEqual(['PR #2', 'PR #3', 'PR #4']);
   });
   test.each(['origin', 'declared', 'launched'] as const)(
     'hides %s link-added events even after the link was detached',

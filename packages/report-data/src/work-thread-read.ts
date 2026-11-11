@@ -623,6 +623,7 @@ const timelineMarksOf = (
         harness: null,
         kind: 'event' as const,
         label: workThreadFactEventLabel(event),
+        source: { key: event.key, label: event.label },
       })),
     ),
     ...recent(
@@ -632,6 +633,7 @@ const timelineMarksOf = (
         harness: episode.harness,
         kind: 'session' as const,
         label: episode.title ?? `Session ${episode.sourceSessionId}`,
+        source: null,
       })),
     ),
     ...recent(
@@ -644,6 +646,7 @@ const timelineMarksOf = (
                 harness: null,
                 kind: 'event' as const,
                 label: FOLLOW_STATE_LABELS[event.toState],
+                source: null,
               },
             ]
           : [],
