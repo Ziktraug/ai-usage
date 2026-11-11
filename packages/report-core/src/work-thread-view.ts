@@ -105,6 +105,8 @@ export interface WorkThreadMark {
   readonly kind: 'session' | 'event';
   /** What the mark stands for (a session title, "PR #12 opened"), for its accessible name and detail. */
   readonly label: string | null;
+  /** The linked source a milestone comes from ("PR #12"), so the lane draws one track per pull request. */
+  readonly source: { readonly key: string; readonly label: string } | null;
 }
 
 /** One native question. Presentation acknowledgements and unrelated messages are never answers. */

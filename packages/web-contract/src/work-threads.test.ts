@@ -261,8 +261,22 @@ describe('Work thread wire contract — dated facts and labels', () => {
     row: {
       ...row,
       marks: [
-        { at, fact: 'pull-request-opened', harness: null, kind: 'event', label: 'PR #12 opened' },
-        { at, fact: 'pull-request-approved', harness: null, kind: 'event', label: 'PR #12 approved by reviewer' },
+        {
+          at,
+          fact: 'pull-request-opened',
+          harness: null,
+          kind: 'event',
+          label: 'PR #12 opened',
+          source: { key: 'github.com/acme/app#12', label: 'PR #12' },
+        },
+        {
+          at,
+          fact: 'pull-request-approved',
+          harness: null,
+          kind: 'event',
+          label: 'PR #12 approved by reviewer',
+          source: { key: 'github.com/acme/app#12', label: 'PR #12' },
+        },
       ],
     },
     sources: [],
@@ -288,13 +302,16 @@ describe('Work thread wire contract — dated facts and labels', () => {
     expect(
       safeParse(workThreadsDetailDataSchema, {
         ...detail,
-        row: { ...row, marks: [{ at, fact: null, harness: null, kind: 'event', label: '' }] },
+        row: { ...row, marks: [{ at, fact: null, harness: null, kind: 'event', label: '', source: null }] },
       }).success,
     ).toBe(false);
     expect(
       safeParse(workThreadsDetailDataSchema, {
         ...detail,
-        row: { ...row, marks: [{ at, fact: 'pull-request-deployed', harness: null, kind: 'event', label: 'x' }] },
+        row: {
+          ...row,
+          marks: [{ at, fact: 'pull-request-deployed', harness: null, kind: 'event', label: 'x', source: null }],
+        },
       }).success,
     ).toBe(false);
     const { firstActivityAt: _omitted, ...withoutOrigin } = row;

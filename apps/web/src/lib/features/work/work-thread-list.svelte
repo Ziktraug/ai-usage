@@ -23,6 +23,7 @@
     harnessName,
     projectShortLabel,
     threadDayMarks,
+    threadPullRequestTracks,
     threadSituationCopy,
     threadTime,
     threadTimeline,
@@ -271,6 +272,7 @@
         {#each group.tasks as row (row.thread.threadId)}
           {@const situation = situationOf(row)}
           {@const buckets = bucketThreadMarks(row.marks, timeZone)}
+          {@const lane = threadPullRequestTracks(row.marks, timeZone)}
           <article
             class="wt-task-row"
             data-work-thread={row.thread.threadId}
@@ -297,17 +299,61 @@
                 linked
                 {row.sessionCount === 1 ? 'session' : 'sessions'}{row.delegatedSessionCount > 0
                   ? ` · ${row.delegatedSessionCount} delegated`
-                  : ''}{row.combinedThreads.length > 0 ? ` · combines ${row.combinedThreads.length + 1} tasks` : ''}
+                  : ''}{row.combinedThreads.length > 0
+                  ? ` · combines ${row.combinedThreads.length + 1} tasks`
+                  : ''}{lane.hidden > 0
+                  ? ` · ${lane.hidden} more ${lane.hidden === 1 ? 'PR' : 'PRs'} in day details`
+                  : ''}
               </p>
               <WorkThreadArtifacts now={dataset.generatedAt} {row} {timeZone} />
             </div>
-            <fieldset aria-label={`Activity of ${row.thread.title}`} class="wt-lane">
+            <!-- Sessions sit on the first row; each pull request then gets its own track below. -->
+            <fieldset
+              aria-label={`Activity of ${row.thread.title}`}
+              class="wt-lane"
+              style={`--wt-rows: 1fr var(--wt-session-row)${lane.tracks.length ? ` repeat(${lane.tracks.length}, var(--wt-track-row))` : ''} 1fr`}
+            >
               <span aria-hidden="true" class="wt-lane-today"></span>
+              <span aria-hidden="true" class="wt-lane-axis"></span>
+              {#each lane.tracks as track, trackIndex (track.key)}
+                {@const start = dayIndex.get(track.firstDay) ?? 0}
+                {@const end = dayIndex.get(track.lastDay) ?? timeline.length - 1}
+                {@const line = `grid-row: ${trackIndex + 3}`}
+                {#if track.openedEarlier && start > 0}
+                  <span
+                    aria-hidden="true"
+                    class="wt-pr-line wt-pr-lead"
+                    style={`${line}; grid-column: 1 / ${start + 2}`}
+                  ></span>
+                {/if}
+                {#if end > start}
+                  <span
+                    aria-hidden="true"
+                    class="wt-pr-line"
+                    data-end={track.end}
+                    style={`${line}; grid-column: ${start + 1} / ${end + 2}`}
+                  ></span>
+                {/if}
+                {#if track.end === 'open' && end < timeline.length - 1}
+                  <span
+                    aria-hidden="true"
+                    class="wt-pr-line wt-pr-tail"
+                    style={`${line}; grid-column: ${end + 1} / -1`}
+                  ></span>
+                {/if}
+                <span
+                  aria-hidden="true"
+                  class="wt-pr-tag"
+                  data-side={start > 0 ? 'before' : 'after'}
+                  style={`${line}; grid-column: ${start > 0 ? `1 / ${start + 1}` : `${start + 2} / -1`}`}
+                  >{track.label}</span
+                >
+              {/each}
               {#each [...buckets] as [dayKey, marks] (dayKey)}
                 {@const index = dayIndex.get(dayKey)}
                 {@const day = index === undefined ? undefined : timeline[index]}
                 {#if day && index !== undefined}
-                  {@const { sessions, milestone, others, description } = threadDayMarks(marks, day.label)}
+                  {@const { sessions, others, description } = threadDayMarks(marks, day.label)}
                   {@const selected = selectedMarks?.threadId === row.thread.threadId && selectedMarks.day === day.key}
                   <button
                     aria-controls={selected ? `wt-marks-${row.thread.threadId}-${day.key}` : undefined}
@@ -329,22 +375,32 @@
                     {#if sessions.length}
                       <span
                         aria-hidden="true"
-                        class="wt-mark"
+                        class="wt-mark wt-day-sessions"
                         data-harness={sessions.length === 1 ? sessions[0]?.harness : ''}
                         >{#if sessions.length > 1}
                           {sessions.length}
                         {:else}
                           <WorkHarnessGlyph harness={sessions[0]?.harness ?? null} />
+                        {/if}
+                        {#if others > 0}
+                          <span class="wt-event-badge"></span>
                         {/if}</span
                       >
-                    {/if}
-                    {#if milestone}
-                      <span aria-hidden="true" class="wt-mark wt-milestone" data-milestone={milestone}
-                        ><WorkMilestoneGlyph kind={milestone} /></span
-                      >
                     {:else if others > 0}
-                      <span aria-hidden="true" class="wt-mark wt-event-mark"></span>
+                      <span aria-hidden="true" class="wt-mark wt-event-mark wt-day-sessions"></span>
                     {/if}
+                    {#each lane.tracks as track, trackIndex (track.key)}
+                      {@const step = track.steps.get(day.key)}
+                      {#if step}
+                        <span
+                          aria-hidden="true"
+                          class="wt-mark wt-milestone"
+                          data-milestone={step}
+                          style={`grid-row: ${trackIndex + 3}`}
+                          ><WorkMilestoneGlyph kind={step} /></span
+                        >
+                      {/if}
+                    {/each}
                   </button>
                 {/if}
               {/each}
@@ -451,6 +507,7 @@
       >
     {/each}
     <span>○ Follow-up change</span>
+    <span><span aria-hidden="true" class="wt-legend-track"></span> One track per PR, opening to merge</span>
   </div>
   <span>Placed by day · open a mark for times and episode spans</span>
 </div>

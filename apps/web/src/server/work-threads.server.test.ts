@@ -340,6 +340,7 @@ describe('synthetic task dataset', () => {
         harness: null,
         kind: 'event',
         label: 'Source linked',
+        source: null,
       },
     ]);
     expect(
