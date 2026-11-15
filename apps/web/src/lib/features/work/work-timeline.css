@@ -1,0 +1,812 @@
+/* Timeline view of the Work page. Tokens (--wt-*) come from the .wt-surface element; selectors are
+   scoped under a .wtl- parent where they must outrank the element rules of work-threads.css. */
+
+.wt-surface .wtl-views {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 14px;
+  background: var(--wt-soft);
+  border: 1px solid var(--wt-line);
+  border-radius: 8px;
+}
+.wt-surface .wtl-views a {
+  padding: 5px 13px;
+  font-size: 12px;
+  color: var(--wt-muted);
+  border-radius: 6px;
+}
+.wt-surface .wtl-views a[aria-current="page"] {
+  font-weight: 600;
+  color: var(--wt-ink);
+  background: var(--wt-paper);
+  box-shadow: 0 0 0 1px var(--wt-line);
+}
+
+.wtl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.wtl-toolbar .wtl-group {
+  display: inline-flex;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line);
+  border-radius: 7px;
+}
+.wtl-toolbar .wtl-group button {
+  min-height: 34px;
+  padding: 5px 11px;
+  font-size: 12px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--wt-line);
+}
+.wtl-toolbar .wtl-group button:first-child {
+  border-left: 0;
+  border-radius: 6px 0 0 6px;
+}
+.wtl-toolbar .wtl-group button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.wtl-toolbar .wtl-group button:hover {
+  color: var(--wt-ink);
+  background: var(--wt-soft);
+}
+/* Pressed is bold and underlined, not only tinted. */
+.wtl-toolbar .wtl-group button[aria-pressed="true"] {
+  font-weight: 600;
+  color: var(--wt-accent);
+  background: var(--wt-tint);
+  box-shadow: inset 0 -2px 0 var(--wt-accent);
+}
+.wtl-toolbar .wtl-group button[aria-disabled="true"] {
+  color: var(--wt-muted);
+  cursor: not-allowed;
+  background: transparent;
+  opacity: 0.5;
+}
+.wtl-toolbar .wtl-filters {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.wtl-toolbar .wtl-filters .wt-input {
+  min-height: 34px;
+  padding-block: 6px;
+}
+.wt-surface .wtl-status {
+  margin: 0 2px 4px;
+  font-size: 11px;
+  color: var(--wt-muted);
+}
+
+/* The brush handles are 44px targets centred on a 26px track: the margin keeps them off the
+   controls above and the board below. */
+.wtl-brush {
+  margin: 10px 0 8px;
+}
+.wtl-brush-overview {
+  position: absolute;
+  inset: 4px 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: 999px;
+}
+.wtl-brush-overview span {
+  position: absolute;
+  bottom: 0;
+  min-height: 2px;
+  background: var(--wt-line-strong);
+}
+.wtl-brush-axis {
+  position: relative;
+  min-height: 14px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--wt-muted);
+}
+.wtl-brush-axis span {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.wt-surface .wtl-brush button[role="slider"]:focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: -8px;
+  border-radius: 999px;
+}
+
+.wtl-board {
+  --wtl-name: 300px;
+  --wtl-pad: 10px;
+  --wtl-pr-row: 8px;
+  --wtl-session-row: 14px;
+
+  position: relative;
+  overflow: hidden;
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line);
+  border-radius: 12px;
+  isolation: isolate;
+}
+.wtl-row {
+  display: grid;
+  grid-template-columns: var(--wtl-name) minmax(0, 1fr);
+}
+/* The name cell is opaque and above the overlays; the track cell lets the gridlines through. */
+.wtl-name {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  background: var(--wt-paper);
+  border-right: 1px solid var(--wt-line);
+}
+.wtl-track-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 4px var(--wtl-pad);
+}
+.wtl-track-cell > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Major gridlines and the "now" line are drawn once over the track column, not once per row. */
+.wtl-gridlines,
+.wtl-now {
+  position: absolute;
+  top: 0;
+  right: var(--wtl-pad);
+  bottom: 0;
+  left: calc(var(--wtl-name) + var(--wtl-pad));
+  pointer-events: none;
+}
+.wtl-gridlines {
+  z-index: -1;
+}
+.wtl-gridlines span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--wt-line);
+}
+.wtl-now {
+  z-index: 1;
+}
+.wtl-now-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--wt-accent);
+}
+/* On a line of its own above the month labels and the day ticks: either would collide with it; the
+   paper under the tint keeps it opaque over the line it names. */
+.wtl-now-label {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 12px;
+  color: var(--wt-accent);
+  background: linear-gradient(var(--wt-tint), var(--wt-tint)) var(--wt-paper);
+  border-radius: 4px;
+}
+.wtl-now-end .wtl-now-label {
+  right: 3px;
+  left: auto;
+}
+
+.wtl-head {
+  font-size: 11px;
+  color: var(--wt-muted);
+  border-bottom: 1px solid var(--wt-line);
+}
+.wtl-head .wtl-name {
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 16px;
+}
+.wtl-head .wtl-track-cell {
+  padding-block: 2px;
+}
+.wtl-scale {
+  display: grid;
+  grid-template-rows: 13px 17px 17px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.wtl-scale-groups,
+.wtl-scale-ticks {
+  display: grid;
+  grid-template-columns: repeat(var(--wtl-cols), minmax(0, 1fr));
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.wtl-scale-groups {
+  grid-row: 2;
+}
+.wtl-scale-ticks {
+  grid-row: 3;
+}
+.wtl-scale-groups > span {
+  min-width: 0;
+  padding-left: 4px;
+  overflow: hidden;
+  text-overflow: clip;
+  font-weight: 600;
+  color: var(--wt-ink);
+  border-left: 1px solid var(--wt-line-strong);
+}
+.wtl-scale-ticks > span {
+  padding-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.wtl-board .wtl-scale-ticks button {
+  min-width: 0;
+  height: 17px;
+  padding: 0 0 0 2px;
+  overflow: visible;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 17px;
+  color: var(--wt-muted);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+}
+.wtl-board .wtl-scale-ticks button:hover {
+  color: var(--wt-ink);
+  background: var(--wt-tint);
+}
+.wtl-board .wtl-scale-ticks button.wtl-today {
+  font-weight: 600;
+  color: var(--wt-accent);
+  box-shadow: inset 0 -2px 0 var(--wt-accent);
+}
+.wt-surface .wtl-board .wtl-scale-ticks button:focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: -1px;
+}
+
+.wtl-lane + .wtl-lane {
+  border-top: 1px solid var(--wt-line);
+}
+.wtl-lane-head {
+  min-height: 40px;
+}
+.wtl-board .wtl-lane-toggle {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  gap: 0 6px;
+  align-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 40px;
+  padding: 4px 12px 4px 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.wtl-board .wtl-lane-toggle:hover {
+  background: var(--wt-soft);
+}
+.wtl-lane-toggle .wtl-lane-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.wtl-lane-toggle .wt-meta {
+  grid-column: 2 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The list read carries a bounded number of marks per task: a track that reached it is tagged in
+   words, and its title and its text equivalent say what is missing. */
+.wtl-board .wtl-partial {
+  align-self: center;
+  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 13px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  border: 1px dashed var(--wt-line-strong);
+  border-radius: 3px;
+}
+.wtl-chevron {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--wt-muted);
+  text-align: center;
+}
+[aria-expanded="true"] > .wtl-chevron {
+  transform: rotate(90deg);
+}
+.wt-surface
+  .wtl-board
+  :is(.wtl-lane-toggle, .wtl-task-title, .wtl-quiet-toggle):focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: -2px;
+}
+
+.wtl-task {
+  min-height: 30px;
+  border-top: 1px solid color-mix(in srgb, var(--wt-line) 55%, transparent);
+}
+.wtl-task .wtl-name {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  padding: 3px 12px 3px 28px;
+}
+/* Outranks .wt-task-title, which the page's focus restoration needs as a class but which sizes
+   the list's 68px rows. */
+.wtl-board .wtl-task-title {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.wtl-board .wtl-task-title:hover {
+  color: var(--wt-accent);
+  text-decoration: underline;
+}
+.wtl-board .wtl-task-meta {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.wtl-task-meta > span {
+  flex-shrink: 0;
+}
+/* The session count gives way first when the name column is narrow. */
+.wtl-task-meta > span:last-child {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wtl-task.wtl-quiet .wtl-task-title {
+  font-weight: 400;
+  color: var(--wt-muted);
+}
+.wtl-quiet-row {
+  position: relative;
+  z-index: 2;
+  background: var(--wt-paper);
+  border-top: 1px solid color-mix(in srgb, var(--wt-line) 55%, transparent);
+}
+.wtl-board .wtl-quiet-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 30px;
+  padding: 3px 12px 3px 28px;
+  font-size: 11px;
+  color: var(--wt-muted);
+  background: transparent;
+  border: 0;
+}
+.wtl-board .wtl-quiet-toggle:hover {
+  color: var(--wt-ink);
+}
+
+/* One track: a heat row (or the session spans of one day), then one row per packed pull request. */
+.wtl-track {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.wtl-heat {
+  display: grid;
+  grid-template-columns: repeat(var(--wtl-cols), minmax(0, 1fr));
+  gap: 0 1px;
+  height: 16px;
+}
+.wtl-heat.wtl-dense {
+  gap: 0;
+}
+/* Level 0 is a baseline; levels 1 to 4 grow in opacity and print their count while it fits. The first
+   three stop at 48%: beyond it the ink of the count loses its contrast on the dark theme. */
+.wtl-cell {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  color: var(--wt-ink);
+  text-align: center;
+  box-shadow: inset 0 -1px 0 var(--wt-line);
+}
+.wtl-cell[data-level="1"] {
+  background: color-mix(in srgb, var(--wt-accent) 16%, transparent);
+}
+.wtl-cell[data-level="2"] {
+  background: color-mix(in srgb, var(--wt-accent) 32%, transparent);
+}
+.wtl-cell[data-level="3"] {
+  background: color-mix(in srgb, var(--wt-accent) 48%, transparent);
+}
+.wtl-cell[data-level="4"] {
+  color: var(--wt-contrast);
+  background: var(--wt-accent);
+}
+.wtl-cell:not([data-level="0"]) {
+  box-shadow: none;
+}
+.wtl-cell.wtl-major:not([data-level="0"]) {
+  border-left: 1px solid var(--wt-line-strong);
+}
+/* Today is named by the scale and the "Now" line: an accent underline on every row read as a merged
+   pull request bar. */
+
+.wtl-prs {
+  position: relative;
+  height: calc(var(--wtl-pr-rows) * var(--wtl-pr-row));
+}
+/* Outlined and tinted by default (open, in review); each other state changes the fill or the
+   stroke pattern, and the end cap where it has one, so a state never rests on its colour alone:
+   approved is a solid fill under a square cap, merged a solid fill under a round filled one. */
+.wtl-pr {
+  position: absolute;
+  top: calc(var(--wtl-row, 0) * var(--wtl-pr-row) + 1px);
+  height: 6px;
+  color: var(--wt-ink);
+  background: color-mix(in srgb, currentcolor 12%, transparent);
+  border: 1.5px solid currentcolor;
+  border-radius: 3px;
+}
+.wtl-pr[data-tone="approved"] {
+  color: var(--wt-ok);
+  background: currentcolor;
+}
+.wtl-pr[data-tone="unknown"] {
+  color: var(--wt-muted);
+  border-style: dotted;
+}
+.wtl-pr[data-tone="draft"] {
+  color: var(--wt-muted);
+  background: transparent;
+  border-style: dashed;
+}
+.wtl-pr[data-tone="merged"] {
+  color: var(--wt-accent);
+  background: currentcolor;
+}
+.wtl-pr[data-tone="closed"] {
+  color: var(--wt-muted);
+  background: var(--wt-line-strong);
+  border-color: var(--wt-line-strong);
+}
+.wtl-pr:is([data-tone="blocked"], [data-checks="failing"]) {
+  color: var(--wt-danger);
+  background: repeating-linear-gradient(
+    135deg,
+    currentcolor 0 2px,
+    transparent 2px 4px
+  );
+  border-style: solid;
+}
+/* End caps: a hollow circle where an open pull request reaches now (a hollow square once it is
+   approved), a filled circle on a merge, a cross on a close. */
+.wtl-pr:is(.wtl-open, [data-tone="merged"], [data-tone="closed"])::after {
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  content: "";
+  background: var(--wt-paper);
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  transform: translateY(-50%);
+}
+.wtl-pr[data-tone="merged"]::after {
+  background: currentcolor;
+}
+.wtl-pr.wtl-open[data-tone="approved"]::after {
+  border-radius: 0;
+}
+.wtl-pr[data-tone="closed"]::after {
+  width: auto;
+  height: auto;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 8px;
+  content: "×";
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+/* A bar cut by the window has a square, fading end and no cap on that side. */
+.wtl-pr.wtl-starts-before {
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.wtl-pr.wtl-starts-before::before,
+.wtl-pr.wtl-ends-after::after {
+  position: absolute;
+  top: -1.5px;
+  bottom: -1.5px;
+  width: min(12px, 60%);
+  height: auto;
+  content: "";
+  border: 0;
+  border-radius: 0;
+  transform: none;
+}
+.wtl-pr.wtl-starts-before::before {
+  left: 0;
+  background: linear-gradient(to right, var(--wt-paper), transparent);
+}
+.wtl-pr.wtl-ends-after {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.wtl-pr.wtl-ends-after::after {
+  right: 0;
+  background: linear-gradient(to left, var(--wt-paper), transparent);
+}
+.wtl-pr-label {
+  position: absolute;
+  top: calc(var(--wtl-row, 0) * var(--wtl-pr-row));
+  z-index: 1;
+  padding: 0 2px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 8px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  background: var(--wt-paper);
+}
+/* On its own line: over the bars it would hide the end cap of the last row. */
+.wtl-pr-more {
+  justify-self: end;
+  font-size: 9px;
+  line-height: 10px;
+  color: var(--wt-muted);
+}
+.wtl-pr-milestone {
+  position: absolute;
+  top: calc(var(--wtl-row, 0) * var(--wtl-pr-row) - 1px);
+  z-index: 1;
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  color: var(--wt-ink);
+  background: var(--wt-paper);
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+.wtl-pr-milestone[data-milestone="pull-request-merged"] {
+  color: var(--wt-accent);
+}
+.wtl-pr-milestone[data-milestone="pull-request-approved"] {
+  color: var(--wt-ok);
+}
+.wtl-pr-milestone[data-milestone="pull-request-changes-requested"] {
+  color: var(--wt-danger);
+}
+
+/* One day by the hour: a span per session, first to last observed activity, and under it a thin
+   strip for the sessions it delegated. */
+.wtl-sessions {
+  position: relative;
+  height: calc(var(--wtl-session-rows) * var(--wtl-session-row));
+  box-shadow: inset 0 -1px 0 var(--wt-line);
+}
+.wtl-session {
+  position: absolute;
+  top: calc(var(--wtl-row, 0) * var(--wtl-session-row));
+  box-sizing: border-box;
+  height: 10px;
+  container-type: inline-size;
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 8px;
+  color: var(--wt-muted);
+  text-align: center;
+  background: var(--wt-soft);
+  border: 1px solid currentcolor;
+  border-radius: 3px;
+}
+.wtl-session-glyph {
+  display: block;
+}
+@container (max-width: 27px) {
+  .wtl-session-glyph {
+    display: none;
+  }
+}
+.wtl-session.wtl-starts-before {
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.wtl-session.wtl-ends-after {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* An end that was not recorded is a start tick, not a span. */
+.wtl-sessions .wtl-session.wtl-point {
+  height: 12px;
+  background: currentcolor;
+  border: 0;
+  border-radius: 1px;
+}
+.wtl-sessions .wtl-child {
+  position: absolute;
+  top: calc(var(--wtl-row, 0) * var(--wtl-session-row) + 10px);
+  height: 3px;
+  color: var(--wt-muted);
+  background: currentcolor;
+  border-radius: 1px;
+  opacity: 0.7;
+}
+.wtl-sessions .wtl-child[data-harness] {
+  background: currentcolor;
+}
+
+.wtl-legend {
+  display: grid;
+  gap: 6px;
+  margin: 12px 2px 4px;
+  font-size: 10px;
+  color: var(--wt-muted);
+}
+.wtl-legend > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+}
+.wtl-legend > div > span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.wtl-legend .wtl-cell {
+  display: inline-block;
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+}
+.wtl-legend .wtl-pr {
+  position: relative;
+  top: 0;
+  display: inline-block;
+  width: 26px;
+  margin-right: 5px;
+}
+.wtl-now-sample {
+  width: 1px;
+  height: 12px;
+  background: var(--wt-accent);
+}
+.wtl-session-sample {
+  width: 26px;
+  height: 10px;
+  background: var(--wt-soft);
+  border: 1px solid var(--wt-muted);
+  border-radius: 3px;
+  box-shadow: 0 4px 0 -1px var(--wt-muted);
+}
+
+.wtl-table {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--wt-muted);
+}
+.wtl-table summary {
+  width: fit-content;
+  padding: 6px 2px;
+  cursor: pointer;
+}
+.wtl-table table {
+  width: 100%;
+  margin-top: 4px;
+  color: var(--wt-ink);
+  border-collapse: collapse;
+}
+.wtl-table caption {
+  padding: 4px 8px;
+  color: var(--wt-muted);
+  text-align: left;
+}
+.wtl-table :is(th, td) {
+  padding: 5px 8px;
+  font-weight: 400;
+  vertical-align: top;
+  text-align: left;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--wt-line);
+}
+.wtl-table thead th {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--wt-muted);
+  white-space: nowrap;
+}
+.wtl-table tbody th {
+  font-weight: 600;
+}
+.wtl-table .wtl-table-task th {
+  padding-left: 22px;
+  font-weight: 400;
+}
+
+/* 768 to 1279px is a daily viewport: the name column narrows, the toolbar wraps. */
+@media (max-width: 1279px) {
+  .wtl-board {
+    --wtl-name: 220px;
+  }
+  .wtl-toolbar .wtl-filters {
+    margin-left: 0;
+  }
+}
+/* Below it the name stacks above its track; the opaque name cells interrupt the overlays. */
+@media (max-width: 767px) {
+  .wtl-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wtl-name {
+    border-right: 0;
+  }
+  .wtl-gridlines,
+  .wtl-now {
+    left: var(--wtl-pad);
+  }
+  .wtl-head .wtl-name {
+    min-height: 24px;
+  }
+  .wtl-now-label {
+    top: 26px;
+  }
+  .wtl-toolbar .wtl-filters,
+  .wtl-toolbar .wtl-filters .wt-input {
+    width: 100%;
+    max-width: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wtl-brush button::before {
+    transition: none;
+  }
+}
