@@ -10,6 +10,8 @@
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
   import { createWorkThreadCommandAction, type WorkThreadTaskCommandActionInput } from '../../rpc/work-threads-client';
   import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
+  import { buildSessionCascade, type CascadeHistoryEntry } from './work-session-cascade';
+  import WorkSessionCascade from './work-session-cascade.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import WorkThreadEpisode from './work-thread-episode.svelte';
   import { captureFollowUndo, createFollowUndo, type FollowUndoAction } from './work-thread-follow-undo';
@@ -39,6 +41,8 @@
     readonly key: string;
     readonly title: string;
   }
+  /** The sessions as a cascade on an hour axis, or the flat journal it replaces. */
+  export type HistoryLayout = 'cascade' | 'journal';
   let {
     data,
     timeZone,
@@ -46,6 +50,11 @@
     previousHref = null,
     nextHref = null,
     selectedDay = null,
+    historyLayout = 'cascade',
+    onHistoryLayout,
+    presentation = 'page',
+    fullHref = null,
+    onOpenFull,
     onBack,
     onCommand,
     onPickerOpen,
@@ -61,6 +70,13 @@
     previousHref?: string | null;
     nextHref?: string | null;
     selectedDay?: string | null;
+    historyLayout?: HistoryLayout;
+    onHistoryLayout: (layout: HistoryLayout) => void;
+    /** `side` is the inspector beside the task list: the list stays the page, this is one of its panes. */
+    presentation?: 'page' | 'side';
+    /** The same task as a full page, offered from the side inspector. */
+    fullHref?: string | null;
+    onOpenFull?: (event: MouseEvent) => void;
     onBack: (event: MouseEvent) => void;
     onCommand: (command: WorkThreadTaskCommand) => Promise<WorkThreadCommandResult>;
     onPickerOpen: () => void;
@@ -100,6 +116,19 @@
         ),
       }))
       .filter((day) => day.entries.length > 0),
+  );
+  const cascade = $derived(
+    historyLayout === 'cascade'
+      ? buildSessionCascade({
+          episodes: data.episodes,
+          events: history
+            .flatMap((day) => day.entries)
+            .filter((entry): entry is CascadeHistoryEntry => entry.kind !== 'session'),
+          newestFirst,
+          nowMs: Date.parse(data.generatedAt),
+          timeZone,
+        })
+      : [],
   );
   const nativePending = $derived(taskNativeRequests(row));
   const primaryRemainder = $derived(situation.remainders.find((item) => item.kind === situation.reason));
@@ -300,31 +329,89 @@
   const followLabel = $derived({ done: 'Done', waiting: 'Waiting', following: 'Following' }[thread.followState]);
 </script>
 
-<nav aria-label="Task navigation" class="wt-crumb">
-  <a class="wt-link" href={backHref} onclick={onBack}>← My work</a><span aria-hidden="true">/</span
-  ><span>{thread.projectLabel ?? 'No project'}</span>
-  <div class="wt-neighbors">
-    <span>One task at a time</span>
-    {#if previousHref}
-      <a aria-label="Previous task" class="wt-button" href={previousHref}>←</a>
-    {:else}
-      <button aria-label="Previous task" class="wt-button" disabled type="button">←</button>
-    {/if}
-    {#if nextHref}
-      <a aria-label="Next task" class="wt-button" href={nextHref}>→</a>
-    {:else}
-      <button aria-label="Next task" class="wt-button" disabled type="button">→</button>
-    {/if}
-  </div>
-</nav>
+{#snippet historyEvent(
+  entry: CascadeHistoryEntry,
+)}
+  {#if entry.kind === 'fact-event'}
+    {@const factCopy = threadFactEventCopy(entry.event)}
+    <div class="wt-event wt-fact-event">
+      <span class="wt-event-source">GitHub</span>
+      <span aria-hidden="true" class="wt-mark wt-milestone" data-milestone={entry.event.kind}
+        ><WorkMilestoneGlyph kind={entry.event.kind} size={10} /></span
+      >
+      <div>
+        <strong>{factCopy.title}</strong>
+        {#if factCopy.detail}
+          <p title={entry.event.key}>{factCopy.detail}</p>
+        {/if}
+      </div>
+    </div>
+  {:else}
+    {@const eventCopy = threadEventCopy(entry.event, data.episodes)}
+    <div class="wt-event">
+      <span class="wt-event-source">{threadEventActor(entry.event)}</span>
+      <div>
+        <strong>{eventCopy.title}</strong>
+        {#if eventCopy.detail}
+          <p title={entry.event.linkKey ?? undefined}>{eventCopy.detail}</p>
+        {/if}
+        {#if entry.event.acknowledgedRemainders.length}
+          <details>
+            <summary>Acknowledged remainders</summary>
+            <ul>
+              {#each entry.event.acknowledgedRemainders as remainder}
+                <li>{remainder}</li>
+              {/each}
+            </ul>
+          </details>
+        {/if}
+      </div>
+    </div>
+  {/if}
+{/snippet}
+
+{#if presentation === 'side'}
+  <nav aria-label="Task navigation" class="wt-crumb wt-pane-bar">
+    <span>{thread.projectLabel ?? 'No project'}</span>
+    <div class="wt-neighbors">
+      {#if fullHref}
+        <a class="wt-button" href={fullHref} onclick={onOpenFull}>Open full page</a>
+      {/if}
+      <a aria-label="Close task detail" class="wt-button" href={backHref} onclick={onBack}>×</a>
+    </div>
+  </nav>
+{:else}
+  <nav aria-label="Task navigation" class="wt-crumb">
+    <a class="wt-link" href={backHref} onclick={onBack}>← My work</a><span aria-hidden="true">/</span
+    ><span>{thread.projectLabel ?? 'No project'}</span>
+    <div class="wt-neighbors">
+      <span>One task at a time</span>
+      {#if previousHref}
+        <a aria-label="Previous task" class="wt-button" href={previousHref}>←</a>
+      {:else}
+        <button aria-label="Previous task" class="wt-button" disabled type="button">←</button>
+      {/if}
+      {#if nextHref}
+        <a aria-label="Next task" class="wt-button" href={nextHref}>→</a>
+      {:else}
+        <button aria-label="Next task" class="wt-button" disabled type="button">→</button>
+      {/if}
+    </div>
+  </nav>
+{/if}
 <header class="wt-task-head">
   <div>
     <p class="wt-id">
       Task {thread.threadId.slice(-4)} · Since {threadDate(row.firstActivityAt, timeZone, false, data.generatedAt)}
     </p>
-    <h1 data-title-length={thread.title.length > 90 ? 'long' : 'normal'}>
+    <!-- Beside the list, the page's heading is the list's; the task titles its own pane one level down. -->
+    <svelte:element
+      class="wt-task-title-heading"
+      data-title-length={thread.title.length > 90 ? 'long' : 'normal'}
+      this={presentation === 'side' ? 'h2' : 'h1'}
+    >
       {thread.title}
-    </h1>
+    </svelte:element>
     {#if thread.objective}
       <p class="wt-subtitle">{thread.objective}</p>
     {/if}
@@ -508,6 +595,21 @@
   <div class="wt-history-top">
     <h2 id="work-thread-history-title">The thread of this task</h2>
     <div class="wt-history-controls">
+      <fieldset aria-label="History layout" class="wt-mini-tabs">
+        <button
+          aria-pressed={historyLayout === 'cascade' ? 'true' : 'false'}
+          onclick={() => onHistoryLayout('cascade')}
+          type="button"
+        >
+          Cascade
+        </button><button
+          aria-pressed={historyLayout === 'journal' ? 'true' : 'false'}
+          onclick={() => onHistoryLayout('journal')}
+          type="button"
+        >
+          Journal
+        </button>
+      </fieldset>
       <fieldset aria-label="History filter" class="wt-mini-tabs">
         <button aria-pressed={sessionsOnly ? 'false' : 'true'} onclick={() => (sessionsOnly = false)} type="button">
           All
@@ -529,78 +631,61 @@
       </label>
       <label class="wt-switch"
         ><input type="checkbox" bind:checked={showDelegations}>
-        Expand all delegations</label
+        {historyLayout === 'cascade' ? 'Expand all groups' : 'Expand all delegations'}</label
       >
     </div>
   </div>
-  <div class="wt-journal">
-    {#each history as day (day.key)}
-      <section aria-label={day.key} id={`work-day-${day.key}`} class:wt-selected-day={selectedDay === day.key}>
-        <h3 class="wt-day-label">
-          {threadDate(day.entries[0]?.at ?? `${day.key}T12:00:00Z`, timeZone, true)}
-        </h3>
-        {#each day.entries as entry (entry.id)}
-          <div class="wt-entry">
-            <time class="wt-entry-time" datetime={entry.at}>{threadTime(entry.at, timeZone)}</time>
-            <div class="wt-entry-body">
-              {#if entry.kind === 'session'}
-                <WorkThreadEpisode
-                  {busy}
-                  episode={entry.episode}
-                  initiallyOpen={selectedDay === day.key}
-                  {linkedKeys}
-                  links={row.links}
-                  onCopy={copy}
-                  onDetach={detach}
-                  {showDelegations}
-                  taskTitle={thread.title}
-                  {timeZone}
-                />
-              {:else if entry.kind === 'fact-event'}
-                {@const factCopy = threadFactEventCopy(entry.event)}
-                <div class="wt-event wt-fact-event">
-                  <span class="wt-event-source">GitHub</span>
-                  <span aria-hidden="true" class="wt-mark wt-milestone" data-milestone={entry.event.kind}
-                    ><WorkMilestoneGlyph kind={entry.event.kind} size={10} /></span
-                  >
-                  <div>
-                    <strong>{factCopy.title}</strong>
-                    {#if factCopy.detail}
-                      <p title={entry.event.key}>{factCopy.detail}</p>
-                    {/if}
-                  </div>
-                </div>
-              {:else}
-                {@const eventCopy = threadEventCopy(entry.event, data.episodes)}
-                <div class="wt-event">
-                  <span class="wt-event-source">{threadEventActor(entry.event)}</span>
-                  <div>
-                    <strong>{eventCopy.title}</strong>
-                    {#if eventCopy.detail}
-                      <p title={entry.event.linkKey ?? undefined}>{eventCopy.detail}</p>
-                    {/if}
-                    {#if entry.event.acknowledgedRemainders.length}
-                      <details>
-                        <summary>Acknowledged remainders</summary>
-                        <ul>
-                          {#each entry.event.acknowledgedRemainders as remainder}
-                            <li>{remainder}</li>
-                          {/each}
-                        </ul>
-                      </details>
-                    {/if}
-                  </div>
-                </div>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </section>
-    {:else}
+  <div class="wt-journal" data-history-layout={historyLayout}>
+    {#if history.length === 0}
       <p class="wt-empty">
         {sessionsOnly ? 'No linked sessions. A task can exist without a local session.' : 'No history observed yet.'}
       </p>
-    {/each}
+    {:else if historyLayout === 'cascade'}
+      <WorkSessionCascade
+        blocks={cascade}
+        {busy}
+        expandAll={showDelegations}
+        historyEntry={historyEvent}
+        {linkedKeys}
+        links={row.links}
+        onCopy={copy}
+        onDetach={detach}
+        {selectedDay}
+        taskTitle={thread.title}
+        {timeZone}
+      />
+    {:else}
+      {#each history as day (day.key)}
+        <section aria-label={day.key} id={`work-day-${day.key}`} class:wt-selected-day={selectedDay === day.key}>
+          <h3 class="wt-day-label">
+            {threadDate(day.entries[0]?.at ?? `${day.key}T12:00:00Z`, timeZone, true)}
+          </h3>
+          {#each day.entries as entry (entry.id)}
+            <div class="wt-entry">
+              <time class="wt-entry-time" datetime={entry.at}>{threadTime(entry.at, timeZone)}</time>
+              <div class="wt-entry-body">
+                {#if entry.kind === 'session'}
+                  <WorkThreadEpisode
+                    {busy}
+                    episode={entry.episode}
+                    initiallyOpen={selectedDay === day.key}
+                    {linkedKeys}
+                    links={row.links}
+                    onCopy={copy}
+                    onDetach={detach}
+                    {showDelegations}
+                    taskTitle={thread.title}
+                    {timeZone}
+                  />
+                {:else}
+                  {@render historyEvent(entry)}
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </section>
+      {/each}
+    {/if}
   </div>
 </section>
 <div class="wt-minor-ops">

@@ -30,7 +30,7 @@
   import WorkDiskView from './work-disk-view.svelte';
   import WorkJiraSync from './work-jira-sync.svelte';
   import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
-  import WorkThreadDetail from './work-thread-detail.svelte';
+  import WorkThreadDetail, { type HistoryLayout } from './work-thread-detail.svelte';
   import WorkThreadList from './work-thread-list.svelte';
   import type { ThreadPageData } from './work-thread-load';
   import {
@@ -39,11 +39,13 @@
     threadListQuery,
     threadMoreUrl,
     threadPageCursors,
+    threadSideUrl,
     threadUrl,
   } from './work-thread-model';
   import { threadListShell, threadSurface } from './work-thread-styles';
   import WorkTimelineView from './work-timeline-view.svelte';
   import './work-threads.css';
+  import './work-task-pane.css';
 
   let { data }: { data: ThreadPageData } = $props();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
@@ -77,6 +79,20 @@
     const value = currentUrl.searchParams.get('view');
     return value === 'timeline' || value === 'disk' ? value : 'lanes';
   });
+  // `detail=side` keeps the list as the page and shows the task in a pane beside it.
+  const side = $derived(taskId !== null && currentUrl.searchParams.get('detail') === 'side');
+  const historyLayout = $derived<HistoryLayout>(
+    currentUrl.searchParams.get('history') === 'journal' ? 'journal' : 'cascade',
+  );
+  const setHistoryLayout = (layout: HistoryLayout): Promise<void> => {
+    const url = new URL(currentUrl);
+    if (layout === 'journal') {
+      url.searchParams.set('history', 'journal');
+    } else {
+      url.searchParams.delete('history');
+    }
+    return navigate(url, true);
+  };
   const query = $derived(threadListQuery(currentUrl.searchParams));
   const cursors = $derived(threadPageCursors(currentUrl.searchParams));
   const listQueries = createQueries(() => ({
@@ -135,6 +151,7 @@
   });
   const navigate = (url: string | URL, replaceState = false): Promise<void> =>
     navigation.goto(url, { replace: replaceState, reset: false });
+  // A row links to the task's full page, so a modified click opens that; a plain click opens the pane.
   const href = (id: string, day?: string): string => threadUrl(currentUrl, id, day);
   // The Disk lens' way back: the same list, filters kept, without the `view` parameter.
   const diskLanesHref = $derived.by(() => {
@@ -157,6 +174,50 @@
     }
     event.preventDefault();
     await navigate(viewHref(target));
+  };
+  const focusRow = (id: string): void => {
+    // The id comes from the URL: only a task identifier may enter a selector.
+    if (isWorkThreadId(id)) {
+      document.querySelector<HTMLElement>(`[data-work-thread="${id}"] .wt-task-title`)?.focus({ preventScroll: true });
+    }
+  };
+  /**
+   * Opening the pane is one history entry; moving the selection and closing replace it. Back from an
+   * open pane therefore closes it, and never walks through every task that was selected.
+   */
+  const select = (id: string, day?: string): Promise<void> => navigate(threadSideUrl(currentUrl, id, day), side);
+  const plainClick = (event: MouseEvent): boolean =>
+    !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) && event.button === 0;
+  /** Closing the pane returns the keyboard to the row it came from; the list has not moved. */
+  const closeSide = async (): Promise<void> => {
+    const closed = taskId;
+    await navigate(threadUrl(currentUrl, null), true);
+    await tick();
+    if (closed) {
+      focusRow(closed);
+    }
+  };
+  const onCloseSide = (event: MouseEvent): void => {
+    if (plainClick(event)) {
+      event.preventDefault();
+      closeSide();
+    }
+  };
+  const keyPane = (event: KeyboardEvent): void => {
+    // Escape closes the pane from inside it or from a link of the list that opens it. A field being
+    // edited or an open form of the pane keeps it: closing would drop what was typed.
+    const target = event.target instanceof Element ? event.target : null;
+    const within =
+      target?.closest('[data-work-pane], .wt-task-title, .wt-next, .wt-day-marks .wt-link') &&
+      !target.closest('.wt-inline-panel');
+    const editing =
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement ||
+      event.target instanceof HTMLSelectElement;
+    if (event.key === 'Escape' && !event.defaultPrevented && within && !editing) {
+      event.preventDefault();
+      closeSide();
+    }
   };
   const updateFilter = (patch: Partial<ReturnType<typeof threadListQuery>>): Promise<void> => {
     const url = new URL(currentUrl);
@@ -183,7 +244,20 @@
     return navigate(url, true);
   };
   const open = async (event: MouseEvent, id: string, day?: string): Promise<void> => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+    if (!plainClick(event)) {
+      return;
+    }
+    event.preventDefault();
+    // Activating the task already shown moves the keyboard into its pane; Escape brings it back.
+    if (side && id === taskId && day === undefined) {
+      document.querySelector<HTMLElement>('[data-work-pane]')?.focus();
+      return;
+    }
+    await select(id, day);
+  };
+  /** The Timeline opens a task as a full page and saves its place, as before the pane existed. */
+  const openPage = async (event: MouseEvent, id: string, day?: string): Promise<void> => {
+    if (!plainClick(event)) {
       return;
     }
     event.preventDefault();
@@ -196,8 +270,26 @@
     await tick();
     document.querySelector<HTMLElement>('[data-work-threads]')?.focus();
   };
+  /** The full page is its own history entry: the list's place is saved so Back restores it. */
+  const openFull = async (event: MouseEvent): Promise<void> => {
+    // Read before the first navigation: it removes the task from the URL these values derive from.
+    const id = taskId;
+    const day = currentUrl.searchParams.get('day') ?? undefined;
+    if (!(plainClick(event) && id)) {
+      return;
+    }
+    event.preventDefault();
+    const saved = new URL(threadUrl(currentUrl, null), currentUrl);
+    saved.searchParams.set('scroll', String(Math.round(window.scrollY)));
+    saved.searchParams.set('focus', id);
+    await navigate(saved, true);
+    await navigate(threadUrl(saved, id, day));
+    window.scrollTo(0, 0);
+    await tick();
+    document.querySelector<HTMLElement>('[data-work-threads]')?.focus();
+  };
   const back = async (event: MouseEvent): Promise<void> => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+    if (!plainClick(event)) {
       return;
     }
     event.preventDefault();
@@ -232,12 +324,15 @@
     }
   });
   let previousTask = untrack(() => taskId);
+  let previousSide = untrack(() => side);
   $effect(() => {
     const current = taskId;
-    if (!current && previousTask && hydrated) {
+    // Closing the pane leaves the list where it is; only a return from the full page restores it.
+    if (!current && previousTask && hydrated && !previousSide) {
       tick().then(restoreList);
     }
     previousTask = current;
+    previousSide = side;
   });
   const command = async (input: WorkThreadCommand) => {
     const result = await clients.threads.command(input);
@@ -299,53 +394,69 @@
 </script>
 
 <svelte:head><title>{detail?.row.thread.title ?? 'My work'} · ai-usage</title></svelte:head>
-<div class={taskId ? shell : threadListShell}>
+{#snippet task(
+  presentation: 'page' | 'side',
+)}
+  {#if data.mode !== 'live'}
+    <p class="wt-meta">Synthetic demo</p>
+  {/if}
+  {#if detail}
+    {#key detail.row.thread.threadId}
+      <WorkThreadDetail
+        backHref={threadUrl(currentUrl, null)}
+        data={detail}
+        fullHref={presentation === 'side' ? href(detail.row.thread.threadId) : null}
+        {historyLayout}
+        moreSessions={sessions.hasNextPage}
+        nextHref={next ? href(next) : null}
+        onBack={presentation === 'side' ? onCloseSide : back}
+        onCommand={taskCommand}
+        onHistoryLayout={setHistoryLayout}
+        onMoreSessions={() => loadNextLinkableSessionPage(sessions)}
+        onOpenFull={openFull}
+        onPickerOpen={() => (pickerOpen = true)}
+        {presentation}
+        previousHref={previous ? href(previous) : null}
+        selectedDay={currentUrl.searchParams.get('day')}
+        sessionChoices={choices}
+        sessionsError={sessions.error?.message ??
+          bootstrapQuery.error?.message ??
+          (bootstrapQuery.data && !bootstrapQuery.data.ok ? 'Recent sessions are unavailable.' : null)}
+        sessionsLoading={sessions.isFetching || bootstrapQuery.isFetching}
+        {timeZone}
+      />
+    {/key}
+  {:else if detailError}
+    <div class="wt-empty" role="alert">
+      <svelte:element this={presentation === 'side' ? 'h2' : 'h1'}>Task unavailable</svelte:element>
+      <p>{detailError}</p>
+      <a class="wt-link" href={threadUrl(currentUrl, null)} onclick={presentation === 'side' ? onCloseSide : undefined}
+        >{presentation === 'side' ? 'Close' : '← My work'}</a
+      ><button class="wt-button" onclick={() => detailQuery.refetch()} type="button">Retry task</button>
+    </div>
+  {:else}
+    <p class="wt-empty" role="status">Reading this task…</p>
+    {#if presentation === 'side'}
+      <a class="wt-link" href={threadUrl(currentUrl, null)} onclick={onCloseSide}>Close</a>
+    {/if}
+  {/if}
+{/snippet}
+
+<svelte:window onkeydown={side ? keyPane : undefined} />
+<div class={taskId && !side ? shell : threadListShell} class:wt-split={side}>
   <main
     class={`${threadSurface} wt-surface`}
     data-route-shell="work"
     data-work-hydrated={hydrated}
     data-work-threads
     tabindex="-1"
-    class:wt-focus={Boolean(taskId)}
+    class:wt-focus={Boolean(taskId) && !side}
   >
     {#if data.mode !== 'demo'}
       <WorkJiraSync {timeZone} />
     {/if}
-    {#if taskId}
-      {#if data.mode !== 'live'}
-        <p class="wt-meta">Synthetic demo</p>
-      {/if}
-      {#if detail}
-        {#key detail.row.thread.threadId}
-          <WorkThreadDetail
-            backHref={threadUrl(currentUrl, null)}
-            data={detail}
-            moreSessions={sessions.hasNextPage}
-            nextHref={next ? href(next) : null}
-            onBack={back}
-            onCommand={taskCommand}
-            onMoreSessions={() => loadNextLinkableSessionPage(sessions)}
-            onPickerOpen={() => (pickerOpen = true)}
-            previousHref={previous ? href(previous) : null}
-            selectedDay={currentUrl.searchParams.get('day')}
-            sessionChoices={choices}
-            sessionsError={sessions.error?.message ??
-              bootstrapQuery.error?.message ??
-              (bootstrapQuery.data && !bootstrapQuery.data.ok ? 'Recent sessions are unavailable.' : null)}
-            sessionsLoading={sessions.isFetching || bootstrapQuery.isFetching}
-            {timeZone}
-          />
-        {/key}
-      {:else if detailError}
-        <div class="wt-empty" role="alert">
-          <h1>Task unavailable</h1>
-          <p>{detailError}</p>
-          <a class="wt-link" href={threadUrl(currentUrl, null)}>← My work</a
-          ><button class="wt-button" onclick={() => detailQuery.refetch()} type="button">Retry task</button>
-        </div>
-      {:else}
-        <p class="wt-empty" role="status">Reading this task…</p>
-      {/if}
+    {#if taskId && !side}
+      {@render task('page')}
     {:else if view === 'disk'}
       <WorkDiskView {href} lanesHref={diskLanesHref} threads={clients.threads} {timeZone} />
     {:else}
@@ -400,7 +511,7 @@
           {href}
           {navigate}
           onFilter={updateFilter}
-          onOpen={open}
+          onOpen={openPage}
           onReady={restoreTimeline}
           {query}
           {timeZone}
@@ -417,8 +528,10 @@
           onFilter={updateFilter}
           onMore={loadMore}
           onOpen={open}
+          onSelect={select}
           {query}
           {rows}
+          selectedId={side ? taskId : null}
           {timeZone}
         />
       {:else if !listError}
@@ -426,4 +539,9 @@
       {/if}
     {/if}
   </main>
+  {#if side}
+    <aside aria-label="Task detail" class={`${threadSurface} wt-surface wt-pane`} data-work-pane tabindex="-1">
+      {@render task('side')}
+    </aside>
+  {/if}
 </div>

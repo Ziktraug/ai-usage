@@ -45,11 +45,13 @@ export const threadMoreUrl = (current: URL, nextCursor: string): { url: URL; con
   return { url, continuation };
 };
 
+/** The task as a full page, or the list when `threadId` is null. Never the side pane: see `threadSideUrl`. */
 export const threadUrl = (url: URL, threadId: string | null, day?: string): string => {
   const next = new URL(url);
   next.pathname = '/work';
   next.hash = '';
   next.searchParams.delete('day');
+  next.searchParams.delete('detail');
   if (threadId) {
     next.searchParams.set('task', threadId);
   } else {
@@ -58,6 +60,13 @@ export const threadUrl = (url: URL, threadId: string | null, day?: string): stri
   if (day) {
     next.searchParams.set('day', day);
   }
+  return `${next.pathname}${next.search}`;
+};
+
+/** The task in the pane beside the list: the list stays the page (`detail=side`). */
+export const threadSideUrl = (url: URL, threadId: string, day?: string): string => {
+  const next = new URL(threadUrl(url, threadId, day), url);
+  next.searchParams.set('detail', 'side');
   return `${next.pathname}${next.search}`;
 };
 
@@ -276,11 +285,11 @@ export const bucketThreadMarks = (marks: readonly WorkThreadMark[], timeZone: st
   return days;
 };
 
-const yearIn = (at: string, timeZone: string): string =>
+const yearIn = (at: string | Date, timeZone: string): string =>
   new Date(at).toLocaleDateString('en-US', { timeZone, year: 'numeric' });
 
 /** With `now`, a date from another year names its year, so an old PR does not read as recent. */
-export const threadDate = (at: string, timeZone: string, long = false, now?: string): string =>
+export const threadDate = (at: string | Date, timeZone: string, long = false, now?: string): string =>
   new Date(at).toLocaleDateString('en-US', {
     timeZone,
     month: long ? 'long' : 'short',
@@ -289,25 +298,25 @@ export const threadDate = (at: string, timeZone: string, long = false, now?: str
     ...(now !== undefined && yearIn(at, timeZone) !== yearIn(now, timeZone) ? { year: 'numeric' as const } : {}),
   });
 
-export const threadTime = (at: string, timeZone: string): string =>
+export const threadTime = (at: string | Date, timeZone: string): string =>
   new Date(at).toLocaleTimeString('en-GB', { timeZone, hour: '2-digit', minute: '2-digit' });
 
 /** Calendar-day offsets keep overnight ranges honest even across daylight-saving changes. */
-export const episodeTimeRange = (
-  episode: Pick<WorkThreadEpisode, 'startedAt' | 'endedAt'>,
-  timeZone: string,
-): string => {
-  const start = threadTime(episode.startedAt, timeZone);
-  if (episode.endedAt === null) {
+export const threadTimeRange = (startedAt: string | Date, endedAt: string | Date | null, timeZone: string): string => {
+  const start = threadTime(startedAt, timeZone);
+  if (endedAt === null) {
     return start;
   }
   const dayOffset = Math.round(
-    (Date.parse(`${threadDayKey(episode.endedAt, timeZone)}T00:00:00Z`) -
-      Date.parse(`${threadDayKey(episode.startedAt, timeZone)}T00:00:00Z`)) /
+    (Date.parse(`${threadDayKey(endedAt, timeZone)}T00:00:00Z`) -
+      Date.parse(`${threadDayKey(startedAt, timeZone)}T00:00:00Z`)) /
       86_400_000,
   );
-  return `${start}–${threadTime(episode.endedAt, timeZone)}${dayOffset > 0 ? ` +${dayOffset}d` : ''}`;
+  return `${start}–${threadTime(endedAt, timeZone)}${dayOffset > 0 ? ` +${dayOffset}d` : ''}`;
 };
+
+export const episodeTimeRange = (episode: Pick<WorkThreadEpisode, 'startedAt' | 'endedAt'>, timeZone: string): string =>
+  threadTimeRange(episode.startedAt, episode.endedAt, timeZone);
 
 export type PullRequestTone =
   | 'merged'
@@ -676,7 +685,7 @@ export const observedWebUrl = (value: string | null): string | null => {
   }
 };
 
-const formatEpisodeDuration = (milliseconds: number): string => {
+export const formatEpisodeDuration = (milliseconds: number): string => {
   if (milliseconds > 0 && milliseconds < 60_000) {
     return '<1 min';
   }
