@@ -1,28 +1,6 @@
 /* Timeline view of the Work page. Tokens (--wt-*) come from the .wt-surface element; selectors are
    scoped under a .wtl- parent where they must outrank the element rules of work-threads.css. */
 
-.wt-surface .wtl-views {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  margin-bottom: 14px;
-  background: var(--wt-soft);
-  border: 1px solid var(--wt-line);
-  border-radius: 8px;
-}
-.wt-surface .wtl-views a {
-  padding: 5px 13px;
-  font-size: 12px;
-  color: var(--wt-muted);
-  border-radius: 6px;
-}
-.wt-surface .wtl-views a[aria-current="page"] {
-  font-weight: 600;
-  color: var(--wt-ink);
-  background: var(--wt-paper);
-  box-shadow: 0 0 0 1px var(--wt-line);
-}
-
 .wtl-toolbar {
   display: flex;
   flex-wrap: wrap;

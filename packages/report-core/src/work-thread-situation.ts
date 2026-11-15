@@ -1,4 +1,5 @@
 import type { CanonicalInstant } from './canonical-instant';
+import type { CheckoutStatusObservation } from './work-attention';
 import type { WorkThreadFact, WorkThreadNativeRequest, WorkThreadRow } from './work-thread-view';
 
 /** Matches the Work attention freshness horizon; freshness is interpreted, never persisted. */
@@ -48,6 +49,11 @@ export type WorkThreadRemainder = RemainderEvidence &
       }
   );
 export type Remainder = WorkThreadRemainder;
+const UNREAD_KINDS = ['source-unavailable', 'source-stale', 'source-unknown'] as const;
+export type WorkThreadUnreadRemainder = WorkThreadRemainder & { readonly kind: (typeof UNREAD_KINDS)[number] };
+/** A source that was not read, failed or went stale: what it would say is unknown, not absent. */
+export const isUnreadRemainder = (remainder: WorkThreadRemainder): remainder is WorkThreadUnreadRemainder =>
+  UNREAD_KINDS.some((kind) => kind === remainder.kind);
 export interface WorkThreadSituation {
   readonly action: 'reopen' | 'end-follow-up' | 'resume-session' | 'open-pr' | 'open-jira' | 'copy-context';
   readonly hint: 'to-resume' | 'in-progress' | 'ready-to-close' | 'waiting' | 'undecided' | 'done';
@@ -57,6 +63,7 @@ export interface WorkThreadSituation {
     | 'explicit-wait'
     | 'no-remainder'
     | 'merged-complete'
+    | 'closed-unmerged'
     | 'next-step';
   readonly remainders: readonly WorkThreadRemainder[];
 }
@@ -64,6 +71,10 @@ interface DatedObservation {
   readonly observedAt: CanonicalInstant;
   readonly outcome: string;
 }
+
+/** The last state a source established: its latest read when it succeeded, else its latest success. */
+const lastKnown = <T extends DatedObservation>(fact: WorkThreadFact<T>): T | null =>
+  fact.latest?.outcome === 'observed' ? fact.latest : fact.latestSuccessful;
 
 const observation = <T extends DatedObservation>(
   fact: WorkThreadFact<T>,
@@ -78,17 +89,41 @@ const observation = <T extends DatedObservation>(
   } else if (latest.outcome !== 'observed') {
     remainders.push({ ...evidence, kind: 'source-unavailable', outcome: latest.outcome });
   }
-  const value = latest?.outcome === 'observed' ? latest : fact.latestSuccessful;
+  const value = lastKnown(fact);
   if (value !== null && now - Date.parse(value.observedAt) > WORK_THREAD_STALE_AFTER_MS) {
     remainders.push({ ...evidence, observedAt: value.observedAt, kind: 'source-stale' });
   }
   return value?.outcome === 'observed' ? value : null;
 };
 
+/** Whether a checkout read showed work that exists nowhere else: uncommitted files or unpushed commits. */
+const heldLocalWork = (fact: CheckoutStatusObservation): boolean =>
+  fact.dirty === true ||
+  (fact.modifiedCount ?? 0) > 0 ||
+  (fact.stagedCount ?? 0) > 0 ||
+  (fact.untrackedCount ?? 0) > 0 ||
+  (fact.ahead ?? 0) > 0;
+
 const localRemainders = (row: WorkThreadRow, now: number, remainders: WorkThreadRemainder[]) => {
   for (const marker of row.markers.local) {
+    // A missing checkout is an observed absence: the read succeeded and found the checkout gone, so
+    // its last successful observation is history, neither current work nor a stale read. When that
+    // last observation held local work, where the work went is unknown, which is not "nothing left":
+    // the absence is listed once, as an unread source, to be acknowledged.
+    if (marker.latest?.outcome === 'missing') {
+      if (marker.latestSuccessful !== null && heldLocalWork(marker.latestSuccessful)) {
+        remainders.push({
+          key: marker.key,
+          observedAt: marker.latest.observedAt,
+          source: 'local',
+          kind: 'source-unavailable',
+          outcome: 'missing',
+        });
+      }
+      continue;
+    }
     const fact = observation(marker, 'local', now, remainders);
-    if (fact === null || marker.latest?.outcome === 'missing') {
+    if (fact === null) {
       continue;
     }
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'local' as const };
@@ -211,6 +246,33 @@ export const taskNativeRequests = (row: WorkThreadRow): readonly WorkThreadNativ
   });
 };
 
+/**
+ * Whether the task's pull requests all reached an end: `merged` when at least one merged (the
+ * others may be closed, superseded attempts), `closed` when all were closed without merge. A merge
+ * is terminal, so it counts by its last known state. A closed pull request can reopen, so its
+ * closing counts only while the latest read itself observed it. `null` without a pull request,
+ * while one is open or of unknown state, or while an active pull request link has no observation
+ * at all.
+ */
+export const settledPullRequests = (row: WorkThreadRow): 'merged' | 'closed' | null => {
+  const markers = row.markers.pullRequests;
+  const unobservedLink = row.links.some(
+    (link) =>
+      link.kind === 'pull-request' && link.detachedAt === null && !markers.some((marker) => marker.key === link.key),
+  );
+  if (markers.length === 0 || unobservedLink) {
+    return null;
+  }
+  const states = markers.map((marker) => {
+    const state = lastKnown(marker)?.state ?? null;
+    return state === 'CLOSED' && marker.latest?.outcome !== 'observed' ? null : state;
+  });
+  if (!states.every((state) => state === 'MERGED' || state === 'CLOSED')) {
+    return null;
+  }
+  return states.includes('MERGED') ? 'merged' : 'closed';
+};
+
 const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadRemainder[] => {
   const remainders: WorkThreadRemainder[] = [];
   for (const request of taskNativeRequests(row)) {
@@ -230,12 +292,9 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
   localRemainders(row, now, remainders);
   pullRequestRemainders(row, now, remainders);
   // While a pull request is open, an unfinished ticket is its expected state, not a separate step.
-  const pullRequestStates = row.markers.pullRequests.map((marker) => {
-    const fact = marker.latest?.outcome === 'observed' ? marker.latest : marker.latestSuccessful;
-    return fact?.state ?? null;
-  });
-  const pullRequestOpen = pullRequestStates.includes('OPEN');
-  const allMerged = pullRequestStates.length > 0 && pullRequestStates.every((state) => state === 'MERGED');
+  const pullRequestOpen = row.markers.pullRequests.some((marker) => lastKnown(marker)?.state === 'OPEN');
+  // The same rule that suggests an end says the work merged: a superseded, closed attempt beside it changes nothing.
+  const merged = settledPullRequests(row) === 'merged';
   for (const marker of row.markers.jiraIssues) {
     const fact = observation(marker, 'jira', now, remainders);
     if (fact === null) {
@@ -244,7 +303,7 @@ const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadR
     const evidence = { key: marker.key, observedAt: fact.observedAt, source: 'jira' as const };
     if (fact.statusCategory === null || fact.statusCategory === 'unknown') {
       remainders.push({ ...evidence, kind: 'source-unknown' });
-    } else if (fact.statusCategory !== 'done' && fact.handedOff === true && allMerged) {
+    } else if (fact.statusCategory !== 'done' && fact.handedOff === true && merged) {
       remainders.push({ ...evidence, kind: 'jira-after-merge' });
     } else if (fact.statusCategory !== 'done' && !pullRequestOpen) {
       remainders.push({ ...evidence, kind: 'jira-open' });
@@ -314,7 +373,11 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
   'source-unknown',
 ];
 
-/** Facts can suggest an end, but only an operator command ends the follow-up. */
+/**
+ * Facts can suggest an end, but only an operator command ends the follow-up. Known facts rank a
+ * task; an unread source never ranks a task that a known fact ranks, and stays listed in
+ * `remainders` to be acknowledged.
+ */
 export const deriveWorkThreadSituation = (
   row: WorkThreadRow,
   now: string | number | Date,
@@ -334,21 +397,24 @@ export const deriveWorkThreadSituation = (
   if (row.runningSessions > 0) {
     return { hint: 'in-progress', reason: 'running-session', action: 'resume-session', remainders };
   }
-  if (remainders.length === 0) {
-    if (row.thread.intent === 'analysis' || row.thread.intent === 'review') {
+  if (remainders.every(isUnreadRemainder)) {
+    // Absence cannot be asserted through an unread source, so only a fully read task has "nothing left".
+    if (remainders.length === 0 && (row.thread.intent === 'analysis' || row.thread.intent === 'review')) {
       return { hint: 'ready-to-close', reason: 'no-remainder', action: 'end-follow-up', remainders };
     }
-    if (
-      // An undeclared intent (a ticket's own task) delivers through its pull requests like a change.
-      (row.thread.intent === 'change' || row.thread.intent === null) &&
-      row.markers.pullRequests.length > 0 &&
-      row.markers.pullRequests.every(
-        (marker) => marker.latest?.outcome === 'observed' && marker.latest.state === 'MERGED',
-      )
-    ) {
+    // Merged is terminal: its last known state ranks the task whatever stayed unread. Closed is not
+    // (a closed pull request can reopen), so a closing suggests an end only while GitHub is read and
+    // current; otherwise the task falls through to its unread sources.
+    const settled = settledPullRequests(row);
+    if (settled === 'merged') {
       return { hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up', remainders };
     }
-    return { hint: 'undecided', reason: 'next-step', action: 'copy-context', remainders };
+    if (settled === 'closed' && !remainders.some((remainder) => remainder.source === 'github')) {
+      return { hint: 'ready-to-close', reason: 'closed-unmerged', action: 'end-follow-up', remainders };
+    }
+    if (remainders.length === 0) {
+      return { hint: 'undecided', reason: 'next-step', action: 'copy-context', remainders };
+    }
   }
   const reason = PRIORITY.find((kind) => remainders.some((remainder) => remainder.kind === kind)) ?? 'source-unknown';
   const evidence = remainders.find((remainder) => remainder.kind === reason);

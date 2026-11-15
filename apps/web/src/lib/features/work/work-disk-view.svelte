@@ -5,6 +5,7 @@
     type WorkThreadTab,
   } from '@ai-usage/report-core/work-thread-view';
   import { createQueries } from '@tanstack/svelte-query';
+  import type { Snippet } from 'svelte';
   import { browser } from '$app/env';
   import { workThreadListQueryOptions } from '../../query/options/work-threads';
   import type { WorkThreadsClient } from '../../rpc/work-threads-client';
@@ -14,12 +15,13 @@
   let {
     threads,
     href,
-    lanesHref,
+    switcher,
     timeZone,
   }: {
     threads: Pick<WorkThreadsClient, 'list'>;
     href: (threadId: string) => string;
-    lanesHref: string;
+    /** The page's lens switcher: the way to the other views. */
+    switcher: Snippet;
     timeZone: string;
   } = $props();
 
@@ -96,7 +98,7 @@
     <h1>Checkouts on this machine</h1>
   </div>
   <div class="wt-page-meta">
-    <a class="wt-link" href={lanesHref}>← Lanes</a>
+    {@render switcher()}
   </div>
 </header>
 {#if failure}

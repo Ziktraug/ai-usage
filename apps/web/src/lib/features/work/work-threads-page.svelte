@@ -36,16 +36,31 @@
   import {
     harnessName,
     THREAD_PAGE_WINDOW,
+    type ThreadBand,
+    type ThreadView,
+    threadBandFilter,
     threadListQuery,
     threadMoreUrl,
     threadPageCursors,
     threadSideUrl,
     threadUrl,
+    threadView,
+    threadViewUrl,
   } from './work-thread-model';
+  import WorkThreadPilot from './work-thread-pilot.svelte';
   import { threadListShell, threadSurface } from './work-thread-styles';
   import WorkTimelineView from './work-timeline-view.svelte';
   import './work-threads.css';
   import './work-task-pane.css';
+  import './work-thread-pilot.css';
+
+  // One switcher for the four lenses; a URL without `view` shows the first.
+  const VIEWS = [
+    { view: 'lanes', label: 'Lanes' },
+    { view: 'pilot', label: 'Pilot' },
+    { view: 'timeline', label: 'Timeline' },
+    { view: 'disk', label: 'Disk' },
+  ] as const satisfies readonly { view: ThreadView; label: string }[];
 
   let { data }: { data: ThreadPageData } = $props();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
@@ -75,10 +90,7 @@
   });
   const currentUrl = $derived(new URL(page.url.href));
   const taskId = $derived(currentUrl.searchParams.get('task'));
-  const view = $derived.by((): 'disk' | 'lanes' | 'timeline' => {
-    const value = currentUrl.searchParams.get('view');
-    return value === 'timeline' || value === 'disk' ? value : 'lanes';
-  });
+  const view = $derived(threadView(currentUrl.searchParams));
   // `detail=side` keeps the list as the page and shows the task in a pane beside it.
   const side = $derived(taskId !== null && currentUrl.searchParams.get('detail') === 'side');
   const historyLayout = $derived<HistoryLayout>(
@@ -153,32 +165,12 @@
     navigation.goto(url, { replace: replaceState, reset: false });
   // A row links to the task's full page, so a modified click opens that; a plain click opens the pane.
   const href = (id: string, day?: string): string => threadUrl(currentUrl, id, day);
-  // The Disk lens' way back: the same list, filters kept, without the `view` parameter.
-  const diskLanesHref = $derived.by(() => {
-    const lanes = new URL(currentUrl);
-    lanes.searchParams.delete('view');
-    return `${lanes.pathname}${lanes.search}`;
-  });
-  const viewHref = (target: 'lanes' | 'timeline'): string => {
-    const url = new URL(currentUrl);
-    if (target === 'timeline') {
-      url.searchParams.set('view', target);
-    } else {
-      url.searchParams.delete('view');
-    }
-    return `${url.pathname}${url.search}`;
-  };
-  const openView = async (event: MouseEvent, target: 'lanes' | 'timeline'): Promise<void> => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    await navigate(viewHref(target));
-  };
   const focusRow = (id: string): void => {
     // The id comes from the URL: only a task identifier may enter a selector.
     if (isWorkThreadId(id)) {
-      document.querySelector<HTMLElement>(`[data-work-thread="${id}"] .wt-task-title`)?.focus({ preventScroll: true });
+      document
+        .querySelector<HTMLElement>(`[data-work-thread="${id}"] :is(.wt-task-title, .wt-row-title)`)
+        ?.focus({ preventScroll: true });
     }
   };
   /**
@@ -208,7 +200,7 @@
     // edited or an open form of the pane keeps it: closing would drop what was typed.
     const target = event.target instanceof Element ? event.target : null;
     const within =
-      target?.closest('[data-work-pane], .wt-task-title, .wt-next, .wt-day-marks .wt-link') &&
+      target?.closest('[data-work-pane], .wt-task-title, .wt-row-title, .wt-next, .wt-day-marks .wt-link') &&
       !target.closest('.wt-inline-panel');
     const editing =
       event.target instanceof HTMLInputElement ||
@@ -226,6 +218,8 @@
     url.searchParams.delete('scroll');
     if ('tab' in patch) {
       url.searchParams.set('tab', patch.tab ?? 'open');
+      // Bands are counted within one tab; a filter left behind would hide the other tab's tasks.
+      url.searchParams.delete('band');
     }
     if ('search' in patch) {
       if (patch.search) {
@@ -240,6 +234,23 @@
       } else {
         url.searchParams.delete('project');
       }
+    }
+    return navigate(url, true);
+  };
+  const viewHref = (target: ThreadView): string => threadViewUrl(currentUrl, target);
+  const switchView = async (event: MouseEvent, target: ThreadView): Promise<void> => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    await navigate(viewHref(target));
+  };
+  const updateBand = (band: ThreadBand | null): Promise<void> => {
+    const url = new URL(currentUrl);
+    if (band === null) {
+      url.searchParams.delete('band');
+    } else {
+      url.searchParams.set('band', band);
     }
     return navigate(url, true);
   };
@@ -304,7 +315,9 @@
     const scroll = Number(currentUrl.searchParams.get('scroll') ?? 0);
     const focus = currentUrl.searchParams.get('focus');
     if (focus && isWorkThreadId(focus)) {
-      const title = document.querySelector<HTMLElement>(`[data-work-thread="${focus}"] .wt-task-title`);
+      const title = document.querySelector<HTMLElement>(
+        `[data-work-thread="${focus}"] :is(.wt-task-title, .wt-row-title)`,
+      );
       title?.focus({ preventScroll: true });
       pendingRestore = view === 'timeline' && title === null;
     }
@@ -393,6 +406,19 @@
   );
 </script>
 
+{#snippet viewSwitch()}
+  <nav aria-label="Work views" class="wt-views">
+    {#each VIEWS as item (item.view)}
+      <a
+        aria-current={view === item.view ? 'page' : undefined}
+        href={viewHref(item.view)}
+        onclick={(event) => switchView(event, item.view)}
+        >{item.label}</a
+      >
+    {/each}
+  </nav>
+{/snippet}
+
 <svelte:head><title>{detail?.row.thread.title ?? 'My work'} · ai-usage</title></svelte:head>
 {#snippet task(
   presentation: 'page' | 'side',
@@ -458,37 +484,38 @@
     {#if taskId && !side}
       {@render task('page')}
     {:else if view === 'disk'}
-      <WorkDiskView {href} lanesHref={diskLanesHref} threads={clients.threads} {timeZone} />
+      <WorkDiskView {href} switcher={viewSwitch} threads={clients.threads} {timeZone} />
     {:else}
-      <header class="wt-page-head">
-        <div>
-          <p class="wt-eyebrow">My work</p>
-          <h1>One thread per task.</h1>
-          <p class="wt-subtitle">Sessions pass. The follow-up stays, until you end it.</p>
-        </div>
-        <div class="wt-page-meta">
-          {#if data.mode !== 'live'}
-            <span>Synthetic demo</span>
-          {/if}
-          <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
-          <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
-        </div>
-      </header>
-      <nav aria-label="Work views" class="wtl-views">
-        <a
-          aria-current={view === 'lanes' ? 'page' : undefined}
-          href={viewHref('lanes')}
-          onclick={(event) => openView(event, 'lanes')}
-          >Lanes</a
-        >
-        <a
-          aria-current={view === 'timeline' ? 'page' : undefined}
-          href={viewHref('timeline')}
-          onclick={(event) => openView(event, 'timeline')}
-          >Timeline</a
-        >
-      </nav>
-      {#if listError && view === 'lanes'}
+      {#if view === 'pilot'}
+        <header class="wt-pilot-head">
+          <h1>My work</h1>
+          {@render viewSwitch()}
+          <div class="wt-pilot-head-meta">
+            {#if data.mode !== 'live'}
+              <span>Synthetic demo</span>
+            {/if}
+            <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
+            <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
+          </div>
+        </header>
+      {:else}
+        <header class="wt-page-head">
+          <div>
+            <p class="wt-eyebrow">My work</p>
+            <h1>One thread per task.</h1>
+            <p class="wt-subtitle">Sessions pass. The follow-up stays, until you end it.</p>
+          </div>
+          <div class="wt-page-meta">
+            {@render viewSwitch()}
+            {#if data.mode !== 'live'}
+              <span>Synthetic demo</span>
+            {/if}
+            <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
+            <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
+          </div>
+        </header>
+      {/if}
+      {#if listError && view !== 'timeline'}
         <div class="wt-alert" role="alert">
           <strong>Tasks unavailable</strong>
           <p>{listError} This does not establish that there are no tasks.</p>
@@ -517,10 +544,29 @@
           {timeZone}
           url={currentUrl}
         />
+      {:else if dataset && view === 'pilot'}
+        <WorkThreadPilot
+          band={threadBandFilter(currentUrl.searchParams)}
+          continuation={cursors.length >= THREAD_PAGE_WINDOW}
+          {dataset}
+          focusId={currentUrl.searchParams.get('focus')}
+          {href}
+          loadingMore={loadingMore || listFetching}
+          {moreUnavailable}
+          onBand={updateBand}
+          onCommand={command}
+          onFilter={updateFilter}
+          onMore={loadMore}
+          onOpen={open}
+          {query}
+          {rows}
+          {timeZone}
+        />
       {:else if dataset}
         <WorkThreadList
           continuation={cursors.length >= THREAD_PAGE_WINDOW}
           {dataset}
+          grouping={currentUrl.searchParams.get('group') === 'bands' ? 'band' : 'situation'}
           {href}
           loadingMore={loadingMore || listFetching}
           {moreUnavailable}

@@ -415,7 +415,7 @@ test('episode durations and PR fact events use their own evidence dates', async 
   await episode.getByRole('button', { name: 'Compare retry approaches' }).click();
   await expect(episode).toContainText("14 min recorded for this episode · not the task's lifetime");
   await expect(episode).toContainText('first to last activity, pauses included');
-  await expect(page.locator('.wt-reason h2')).toHaveText('2 review threads to address');
+  await expect(page.locator('.wt-reason h2')).toHaveText('Address 2 review threads on #1487');
   await open(page, ids.unknownDuration);
   await expect(page.locator('.wt-duration')).toHaveCount(0);
   await page.locator('.wt-session-button').first().click();
@@ -479,7 +479,7 @@ test('overnight episodes name the next day in both the row and the inspector', a
 
 test('ready-to-merge tasks show the merge-state evidence on the GitHub summary', async ({ page }) => {
   await open(page, ids.longTitle);
-  await expect(page.locator('.wt-reason h2')).toHaveText('Ready to merge');
+  await expect(page.locator('.wt-reason h2')).toHaveText('Merge #1501');
   const github = page.locator('summary').filter({ hasText: 'GITHUB' });
   await expect(github).toContainText('Mergeable');
   await expect(github).toContainText('Checks success');
