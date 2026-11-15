@@ -1479,27 +1479,70 @@ describe('the second line of a compact row', () => {
 });
 
 describe('a task headline is a gesture; what was not read comes second', () => {
-  test('a merged PR whose checkout was never read on this machine reads as an end', () => {
-    for (const row of [
-      task({ pullRequests: [pullRequest(MERGED)] }, { links: [...sessionLinks, ...branchLinks] }),
-      task({ pullRequests: [pullRequest(MERGED)], local: [neverReadCheckout] }),
-      task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ outcome: 'denied' })] }),
-    ]) {
+  test('a merged PR whose checkout was not read asks to check it, and does not suggest the end', () => {
+    for (const [row, headline] of [
+      [
+        task({ pullRequests: [pullRequest(MERGED)] }, { links: [...sessionLinks, ...branchLinks] }),
+        'Check branch fix/SHOP-2085/payment-retry before ending',
+      ],
+      [
+        task({ pullRequests: [pullRequest(MERGED)], local: [neverReadCheckout] }),
+        'Check checkout example-shop before ending',
+      ],
+      [
+        task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ outcome: 'denied' })] }),
+        'Check checkout example-shop before ending',
+      ],
+    ] as const) {
       const copy = copyOf(row);
       expect(copy).toMatchObject({
-        hint: 'ready-to-close',
-        label: 'Ready to close',
-        reason: 'merged-complete',
-        action: 'end-follow-up',
-        headline: 'End follow-up',
-        caption: 'PR #1487 merged · checkout not read on this machine. Deployment is not established.',
+        hint: 'undecided',
+        label: 'To decide',
+        reason: 'unread-checkout',
+        action: 'copy-context',
+        headline,
+        caption: 'PR #1487 merged · checkout not read on this machine',
       });
       expect(copy.note).toBe(copy.caption);
-      // The unread source is still listed, so ending the follow-up still acknowledges it.
+      // The unread source is still listed, so ending the follow-up anyway acknowledges it.
       expect(copy.remainders.filter((item) => item.source === 'local').map((item) => item.kind)).toEqual([
         row.markers.local[0]?.latest ? 'source-unavailable' : 'source-unknown',
       ]);
     }
+    // A read that aged says so; every other unread source is still named after the checkout.
+    const aged = copyOf(
+      task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ observedAt: instant(-8 * DAY) })] }),
+      sessionsSource('truncated'),
+    );
+    expect(aged).toMatchObject({
+      reason: 'unread-checkout',
+      headline: 'Check checkout example-shop before ending',
+      caption: 'PR #1487 merged · checkout read not current · sessions not fully read',
+    });
+    // A second linked branch with no pull request and no read blocks beside a checkout that was read.
+    const second = copyOf(
+      task(
+        { pullRequests: [pullRequest(MERGED)], local: [checkout()] },
+        {
+          links: [
+            ...sessionLinks,
+            ...branchLinks.map((item) => ({ ...item, key: item.key.replace('payment-retry', 'second-try') })),
+          ],
+        },
+      ),
+    );
+    expect(second).toMatchObject({
+      hint: 'undecided',
+      reason: 'unread-checkout',
+      headline: 'Check branch fix/SHOP-2085/second-try before ending',
+    });
+    // Sessions that were not fully read never withhold the end.
+    expect(
+      copyOf(
+        task({ pullRequests: [pullRequest(MERGED)] }, { nativeRequestCoverage: 'partial' }),
+        sessionsSource('truncated'),
+      ),
+    ).toMatchObject({ hint: 'ready-to-close', reason: 'merged-complete', headline: 'End follow-up' });
   });
   test('a merged PR with files left in its checkout asks to check them, never to remove a checkout', () => {
     const left = (patch: Partial<CheckoutStatusObservation>) =>
@@ -1560,19 +1603,22 @@ describe('a task headline is a gesture; what was not read comes second', () => {
     );
     expect(twice.remainders.filter((item) => item.source === 'sessions')).toHaveLength(2);
     expect(twice.caption).toBe('PR #1487 merged · sessions not fully read. Deployment is not established.');
+    // A checkout that was not read withholds the end; the line still names every source in the same order.
     expect(
-      copyOf(task({ pullRequests: [pullRequest(CLOSED)], local: [neverReadCheckout] }), sessionsSource('truncated'))
-        .caption,
-    ).toBe('PR #1487 closed without merge · checkout not read on this machine · sessions not fully read');
+      copyOf(task({ pullRequests: [pullRequest(CLOSED)], local: [neverReadCheckout] }), sessionsSource('truncated')),
+    ).toMatchObject({
+      reason: 'unread-checkout',
+      headline: 'Check checkout example-shop before ending',
+      caption: 'PR #1487 closed without merge · checkout not read on this machine · sessions not fully read',
+    });
   });
   test('a merged PR whose checkout went missing with local work says where that work was last seen', () => {
     const copy = copyOf(task({ pullRequests: [pullRequest(MERGED)], local: [lostCheckout] }));
     expect(copy).toMatchObject({
-      hint: 'ready-to-close',
-      reason: 'merged-complete',
-      headline: 'End follow-up',
-      caption:
-        'PR #1487 merged · checkout gone from disk, local work was last seen there. Deployment is not established.',
+      hint: 'undecided',
+      reason: 'unread-checkout',
+      headline: 'Check checkout example-shop before ending',
+      caption: 'PR #1487 merged · checkout gone from disk, local work was last seen there',
     });
     expect(copy.remainders.map((item) => [item.source, item.kind])).toEqual([['local', 'source-unavailable']]);
     // Without a pull request the loss is what the task waits on.
@@ -1850,9 +1896,11 @@ describe('bands say whose move it is', () => {
     expect(bandOf(running.row)).toBe('in-flight');
     expect(bandOf(ended.row)).toBe('done');
     expect(bandOf(task({ pullRequests: [pullRequest({ checksRollup: 'pending' })] }))).toBe('in-flight');
-    expect(bandOf(task({ pullRequests: [pullRequest(MERGED)] }, { links: [...sessionLinks, ...branchLinks] }))).toBe(
-      'to-tidy',
-    );
+    // A delivered task whose checkout was not read is tidying, though no end is suggested for it.
+    const unreadCheckout = task({ pullRequests: [pullRequest(MERGED)] }, { links: [...sessionLinks, ...branchLinks] });
+    expect(copyOf(unreadCheckout)).toMatchObject({ hint: 'undecided', reason: 'unread-checkout' });
+    expect(bandOf(unreadCheckout)).toBe('to-tidy');
+    expect(threadWaitSince(unreadCheckout, copyOf(unreadCheckout))).toEqual({ at: MERGED.mergedAt, basis: 'merged' });
     expect(
       bandOf(task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ dirty: true, untrackedCount: 1 })] })),
     ).toBe('to-tidy');

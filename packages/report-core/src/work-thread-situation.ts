@@ -64,6 +64,9 @@ export interface WorkThreadSituation {
     | 'no-remainder'
     | 'merged-complete'
     | 'closed-unmerged'
+    // Every pull request is settled, but a linked checkout was not read (never, failed, stale, or
+    // gone after its last read held work): what it holds is unknown, so no end is suggested.
+    | 'unread-checkout'
     | 'next-step';
   readonly remainders: readonly WorkThreadRemainder[];
 }
@@ -389,7 +392,7 @@ const PRIORITY: readonly WorkThreadRemainder['kind'][] = [
 /**
  * Facts can suggest an end, but only an operator command ends the follow-up. Known facts rank a
  * task; an unread source never ranks a task that a known fact ranks, and stays listed in
- * `remainders` to be acknowledged.
+ * `remainders` to be acknowledged. One unread source withholds a suggested end: a linked checkout.
  */
 export const deriveWorkThreadSituation = (
   row: WorkThreadRow,
@@ -415,15 +418,26 @@ export const deriveWorkThreadSituation = (
     if (remainders.length === 0 && (row.thread.intent === 'analysis' || row.thread.intent === 'review')) {
       return { hint: 'ready-to-close', reason: 'no-remainder', action: 'end-follow-up', remainders };
     }
-    // Merged is terminal: its last known state ranks the task whatever stayed unread. Closed is not
-    // (a closed pull request can reopen), so a closing suggests an end only while GitHub is read and
-    // current, alone or beside a merge; otherwise the task falls through to its unread sources.
+    // Merged is terminal: its last known state ranks the task whatever GitHub, the sessions or a
+    // ticket left unread. Closed is not (a closed pull request can reopen), so a closing suggests an
+    // end only while GitHub is read and current, alone or beside a merge; otherwise the task falls
+    // through to its unread sources.
     const settled = settledPullRequests(row);
-    if (settled === 'merged' && closedPullRequestsRead(row, remainders)) {
-      return { hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up', remainders };
-    }
-    if (settled === 'closed' && !remainders.some((remainder) => remainder.source === 'github')) {
-      return { hint: 'ready-to-close', reason: 'closed-unmerged', action: 'end-follow-up', remainders };
+    const ended =
+      (settled === 'merged' && closedPullRequestsRead(row, remainders)) ||
+      (settled === 'closed' && !remainders.some((remainder) => remainder.source === 'github'));
+    if (ended) {
+      // A checkout that was not read may hold commits or files that exist nowhere else: it is the
+      // one unread source an end could lose, so it asks to be checked instead of suggesting the end.
+      if (remainders.some((remainder) => remainder.source === 'local')) {
+        return { hint: 'undecided', reason: 'unread-checkout', action: 'copy-context', remainders };
+      }
+      return {
+        hint: 'ready-to-close',
+        reason: settled === 'merged' ? 'merged-complete' : 'closed-unmerged',
+        action: 'end-follow-up',
+        remainders,
+      };
     }
     if (remainders.length === 0) {
       return { hint: 'undecided', reason: 'next-step', action: 'copy-context', remainders };

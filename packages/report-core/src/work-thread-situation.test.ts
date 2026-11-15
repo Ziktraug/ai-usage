@@ -762,13 +762,13 @@ describe('a missing checkout is an observed absence', () => {
     expect(result).toMatchObject({ hint: 'undecided', reason: 'source-unavailable', action: 'copy-context' });
     expect(result.remainders).toEqual([gone]);
   });
-  test('a merged PR whose checkout went missing with local work is still ready to close, the loss listed', () => {
+  test('a merged PR whose checkout went missing with local work does not suggest the end, the loss listed', () => {
     const previous = local({ dirty: true, untrackedCount: 1, observedAt: older });
     const result = deriveWorkThreadSituation(
       withLocal(merged(), localMarker(local({ outcome: 'missing' }), previous)),
       at,
     );
-    expect(result).toMatchObject({ hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up' });
+    expect(result).toMatchObject({ hint: 'undecided', reason: 'unread-checkout', action: 'copy-context' });
     expect(result.remainders).toEqual([gone]);
   });
   test('a merged PR whose checkout is gone is ready to close with nothing to acknowledge', () => {
@@ -810,10 +810,10 @@ describe('unread sources never rank a task that a known fact ranks', () => {
     }
     expect(isUnreadRemainder({ ...evidence, kind: 'unpushed-commits', count: 1 })).toBe(false);
   });
-  test('a merged PR with a branch never read on this machine is ready to close and keeps the unknown', () => {
+  test('a merged PR with a branch never read on this machine does not suggest the end', () => {
     const value = { ...merged(), links: [link('branch', 'branch:github.com/test/repo@topic')] };
     const result = deriveWorkThreadSituation(value, at);
-    expect(result).toMatchObject({ hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up' });
+    expect(result).toMatchObject({ hint: 'undecided', reason: 'unread-checkout', action: 'copy-context' });
     expect(result.remainders).toEqual([
       { key: 'branch:github.com/test/repo@topic', source: 'local', observedAt: null, kind: 'source-unknown' },
     ]);
@@ -897,11 +897,14 @@ describe('unread sources never rank a task that a known fact ranks', () => {
       'source-unavailable',
     ]);
   });
-  test('a closed PR is ready to close beside unread local or sessions sources, not an unread GitHub source', () => {
-    const closed = { ...withPr(pr({ state: 'CLOSED' })), links: [link('branch', 'branch:github.com/test/repo@topic')] };
-    const result = deriveWorkThreadSituation(closed, at, [unreadSessions]);
+  test('a closed PR is ready to close beside an unread sessions source, not an unread checkout or GitHub source', () => {
+    const result = deriveWorkThreadSituation(withPr(pr({ state: 'CLOSED' })), at, [unreadSessions]);
     expect(result).toMatchObject({ hint: 'ready-to-close', reason: 'closed-unmerged', action: 'end-follow-up' });
-    expect(result.remainders.map((item) => [item.source, item.kind])).toEqual([
+    expect(result.remainders.map((item) => [item.source, item.kind])).toEqual([['sessions', 'source-unavailable']]);
+    const closed = { ...withPr(pr({ state: 'CLOSED' })), links: [link('branch', 'branch:github.com/test/repo@topic')] };
+    const blocked = deriveWorkThreadSituation(closed, at, [unreadSessions]);
+    expect(blocked).toMatchObject({ hint: 'undecided', reason: 'unread-checkout', action: 'copy-context' });
+    expect(blocked.remainders.map((item) => [item.source, item.kind])).toEqual([
       ['local', 'source-unknown'],
       ['sessions', 'source-unavailable'],
     ]);
@@ -1018,6 +1021,97 @@ describe('unread sources never rank a task that a known fact ranks', () => {
       hint: 'in-progress',
       reason: 'running-session',
     });
+  });
+});
+
+describe('an unread checkout keeps a settled task from suggesting its end', () => {
+  const blocked = { hint: 'undecided', reason: 'unread-checkout', action: 'copy-context' } as const;
+  const ready = { hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up' } as const;
+  const unreadSessions: WorkThreadRemainder = {
+    key: 'session:test/codex/one',
+    source: 'sessions',
+    observedAt: at,
+    kind: 'source-unavailable',
+    outcome: 'truncated',
+  };
+  test('a linked checkout never read blocks, whatever merged', () => {
+    const result = deriveWorkThreadSituation(withLocal(merged(), localMarker(null)), at);
+    expect(result).toMatchObject(blocked);
+    expect(result.remainders).toEqual([{ key: 'checkout', source: 'local', observedAt: null, kind: 'source-unknown' }]);
+  });
+  test.each(['not-a-repository', 'timeout', 'denied', 'invalid'] as const)(
+    'a checkout whose read failed (%s) blocks',
+    (outcome) => {
+      const value = withLocal(merged(), localMarker(local({ outcome }), local()));
+      expect(deriveWorkThreadSituation(value, at)).toMatchObject(blocked);
+    },
+  );
+  test('a checkout read too long ago blocks; a current clean read does not', () => {
+    expect(deriveWorkThreadSituation(withLocal(merged(), localMarker(local({ observedAt: older }))), at)).toMatchObject(
+      blocked,
+    );
+    const current = deriveWorkThreadSituation(withLocal(merged(), localMarker(local())), at);
+    expect(current).toMatchObject(ready);
+    expect(current.remainders).toEqual([]);
+  });
+  test('a checkout whose git state was only partly reported blocks', () => {
+    expect(deriveWorkThreadSituation(withLocal(merged(), localMarker(local({ ahead: null }))), at)).toMatchObject(
+      blocked,
+    );
+  });
+  test('a checkout gone from disk blocks only when its last read held work', () => {
+    const held = local({ ahead: 2, observedAt: older });
+    expect(
+      deriveWorkThreadSituation(withLocal(merged(), localMarker(local({ outcome: 'missing' }), held)), at),
+    ).toMatchObject(blocked);
+    const clean = local({ observedAt: older });
+    expect(
+      deriveWorkThreadSituation(withLocal(merged(), localMarker(local({ outcome: 'missing' }), clean)), at),
+    ).toMatchObject(ready);
+  });
+  test('a second linked branch with no pull request and no read blocks', () => {
+    const value = {
+      ...withLocal(merged(), localMarker(local())),
+      links: [link('branch', 'branch:github.com/test/repo@second')],
+    };
+    const result = deriveWorkThreadSituation(value, at);
+    expect(result).toMatchObject(blocked);
+    expect(result.remainders).toEqual([
+      { key: 'branch:github.com/test/repo@second', source: 'local', observedAt: null, kind: 'source-unknown' },
+    ]);
+    // Detached, the branch is no longer the task's: nothing is left to read.
+    const detached = { ...value, links: [link('branch', 'branch:github.com/test/repo@second', at)] };
+    expect(deriveWorkThreadSituation(detached, at)).toMatchObject(ready);
+  });
+  test('sessions that were not fully read do not block: they stay listed beside the suggested end', () => {
+    const partial = deriveWorkThreadSituation({ ...merged(), nativeRequestCoverage: 'partial' }, at, [unreadSessions]);
+    expect(partial).toMatchObject(ready);
+    expect(partial.remainders.map((item) => [item.source, item.kind])).toEqual([
+      ['sessions', 'source-unknown'],
+      ['sessions', 'source-unavailable'],
+    ]);
+  });
+  test('a ticket that was not read does not block', () => {
+    const unreadTicket: WorkThreadRemainder = { key: 'jira', source: 'jira', observedAt: null, kind: 'source-unknown' };
+    expect(deriveWorkThreadSituation(merged(), at, [unreadTicket])).toMatchObject(ready);
+  });
+  test('the checkout names the reason even beside other unread sources, and a known fact still outranks it', () => {
+    const value = withLocal({ ...merged(), nativeRequestCoverage: 'partial' }, localMarker(null));
+    expect(deriveWorkThreadSituation(value, at, [unreadSessions])).toMatchObject(blocked);
+    const dirty = withLocal(merged(), localMarker(local({ dirty: true, modifiedCount: 1 })), {
+      ...localMarker(null),
+      key: 'other',
+    });
+    expect(deriveWorkThreadSituation(dirty, at)).toMatchObject({ hint: 'to-resume', reason: 'local-files' });
+  });
+  test('explicit waiting and Done keep their rank over an unread checkout', () => {
+    const value = withLocal(merged(), localMarker(null));
+    expect(
+      deriveWorkThreadSituation({ ...value, thread: { ...thread, followState: 'waiting', waitingFor: 'Deploy' } }, at),
+    ).toMatchObject({ hint: 'waiting', reason: 'explicit-wait' });
+    expect(
+      deriveWorkThreadSituation({ ...value, thread: { ...thread, followState: 'done', doneAt: at } }, at),
+    ).toMatchObject({ hint: 'done', reason: 'follow-up-ended' });
   });
 });
 

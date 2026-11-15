@@ -833,22 +833,58 @@ const SETTLED_UNREAD_SOURCES = [
   { source: 'github', copy: 'pull request read not current' },
 ] as const;
 
+/**
+ * What is known of a task whose pull requests are settled: the pull requests, the disk, then every
+ * other source that stayed unread. A merge may sit beside attempts closed without merge: the end
+ * rests on both, so both are named.
+ */
+const settledFacts = (
+  row: WorkThreadRow,
+  remainders: readonly WorkThreadRemainder[],
+  disk: string | null,
+): readonly string[] => [
+  ...(['MERGED', 'CLOSED'] as const).flatMap((state) => settledPullRequestsCopy(row, state) ?? []),
+  ...(disk ? [disk] : []),
+  ...SETTLED_UNREAD_SOURCES.flatMap(({ source, copy }) => (hasUnreadSource(remainders, source) ? [copy] : [])),
+];
+
+const pathName = (path: string): string => path.split('/').filter(Boolean).at(-1) ?? path;
+
+/**
+ * The pull requests are settled but a linked checkout was not read: it may hold work that exists
+ * nowhere else, so the step is to look at it, and the end is not suggested. The headline names the
+ * checkout by its directory, or by its branch when no path is known on this machine.
+ */
+const unreadCheckoutWords = (
+  row: WorkThreadRow,
+  remainders: readonly WorkThreadRemainder[],
+): { readonly headline: string; readonly caption: string } => {
+  const blocker = remainders.find((remainder) => remainder.source === 'local' && isUnreadRemainder(remainder));
+  const marker = threadDisplayMarkers(row).local.find((candidate) => candidate.key === blocker?.key);
+  const path = marker?.checkoutPath ?? marker?.latest?.checkoutPath ?? marker?.latestSuccessful?.checkoutPath ?? null;
+  const branch = marker ? localBranch(marker) : null;
+  let name = 'the checkout';
+  if (path) {
+    name = `checkout ${pathName(path)}`;
+  } else if (branch) {
+    name = `branch ${branch}`;
+  }
+  let disk = 'checkout not read on this machine';
+  if (blocker !== undefined && isLostCheckout(blocker)) {
+    disk = 'checkout gone from disk, local work was last seen there';
+  } else if (blocker?.kind === 'source-stale') {
+    disk = 'checkout read not current';
+  }
+  return { headline: `Check ${name} before ending`, caption: settledFacts(row, remainders, disk).join(' · ') };
+};
+
 /** An end is suggested from known facts; every source that stayed unread is named beside them. */
 const settledSituationWords = (
   row: WorkThreadRow,
   reason: 'merged-complete' | 'closed-unmerged',
   remainders: readonly WorkThreadRemainder[],
 ): { readonly headline: string; readonly caption: string } => {
-  const disk = settledDiskCopy(row, remainders);
-  // A merge may sit beside attempts closed without merge: the end rests on both, so both are named.
-  const pullRequests = (reason === 'merged-complete' ? (['MERGED', 'CLOSED'] as const) : (['CLOSED'] as const)).flatMap(
-    (state) => settledPullRequestsCopy(row, state) ?? [],
-  );
-  const facts = [
-    ...pullRequests,
-    ...(disk ? [disk] : []),
-    ...SETTLED_UNREAD_SOURCES.flatMap(({ source, copy }) => (hasUnreadSource(remainders, source) ? [copy] : [])),
-  ];
+  const facts = settledFacts(row, remainders, settledDiskCopy(row, remainders));
   return {
     // The list cannot tell a dedicated worktree from a primary clone, so the gesture never removes a checkout.
     headline: 'End follow-up',
@@ -886,6 +922,8 @@ const situationWords = (
     case 'merged-complete':
     case 'closed-unmerged':
       return settledSituationWords(row, situation.reason, situation.remainders);
+    case 'unread-checkout':
+      return unreadCheckoutWords(row, situation.remainders);
     case 'next-step':
       return { headline: 'Choose the next step', caption: 'Follow-up stays yours to end' };
     default: {
@@ -939,9 +977,14 @@ export const threadSituationCopy = (
   }[situation.hint];
   const { headline, caption } = situationWords(row, situation, timeZone);
   // The list repeats no source or date (the timeline shows when); it keeps only explanations.
-  const explained = ['follow-up-ended', 'explicit-wait', 'no-remainder', 'merged-complete', 'closed-unmerged'].includes(
-    situation.reason,
-  );
+  const explained = [
+    'follow-up-ended',
+    'explicit-wait',
+    'no-remainder',
+    'merged-complete',
+    'closed-unmerged',
+    'unread-checkout',
+  ].includes(situation.reason);
   return { ...situation, label, headline, caption, note: explained ? caption : null };
 };
 
@@ -1034,7 +1077,12 @@ export const threadBand = (
   const since = threadWaitSince(row, situation).at;
   const lastMove = Date.parse(since) > Date.parse(row.lastActivityAt) ? since : row.lastActivityAt;
   const stale = elapsedBetween(lastMove, now) > WORK_THREAD_STALE_AFTER_MS;
-  const leftBehind = situation.reason === 'local-files' || situation.reason === 'jira-open' || stale;
+  // A delivered task whose checkout was not read is tidying too: the checkout is what is left to look at.
+  const leftBehind =
+    situation.reason === 'local-files' ||
+    situation.reason === 'jira-open' ||
+    situation.reason === 'unread-checkout' ||
+    stale;
   if (leftBehind && settledPullRequests(row) !== null) {
     return 'to-tidy';
   }
@@ -1092,6 +1140,22 @@ const sourceWaitStart = (
       ),
       basis: 'closed',
     };
+  }
+  if (reason === 'unread-checkout') {
+    // The checkout has waited to be looked at since the pull requests settled.
+    const merged = instantAtEdge(
+      pullRequests.map(({ fact }) => fact.mergedAt),
+      'latest',
+    );
+    return merged === null
+      ? {
+          at: instantAtEdge(
+            pullRequests.map(({ fact }) => fact.closedAt),
+            'latest',
+          ),
+          basis: 'closed',
+        }
+      : { at: merged, basis: 'merged' };
   }
   const primary = remainders.find((item) => item.kind === reason);
   if (primary?.source === 'github') {
