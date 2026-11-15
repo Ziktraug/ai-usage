@@ -652,7 +652,7 @@ test('production P1 continuity and native decisions survive collection, closure 
     }).toPass({ timeout: COLLECTION_TIMEOUT_MS });
     await expect(page.getByText('Ready to close', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('region', { name: "What's left", exact: true })).not.toContainText(
-      'No known remainder',
+      'An analysis can be enough',
     );
     const episode = page.locator(`[data-session-key="${ROOT_SESSION_KEY}"]`);
     const toggle = episode.locator('> .wt-session-button');

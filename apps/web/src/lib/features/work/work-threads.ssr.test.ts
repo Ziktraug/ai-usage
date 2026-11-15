@@ -16,7 +16,7 @@ const DAY_MILESTONE_PATTERN = /aria-hidden="true" class="wt-mark wt-milestone" d
 const DAY_EVENT_DOT_PATTERN = /class="wt-mark wt-event-mark"/;
 
 const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
-const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Checks failing<\/h2>/;
+const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Fix checks on #1487<\/h2>/;
 
 const server = await createServer({
   appType: 'custom',
@@ -520,7 +520,7 @@ describe('work thread SSR presentation', () => {
         onFilter: noop,
         onMore: noop,
       }),
-    ).toContain('Checks failing');
+    ).toContain('<strong>Fix checks on #1487</strong>');
     const banner = html(Sources, { sources, now: payments.generatedAt, timeZone: 'UTC' });
     expect(banner).toContain('Sessions: evidence incomplete');
     expect(banner).toContain('does not establish that nothing is left');

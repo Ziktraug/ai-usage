@@ -35,13 +35,24 @@
   import {
     harnessName,
     THREAD_PAGE_WINDOW,
+    type ThreadBand,
+    type ThreadView,
+    threadBandFilter,
     threadListQuery,
     threadMoreUrl,
     threadPageCursors,
     threadUrl,
+    threadView,
   } from './work-thread-model';
+  import WorkThreadPilot from './work-thread-pilot.svelte';
   import { threadListShell, threadSurface } from './work-thread-styles';
   import './work-threads.css';
+  import './work-thread-pilot.css';
+
+  const VIEWS = [
+    { view: 'pilot', label: 'Pilot' },
+    { view: 'lanes', label: 'Lanes' },
+  ] as const satisfies readonly { view: ThreadView; label: string }[];
 
   let { data }: { data: ThreadPageData } = $props();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
@@ -71,6 +82,7 @@
   });
   const currentUrl = $derived(new URL(page.url.href));
   const taskId = $derived(currentUrl.searchParams.get('task'));
+  const view = $derived(threadView(currentUrl.searchParams));
   const query = $derived(threadListQuery(currentUrl.searchParams));
   const cursors = $derived(threadPageCursors(currentUrl.searchParams));
   const listQueries = createQueries(() => ({
@@ -137,6 +149,8 @@
     url.searchParams.delete('scroll');
     if ('tab' in patch) {
       url.searchParams.set('tab', patch.tab ?? 'open');
+      // Bands are counted within one tab; a filter left behind would hide the other tab's tasks.
+      url.searchParams.delete('band');
     }
     if ('search' in patch) {
       if (patch.search) {
@@ -151,6 +165,31 @@
       } else {
         url.searchParams.delete('project');
       }
+    }
+    return navigate(url, true);
+  };
+  // The page size differs per view, so a switch starts the other view from its first page.
+  const viewHref = (target: ThreadView): string => {
+    const url = new URL(currentUrl);
+    url.searchParams.set('view', target);
+    for (const parameter of ['cursor', 'start', 'scroll', 'focus', 'band', 'task']) {
+      url.searchParams.delete(parameter);
+    }
+    return `${url.pathname}${url.search}`;
+  };
+  const switchView = async (event: MouseEvent, target: ThreadView): Promise<void> => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    await navigate(viewHref(target));
+  };
+  const updateBand = (band: ThreadBand | null): Promise<void> => {
+    const url = new URL(currentUrl);
+    if (band === null) {
+      url.searchParams.delete('band');
+    } else {
+      url.searchParams.set('band', band);
     }
     return navigate(url, true);
   };
@@ -182,7 +221,7 @@
     const focus = currentUrl.searchParams.get('focus');
     if (focus && isWorkThreadId(focus)) {
       document
-        .querySelector<HTMLElement>(`[data-work-thread="${focus}"] .wt-task-title`)
+        .querySelector<HTMLElement>(`[data-work-thread="${focus}"] :is(.wt-task-title, .wt-row-title)`)
         ?.focus({ preventScroll: true });
     }
     window.scrollTo(0, Number.isFinite(scroll) ? Math.max(0, scroll) : 0);
@@ -254,6 +293,19 @@
   );
 </script>
 
+{#snippet viewSwitch()}
+  <nav aria-label="Work views" class="wt-views">
+    {#each VIEWS as item (item.view)}
+      <a
+        aria-current={view === item.view ? 'page' : undefined}
+        href={viewHref(item.view)}
+        onclick={(event) => switchView(event, item.view)}
+        >{item.label}</a
+      >
+    {/each}
+  </nav>
+{/snippet}
+
 <svelte:head><title>{detail?.row.thread.title ?? 'My work'} · ai-usage</title></svelte:head>
 <div class={taskId ? shell : threadListShell}>
   <main
@@ -303,20 +355,35 @@
         <p class="wt-empty" role="status">Reading this task…</p>
       {/if}
     {:else}
-      <header class="wt-page-head">
-        <div>
-          <p class="wt-eyebrow">My work</p>
-          <h1>One thread per task.</h1>
-          <p class="wt-subtitle">Sessions pass. The follow-up stays, until you end it.</p>
-        </div>
-        <div class="wt-page-meta">
-          {#if data.mode !== 'live'}
-            <span>Synthetic demo</span>
-          {/if}
-          <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
-          <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
-        </div>
-      </header>
+      {#if view === 'pilot'}
+        <header class="wt-pilot-head">
+          <h1>My work</h1>
+          {@render viewSwitch()}
+          <div class="wt-pilot-head-meta">
+            {#if data.mode !== 'live'}
+              <span>Synthetic demo</span>
+            {/if}
+            <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
+            <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
+          </div>
+        </header>
+      {:else}
+        <header class="wt-page-head">
+          <div>
+            <p class="wt-eyebrow">My work</p>
+            <h1>One thread per task.</h1>
+            <p class="wt-subtitle">Sessions pass. The follow-up stays, until you end it.</p>
+          </div>
+          <div class="wt-page-meta">
+            {@render viewSwitch()}
+            {#if data.mode !== 'live'}
+              <span>Synthetic demo</span>
+            {/if}
+            <a class="wt-link" href="/work/sessions">Session intake&nbsp;↗</a>
+            <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
+          </div>
+        </header>
+      {/if}
       {#if listError}
         <div class="wt-alert" role="alert">
           <strong>Tasks unavailable</strong>
@@ -334,10 +401,29 @@
           </button>
         </div>
       {/if}
-      {#if dataset}
+      {#if dataset && view === 'pilot'}
+        <WorkThreadPilot
+          band={threadBandFilter(currentUrl.searchParams)}
+          continuation={cursors.length >= THREAD_PAGE_WINDOW}
+          {dataset}
+          focusId={currentUrl.searchParams.get('focus')}
+          {href}
+          loadingMore={loadingMore || listFetching}
+          {moreUnavailable}
+          onBand={updateBand}
+          onCommand={command}
+          onFilter={updateFilter}
+          onMore={loadMore}
+          onOpen={open}
+          {query}
+          {rows}
+          {timeZone}
+        />
+      {:else if dataset}
         <WorkThreadList
           continuation={cursors.length >= THREAD_PAGE_WINDOW}
           {dataset}
+          grouping={currentUrl.searchParams.get('group') === 'bands' ? 'band' : 'situation'}
           {href}
           loadingMore={loadingMore || listFetching}
           {moreUnavailable}

@@ -1,12 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import type { CheckoutStatusObservation, PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import type { WorkThreadEvent, WorkThreadLink } from '@ai-usage/report-core/work-thread';
-import type { WorkThreadRemainder } from '@ai-usage/report-core/work-thread-situation';
+import type { WorkThreadRemainder, WorkThreadSituation } from '@ai-usage/report-core/work-thread-situation';
 import {
   WORK_THREAD_VIEW_BOUNDS,
   type WorkThreadEpisode,
   type WorkThreadFactEvent,
+  type WorkThreadLocalMarker,
   type WorkThreadMark,
+  type WorkThreadMarkers,
+  type WorkThreadNativeRequest,
+  type WorkThreadPullRequestMarker,
+  type WorkThreadRow,
   type WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
 import {
@@ -24,15 +30,26 @@ import {
   episodeSpanContext,
   episodeTimeRange,
   groupThreadRows,
+  groupThreadRowsByBand,
+  harnessName,
   localMarkerKey,
   observedWebUrl,
   primaryResumeEpisode,
   projectShortLabel,
+  remainderActionCopy,
   remainderCopy,
   remainderEvidenceCopy,
+  THREAD_BANDS,
   THREAD_LANE_MAX_TRACKS,
+  THREAD_LIFECYCLE_STEPS,
   THREAD_TIMELINE_MIN_DAYS,
+  type ThreadBand,
+  type ThreadLifecycleStep,
   taskSourceStatuses,
+  threadAge,
+  threadBand,
+  threadBandCounts,
+  threadBandFilter,
   threadDate,
   threadDayKey,
   threadDayMarks,
@@ -41,15 +58,23 @@ import {
   threadEventCopy,
   threadFactEventCopy,
   threadHistory,
+  threadLifecycle,
+  threadLifecycleSummary,
   threadListQuery,
   threadMoreUrl,
   threadPageCursors,
   threadPullRequestTracks,
+  threadRecentActivity,
   threadRefs,
+  threadRowMeta,
+  threadSessionsLabel,
   threadSituationCopy,
   threadSourceAvailability,
   threadTimeline,
   threadUrl,
+  threadView,
+  threadWaitSince,
+  threadWaitSinceLabel,
 } from './work-thread-model';
 
 const store = createSyntheticWorkThreadStore();
@@ -205,10 +230,13 @@ describe('task presentation model', () => {
     expect(projectShortLabel(null)).toBe('No project');
   });
   test('analysis copy permits ending without implying automatic closure', () => {
-    expect(threadSituationCopy(analysis.row, analysis.generatedAt, analysis.sources)).toMatchObject({
+    const copy = threadSituationCopy(analysis.row, analysis.generatedAt, analysis.sources);
+    expect(copy).toMatchObject({
       hint: 'ready-to-close',
-      headline: 'An analysis can be enough',
+      headline: 'End follow-up',
+      caption: 'An analysis can be enough. No branch, PR or ticket is required.',
     });
+    expect(copy.note).toBe(copy.caption);
     expect(analysis.row.thread.followState).toBe('following');
   });
   test('failed or stale linked-session reads require acknowledgement before ending an analysis', () => {
@@ -310,8 +338,9 @@ describe('task presentation model', () => {
     );
     expect(situation).toMatchObject({
       hint: 'to-resume',
-      headline: 'Checks failing',
+      headline: 'Fix checks on #1487',
       caption: 'GitHub · Oct 24',
+      note: null,
       reason: 'failing-checks',
       action: 'open-pr',
     });
@@ -535,6 +564,91 @@ describe('round 2 concise task evidence', () => {
         untracked: null,
       }),
     ).toBe('Local: unknown modified · unknown staged · unknown untracked');
+  });
+  test('a checkout gone from disk with local work last seen there says so, and only that case', () => {
+    const unavailable = { ...evidence, kind: 'source-unavailable' as const };
+    expect(remainderCopy({ ...unavailable, source: 'local', outcome: 'missing' })).toBe(
+      'Checkout gone from disk · local work was last seen there',
+    );
+    expect(remainderCopy({ ...unavailable, source: 'local', outcome: 'denied' })).toBe('Local read: denied');
+    expect(remainderCopy({ ...unavailable, source: 'local', outcome: 'truncated' })).toBe('Local evidence incomplete');
+    expect(remainderCopy({ ...unavailable, source: 'github', outcome: 'missing' })).toBe('GitHub read: missing');
+  });
+  test('every remainder kind names its gesture, with the pull request or ticket it concerns', () => {
+    const actions: Record<WorkThreadRemainder['kind'], string> = {
+      'native-request': `Answer ${harnessName(episode.harness)}: Choose scope?`,
+      'local-files': 'Commit or discard 3 local changes',
+      'unpushed-commits': 'Push 1 commit',
+      'running-session': '2 sessions running',
+      'merge-conflict': 'Resolve conflicts on #72',
+      'behind-base': 'Update #72 from release/2026',
+      'changes-requested': 'Address requested changes on #72',
+      'failing-checks': 'Fix checks on #72',
+      'pending-checks': 'Checks running on #72',
+      'review-requested': 'Review #72',
+      'team-review-requested': 'Take or leave the team review on #72',
+      'jira-after-merge': 'The ticket moves on without you',
+      'unresolved-review-threads': 'Address 2 review threads on #72',
+      'awaiting-review': 'Waiting on reviewers of #72',
+      'draft-pr': 'Finish draft #72',
+      'ready-to-merge': 'Merge #72',
+      'open-pr': 'Check on #72',
+      'jira-open': 'Update the ticket',
+      'source-unavailable': 'Choose the next step',
+      'source-stale': 'Choose the next step',
+      'source-unknown': 'Choose the next step',
+    };
+    for (const [kind, example] of Object.entries(examples)) {
+      expect([kind, remainderActionCopy(example.input, payment.row)]).toEqual([kind, actions[example.input.kind]]);
+    }
+  });
+  test('gestures count, pluralize and fall back to plain words when a key names nothing', () => {
+    const row = payment.row;
+    const withoutPullRequest = { ...row, links: [], markers: { ...row.markers, pullRequests: [] } };
+    const local = { ...evidence, source: 'local' as const };
+    const jira = { ...evidence, source: 'jira' as const, key: 'jira:synthetic/SHOP-72' };
+    const request = examples['native-request'].input;
+    if (request.kind !== 'native-request') {
+      throw new Error('Expected the native request example');
+    }
+    expect(
+      remainderActionCopy({ ...request, request: { ...request.request, harness: 'claude', state: 'uncertain' } }, row),
+    ).toBe('Answer Claude: Choose scope? (answer unknown)');
+    expect(remainderActionCopy({ ...evidence, kind: 'unresolved-review-threads', count: 1 }, row)).toBe(
+      'Address 1 review thread on #72',
+    );
+    expect(remainderActionCopy({ ...evidence, kind: 'behind-base', baseRef: null }, row)).toBe(
+      'Update #72 from its base',
+    );
+    expect(remainderActionCopy({ ...local, kind: 'unpushed-commits', count: 3 }, row)).toBe('Push 3 commits');
+    expect(remainderActionCopy({ ...local, kind: 'unpushed-commits', count: 1 }, withoutPullRequest)).toBe(
+      'Push 1 commit, open a PR',
+    );
+    // A linked pull request that was never read still exists: nothing asks to open another one.
+    expect(
+      remainderActionCopy(
+        { ...local, kind: 'unpushed-commits', count: 2 },
+        { ...withoutPullRequest, links: row.links.filter((item) => item.kind === 'pull-request') },
+      ),
+    ).toBe('Push 2 commits');
+    expect(remainderActionCopy({ ...local, kind: 'running-session', count: 1 }, row)).toBe('1 session running');
+    expect(
+      remainderActionCopy({ ...local, kind: 'local-files', modified: null, staged: null, untracked: 1 }, row),
+    ).toBe('Commit or discard 1 local change');
+    for (const counts of [
+      { modified: null, staged: null, untracked: null },
+      { modified: 0, staged: 0, untracked: 0 },
+    ]) {
+      expect(remainderActionCopy({ ...local, kind: 'local-files', ...counts }, row)).toBe(
+        'Commit or discard local changes',
+      );
+    }
+    expect(remainderActionCopy({ ...jira, kind: 'jira-open' }, row)).toBe('Update ticket SHOP-72');
+    expect(remainderActionCopy({ ...jira, kind: 'jira-after-merge' }, row)).toBe('Ticket SHOP-72 moves on without you');
+    const unnamed = { ...evidence, key: 'not a pull request key' };
+    expect(remainderActionCopy({ ...unnamed, kind: 'failing-checks' }, row)).toBe('Fix checks on the PR');
+    expect(remainderActionCopy({ ...unnamed, kind: 'ready-to-merge' }, row)).toBe('Merge the PR');
+    expect(remainderActionCopy({ ...unnamed, kind: 'draft-pr' }, row)).toBe('Finish the draft PR');
   });
   test('availability is one quiet line, while session truncation and messages stay in the details', () => {
     const statuses: readonly WorkThreadSourceStatus[] = [
@@ -1101,4 +1215,1164 @@ test('native requests survive the closing trace and resume the exact asking epis
     asking,
   );
   expect(primaryResumeEpisode([asking], 0, 'unrelated-session')).toBeNull();
+});
+
+const NOW = payment.generatedAt;
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const instant = (offsetMs: number) => parseCanonicalInstant(new Date(Date.parse(NOW) + offsetMs).toISOString());
+const fixturePullRequest = payment.row.markers.pullRequests[0];
+const fixtureCheckout = payment.row.markers.local[0];
+const fixtureTicket = payment.row.markers.jiraIssues[0];
+const pullRequestFact = fixturePullRequest?.latest;
+const checkoutFact = fixtureCheckout?.latest;
+const ticketFact = fixtureTicket?.latest;
+if (!(fixturePullRequest && fixtureCheckout && fixtureTicket && pullRequestFact && checkoutFact && ticketFact)) {
+  throw new Error('Expected the payment task to carry a pull request, a checkout and a ticket');
+}
+const running = await requireDetail(WORK_THREADS_FIXTURE_IDS.sessions);
+const ended = await requireDetail(WORK_THREADS_FIXTURE_IDS.done);
+const waiting = await requireDetail(WORK_THREADS_FIXTURE_IDS.badges);
+
+/** An open, green, mergeable pull request of the operator unless patched. */
+const pullRequest = (
+  patch: Partial<PullRequestObservation> = {},
+  marker: Partial<Pick<WorkThreadPullRequestMarker, 'mergeable' | 'mergeStateStatus' | 'role'>> = {},
+): WorkThreadPullRequestMarker => {
+  const latest = { ...pullRequestFact, reviewDecision: null, unresolvedReviewThreads: 0, ...patch };
+  return {
+    ...fixturePullRequest,
+    ...marker,
+    key: `github.example/synthetic/example-shop#${latest.number}`,
+    latest,
+    latestSuccessful: latest.outcome === 'observed' ? latest : null,
+  };
+};
+const MERGED = { state: 'MERGED', mergedAt: instant(-DAY) } as const;
+const CLOSED = { state: 'CLOSED', closedAt: instant(-2 * DAY) } as const;
+/** A clean, pushed checkout observed on disk unless patched. */
+const checkout = (patch: Partial<CheckoutStatusObservation> = {}): WorkThreadLocalMarker => {
+  const latest = { ...checkoutFact, ...patch };
+  return { ...fixtureCheckout, latest, latestSuccessful: latest.outcome === 'observed' ? latest : null };
+};
+const neverReadCheckout: WorkThreadLocalMarker = { ...fixtureCheckout, latest: null, latestSuccessful: null };
+/** A checkout read as gone from disk whose last successful read still held local work. */
+const lostCheckout: WorkThreadLocalMarker = {
+  ...fixtureCheckout,
+  latest: { ...checkoutFact, outcome: 'missing' },
+  latestSuccessful: { ...checkoutFact, dirty: true, untrackedCount: 1, observedAt: instant(-2 * DAY) },
+};
+const ticket = (statusCategory: 'todo' | 'in-progress' | 'done' | 'unknown', handedOff = false) => {
+  const latest = { ...ticketFact, statusCategory, ...(handedOff ? { handedOff: true as const } : {}) };
+  return { ...fixtureTicket, latest, latestSuccessful: latest };
+};
+const sessionLinks = payment.row.links.filter((item) => item.kind === 'session');
+const branchLinks = payment.row.links.filter((item) => item.kind === 'branch');
+const pullRequestLinks = payment.row.links.filter((item) => item.kind === 'pull-request');
+const ticketLinks = payment.row.links.filter((item) => item.kind === 'jira-issue');
+/** The payment task's sessions with only the given artifacts. */
+const task = (markers: Partial<WorkThreadMarkers> = {}, patch: Partial<WorkThreadRow> = {}): WorkThreadRow => ({
+  ...payment.row,
+  links: sessionLinks,
+  marks: [],
+  markers: { local: [], jiraIssues: [], pullRequests: [], ...markers },
+  ...patch,
+});
+const withoutSessions = { links: [], sessionCount: 0, delegatedSessionCount: 0 } as const;
+const copyOf = (row: WorkThreadRow, sources: readonly WorkThreadSourceStatus[] = payment.sources) =>
+  threadSituationCopy(row, NOW, sources, 'UTC');
+const sessionsSource = (state: WorkThreadSourceStatus['state']): readonly WorkThreadSourceStatus[] => [
+  { source: 'sessions', state, lastRunAt: NOW, message: null },
+];
+const nativeRequest = (patch: Partial<WorkThreadNativeRequest> = {}): WorkThreadNativeRequest => ({
+  key: 'request',
+  sessionKey: episode.linkKey,
+  machineId: episode.machineId,
+  harness: 'claude',
+  sourceSessionId: episode.sourceSessionId,
+  callId: 'call',
+  questionId: 'q',
+  askedAt: instant(-2 * HOUR),
+  answeredAt: null,
+  observedAt: NOW,
+  text: 'Ship the retry guard as is?',
+  state: 'open',
+  evidence: 'codex-request-user-input',
+  detail: 'No attributable answer.',
+  ...patch,
+});
+
+describe('the Pilot view and its page size', () => {
+  test('only view=pilot selects the Pilot presentation', () => {
+    expect(threadView(new URLSearchParams('view=pilot'))).toBe('pilot');
+    expect(threadView(new URLSearchParams())).toBe('lanes');
+    expect(threadView(new URLSearchParams('view=lanes'))).toBe('lanes');
+    expect(threadView(new URLSearchParams('view=timeline'))).toBe('lanes');
+    expect(threadView(new URLSearchParams('view=Pilot'))).toBe('lanes');
+  });
+  test('the Pilot view reads the largest page so its band counters cover the followed set', () => {
+    expect(threadListQuery(new URLSearchParams('view=pilot&q=1487')).limit).toBe(WORK_THREAD_VIEW_BOUNDS.maxPageSize);
+    expect(threadListQuery(new URLSearchParams('view=pilot'))).toEqual({
+      cursor: null,
+      limit: 100,
+      project: null,
+      search: null,
+      tab: 'open',
+    });
+    expect(threadListQuery(new URLSearchParams()).limit).toBe(50);
+    expect(threadListQuery(new URLSearchParams('view=lanes')).limit).toBe(50);
+  });
+  test('only a known band filters the Pilot view', () => {
+    for (const { band } of THREAD_BANDS) {
+      expect(threadBandFilter(new URLSearchParams(`view=pilot&band=${band}`))).toBe(band);
+    }
+    expect(threadBandFilter(new URLSearchParams())).toBeNull();
+    expect(threadBandFilter(new URLSearchParams('band='))).toBeNull();
+    expect(threadBandFilter(new URLSearchParams('band=Yours'))).toBeNull();
+    expect(threadBandFilter(new URLSearchParams('band=waiting'))).toBeNull();
+  });
+});
+
+describe('the second line of a compact row', () => {
+  const sessions = '4 sessions · 1 delegated';
+  test('pull requests lead with their number and state', () => {
+    expect(threadRowMeta(task({ pullRequests: [pullRequest({ draft: true })] }))).toBe(`PR #1487 draft · ${sessions}`);
+    expect(
+      threadRowMeta(
+        task({ pullRequests: [pullRequest({ number: 9, ...MERGED }), pullRequest({ number: 14, draft: true })] }),
+      ),
+    ).toBe(`PR #9 merged · PR #14 draft · ${sessions}`);
+    expect(threadRowMeta(task({ pullRequests: [pullRequest({ reviewDecision: 'CHANGES_REQUESTED' })] }))).toBe(
+      `PR #1487 changes requested · ${sessions}`,
+    );
+  });
+  test('more than two pull requests are counted, not listed', () => {
+    const pullRequests = [9, 14, 21].map((number) => pullRequest({ number }));
+    expect(threadRowMeta(task({ pullRequests }))).toBe(`3 pull requests · ${sessions}`);
+  });
+  test('a pull request that was not read stays named, with its number from the link', () => {
+    expect(threadRowMeta(task({}, { links: [...sessionLinks, ...pullRequestLinks] }))).toBe(
+      `PR #1487 state unknown · ${sessions}`,
+    );
+    expect(threadRowMeta(task({ pullRequests: [pullRequest({ outcome: 'network' })] }))).toBe(
+      `PR #1487 state unknown · ${sessions}`,
+    );
+  });
+  test('without a pull request, the first known branch stands in', () => {
+    expect(threadRowMeta(task({ local: [checkout()] }))).toBe(`fix/SHOP-2085/payment-retry · ${sessions}`);
+    const unnamed = { ...checkout({ branch: null }), key: 'checkout:/synthetic/elsewhere' };
+    expect(threadRowMeta(task({ local: [unnamed, checkout({ branch: 'feat/second' })] }))).toBe(
+      `feat/second · ${sessions}`,
+    );
+    // A branch link that was never read on this machine still names its branch.
+    expect(threadRowMeta(task({ local: [neverReadCheckout] }))).toBe(`fix/SHOP-2085/payment-retry · ${sessions}`);
+    expect(threadRowMeta(task({}, { links: [...sessionLinks, ...branchLinks] }))).toBe(
+      `fix/SHOP-2085/payment-retry · ${sessions}`,
+    );
+    expect(threadRowMeta(task({ local: [unnamed] }))).toBe(sessions);
+    // The pull request says more than its branch.
+    expect(threadRowMeta(task({ pullRequests: [pullRequest()], local: [checkout()] }))).toBe(
+      `PR #1487 open · ${sessions}`,
+    );
+  });
+  test('sessions are worded as this machine read them, and combined tasks are counted with this one', () => {
+    expect(threadRowMeta(task({}, withoutSessions))).toBe('No sessions on this machine');
+    expect(threadRowMeta(task({}, { sessionCount: 1, delegatedSessionCount: 0 }))).toBe('1 session');
+    const combinedThreads = [
+      { threadId: '12000000-0000-4000-8000-000000000201', title: 'First' },
+      { threadId: '12000000-0000-4000-8000-000000000202', title: 'Second' },
+    ];
+    expect(threadRowMeta(task({ pullRequests: [pullRequest(MERGED)] }, { combinedThreads }))).toBe(
+      `PR #1487 merged · ${sessions} · combines 3 tasks`,
+    );
+  });
+});
+
+describe('a task headline is a gesture; what was not read comes second', () => {
+  test('a merged PR whose checkout was never read on this machine reads as an end', () => {
+    for (const row of [
+      task({ pullRequests: [pullRequest(MERGED)] }, { links: [...sessionLinks, ...branchLinks] }),
+      task({ pullRequests: [pullRequest(MERGED)], local: [neverReadCheckout] }),
+      task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ outcome: 'denied' })] }),
+    ]) {
+      const copy = copyOf(row);
+      expect(copy).toMatchObject({
+        hint: 'ready-to-close',
+        label: 'Ready to close',
+        reason: 'merged-complete',
+        action: 'end-follow-up',
+        headline: 'End follow-up',
+        caption: 'PR #1487 merged · checkout not read on this machine. Deployment is not established.',
+      });
+      expect(copy.note).toBe(copy.caption);
+      // The unread source is still listed, so ending the follow-up still acknowledges it.
+      expect(copy.remainders.filter((item) => item.source === 'local').map((item) => item.kind)).toEqual([
+        row.markers.local[0]?.latest ? 'source-unavailable' : 'source-unknown',
+      ]);
+    }
+  });
+  test('a merged PR with files left in its checkout asks to check them, never to remove a checkout', () => {
+    const left = (patch: Partial<CheckoutStatusObservation>) =>
+      copyOf(task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ dirty: true, ...patch })] }));
+    expect(left({ untrackedCount: 1 })).toMatchObject({
+      hint: 'to-resume',
+      reason: 'local-files',
+      headline: 'Check 1 local change, end follow-up',
+      caption: 'Local · Oct 24',
+      note: null,
+    });
+    expect(left({ modifiedCount: 2, stagedCount: 1 }).headline).toBe('Check 3 local changes, end follow-up');
+    // A dirty checkout whose counts git did not report never reads "0 changes".
+    expect(left({}).headline).toBe('Check local changes, end follow-up');
+    expect(
+      copyOf(task({ pullRequests: [pullRequest(CLOSED)], local: [checkout({ dirty: true, untrackedCount: 1 })] }))
+        .headline,
+    ).toBe('Check 1 local change, end follow-up');
+    // Without a settled pull request the files are ordinary work.
+    expect(copyOf(task({ local: [checkout({ dirty: true, untrackedCount: 1 })] })).headline).toBe(
+      'Commit or discard 1 local change',
+    );
+  });
+  test('a merged PR with a clean checkout still on disk only ends the follow-up and names the checkout', () => {
+    // The list cannot tell a dedicated worktree from a primary clone, so it never asks to remove one.
+    expect(copyOf(task({ pullRequests: [pullRequest(MERGED)], local: [checkout()] }))).toMatchObject({
+      hint: 'ready-to-close',
+      reason: 'merged-complete',
+      headline: 'End follow-up',
+      caption: 'PR #1487 merged · checkout still on disk. Deployment is not established.',
+    });
+  });
+  test('a suggested end names every unread source after the disk', () => {
+    const staleRead = { ...MERGED, observedAt: instant(-8 * DAY) };
+    expect(copyOf(task({ pullRequests: [pullRequest(MERGED)] }), sessionsSource('truncated')).caption).toBe(
+      'PR #1487 merged · sessions not fully read. Deployment is not established.',
+    );
+    expect(copyOf(task({ pullRequests: [pullRequest(MERGED)], jiraIssues: [ticket('unknown')] })).caption).toBe(
+      'PR #1487 merged · ticket not read. Deployment is not established.',
+    );
+    expect(copyOf(task({ pullRequests: [pullRequest(staleRead)] })).caption).toBe(
+      'PR #1487 merged · pull request read not current. Deployment is not established.',
+    );
+    const everything = copyOf(
+      task({ pullRequests: [pullRequest(staleRead)], local: [checkout()], jiraIssues: [ticket('unknown')] }),
+      sessionsSource('failed'),
+    );
+    expect(everything).toMatchObject({ hint: 'ready-to-close', reason: 'merged-complete', headline: 'End follow-up' });
+    expect(everything.caption).toBe(
+      'PR #1487 merged · checkout still on disk · sessions not fully read · ticket not read · ' +
+        'pull request read not current. Deployment is not established.',
+    );
+    expect(everything.note).toBe(everything.caption);
+    // Each source is named once, however many of its reads are missing.
+    const twice = copyOf(
+      task({ pullRequests: [pullRequest(MERGED)] }, { nativeRequestCoverage: 'partial' }),
+      sessionsSource('truncated'),
+    );
+    expect(twice.remainders.filter((item) => item.source === 'sessions')).toHaveLength(2);
+    expect(twice.caption).toBe('PR #1487 merged · sessions not fully read. Deployment is not established.');
+    expect(
+      copyOf(task({ pullRequests: [pullRequest(CLOSED)], local: [neverReadCheckout] }), sessionsSource('truncated'))
+        .caption,
+    ).toBe('PR #1487 closed without merge · checkout not read on this machine · sessions not fully read');
+  });
+  test('a merged PR whose checkout went missing with local work says where that work was last seen', () => {
+    const copy = copyOf(task({ pullRequests: [pullRequest(MERGED)], local: [lostCheckout] }));
+    expect(copy).toMatchObject({
+      hint: 'ready-to-close',
+      reason: 'merged-complete',
+      headline: 'End follow-up',
+      caption:
+        'PR #1487 merged · checkout gone from disk, local work was last seen there. Deployment is not established.',
+    });
+    expect(copy.remainders.map((item) => [item.source, item.kind])).toEqual([['local', 'source-unavailable']]);
+    // Without a pull request the loss is what the task waits on.
+    expect(copyOf(task({ local: [lostCheckout] }))).toMatchObject({
+      hint: 'undecided',
+      reason: 'source-unavailable',
+      headline: 'Choose the next step',
+      caption: 'Checkout gone from disk · local work was last seen there · Local · Oct 24',
+    });
+  });
+  test('a merged PR whose checkouts are all gone from disk only ends the follow-up', () => {
+    const copy = copyOf(
+      task({
+        pullRequests: [pullRequest(MERGED)],
+        local: [checkout({ outcome: 'missing' }), checkout({ outcome: 'missing', checkoutPath: '/synthetic/other' })],
+      }),
+    );
+    expect(copy).toMatchObject({
+      hint: 'ready-to-close',
+      headline: 'End follow-up',
+      caption: 'PR #1487 merged · checkout gone from disk. Deployment is not established.',
+      remainders: [],
+    });
+  });
+  test('the merged caption states only facts: the PRs that merged, never tickets or an empty disk', () => {
+    const alone = copyOf(task({ pullRequests: [pullRequest(MERGED)] }));
+    expect(alone.caption).toBe('PR #1487 merged. Deployment is not established.');
+    expect(alone.headline).toBe('End follow-up');
+    expect(
+      copyOf(task({ pullRequests: [pullRequest(MERGED), pullRequest({ ...MERGED, number: 1490 })] })).caption,
+    ).toBe('2 PRs merged. Deployment is not established.');
+    // A superseded attempt closed without merge does not count as merged.
+    expect(
+      copyOf(task({ pullRequests: [pullRequest({ ...CLOSED, number: 1480 }), pullRequest(MERGED)] })).caption,
+    ).toBe('PR #1487 merged. Deployment is not established.');
+    const onDisk = copyOf(task({ pullRequests: [pullRequest(MERGED)], local: [checkout()] }));
+    for (const caption of [alone.caption, onDisk.caption]) {
+      expect(caption).not.toContain('ticket');
+      expect(caption).not.toContain('no local remainder');
+    }
+  });
+  test('a PR closed without merge reads as an end too, without a deployment caveat', () => {
+    const closed = copyOf(task({ pullRequests: [pullRequest(CLOSED)] }));
+    expect(closed).toMatchObject({
+      hint: 'ready-to-close',
+      reason: 'closed-unmerged',
+      action: 'end-follow-up',
+      headline: 'End follow-up',
+      caption: 'PR #1487 closed without merge',
+    });
+    expect(closed.note).toBe(closed.caption);
+    expect(copyOf(task({ pullRequests: [pullRequest(CLOSED)], local: [checkout()] }))).toMatchObject({
+      headline: 'End follow-up',
+      caption: 'PR #1487 closed without merge · checkout still on disk',
+    });
+    expect(
+      copyOf(
+        task({
+          pullRequests: [pullRequest(CLOSED), pullRequest({ ...CLOSED, number: 1490 })],
+          local: [checkout({ outcome: 'missing' })],
+        }),
+      ).caption,
+    ).toBe('2 PRs closed without merge · checkout gone from disk');
+  });
+  test('failing checks stay the gesture while the sessions read is truncated', () => {
+    const copy = copyOf(
+      task({ pullRequests: [pullRequest({ checksRollup: 'failure' })] }),
+      sessionsSource('truncated'),
+    );
+    expect(copy).toMatchObject({
+      hint: 'to-resume',
+      reason: 'failing-checks',
+      headline: 'Fix checks on #1487',
+      caption: 'GitHub · Oct 24',
+      note: null,
+    });
+    expect(copy.remainders.map((item) => item.kind)).toEqual(['failing-checks', 'source-unavailable']);
+  });
+  test('a task ranked only by an unread source asks for a choice and keeps the source state visible', () => {
+    expect(copyOf(analysis.row, sessionsSource('failed'))).toMatchObject({
+      hint: 'undecided',
+      label: 'To decide',
+      reason: 'source-unavailable',
+      headline: 'Choose the next step',
+      caption: 'Sessions read: failed · Sessions · Oct 24',
+      note: null,
+    });
+    expect(copyOf(analysis.row, sessionsSource('truncated')).caption).toBe(
+      'Sessions evidence incomplete · Sessions · Oct 24',
+    );
+    expect(copyOf(task({ local: [neverReadCheckout] }))).toMatchObject({
+      hint: 'undecided',
+      reason: 'source-unknown',
+      headline: 'Choose the next step',
+      caption: 'Local state is unknown · Local · date unknown',
+    });
+  });
+  test('an open native request names the agent and its question', () => {
+    const row = task(
+      { pullRequests: [pullRequest({ checksRollup: 'pending' })] },
+      { nativeRequests: [nativeRequest()] },
+    );
+    expect(copyOf(row)).toMatchObject({
+      hint: 'to-resume',
+      reason: 'native-request',
+      action: 'resume-session',
+      headline: 'Answer Claude: Ship the retry guard as is?',
+      caption: 'Sessions · Oct 24',
+      note: null,
+    });
+    expect(copyOf({ ...row, nativeRequests: [nativeRequest({ state: 'uncertain' })] }).headline).toBe(
+      'Answer Claude: Ship the retry guard as is? (answer unknown)',
+    );
+  });
+  test('a review with nothing left, a change with no known end and running work keep distinct copy', () => {
+    const reviewed = copyOf({ ...analysis.row, thread: { ...analysis.row.thread, intent: 'review' } });
+    expect(reviewed).toMatchObject({
+      reason: 'no-remainder',
+      headline: 'End follow-up',
+      caption: 'The review is done. Nothing known is left.',
+    });
+    expect(reviewed.note).toBe(reviewed.caption);
+    expect(copyOf(task())).toMatchObject({
+      hint: 'undecided',
+      reason: 'next-step',
+      headline: 'Choose the next step',
+      caption: 'Follow-up stays yours to end',
+      note: null,
+    });
+    expect(copyOf(running.row)).toMatchObject({
+      hint: 'in-progress',
+      label: 'In progress',
+      reason: 'running-session',
+      headline: '1 session running',
+      caption: 'Sessions · Oct 24',
+      note: null,
+    });
+  });
+  test('an ended follow-up and an explicit wait keep their wording', () => {
+    const done = copyOf(ended.row);
+    expect(done).toMatchObject({
+      hint: 'done',
+      label: 'Done',
+      headline: 'You ended this follow-up',
+      caption: 'History and links stay available.',
+    });
+    expect(done.note).toBe(done.caption);
+    const wait = copyOf(waiting.row);
+    expect(wait).toMatchObject({
+      hint: 'waiting',
+      label: 'Waiting',
+      headline: 'A product answer on SHOP-1998',
+      caption: 'No session needs to keep running while you wait.',
+    });
+    expect(wait.note).toBe(wait.caption);
+  });
+  test('sessions are counted where they ran, never guessed elsewhere', () => {
+    expect(threadSessionsLabel(task({}, withoutSessions))).toBe('No sessions on this machine');
+    expect(threadSessionsLabel(task({}, { sessionCount: 1, delegatedSessionCount: 0 }))).toBe('1 session');
+    expect(threadSessionsLabel(task())).toBe('4 sessions · 1 delegated');
+    expect(threadSessionsLabel(task({}, { sessionCount: 0, delegatedSessionCount: 2 }))).toBe(
+      '0 sessions · 2 delegated',
+    );
+  });
+});
+
+describe('bands say whose move it is', () => {
+  const situation = (
+    hint: WorkThreadSituation['hint'],
+    reason: WorkThreadSituation['reason'],
+  ): Pick<WorkThreadSituation, 'hint' | 'reason' | 'remainders'> => ({ hint, reason, remainders: [] });
+  const fresh = task();
+  const stale = task({}, { lastActivityAt: instant(-8 * DAY) });
+  const delivered = task({ pullRequests: [pullRequest(MERGED)] });
+  const abandoned = task({ pullRequests: [pullRequest(CLOSED)] });
+
+  test('the bands keep their order, labels and notes', () => {
+    expect(THREAD_BANDS.map((item) => [item.band, item.label, item.note])).toEqual([
+      ['yours', 'Yours', 'An answer, a fix or a merge waits on you'],
+      ['in-flight', 'In flight', 'Recent activity, nothing waits on you'],
+      ['to-tidy', 'To tidy', 'Delivered, closed or finished: tidy up and end the follow-up'],
+      ['dormant', 'Dormant', 'No activity for 7 days or more'],
+      ['done', 'Done', 'Follow-up ended'],
+    ]);
+  });
+  test('an ended follow-up is done, however old', () => {
+    expect(threadBand(stale, situation('done', 'follow-up-ended'), NOW)).toBe('done');
+    expect(threadBand(fresh, situation('done', 'follow-up-ended'), NOW)).toBe('done');
+  });
+  test('a task ready to close is to tidy, however old', () => {
+    expect(threadBand(delivered, situation('ready-to-close', 'merged-complete'), NOW)).toBe('to-tidy');
+    expect(threadBand(stale, situation('ready-to-close', 'no-remainder'), NOW)).toBe('to-tidy');
+  });
+  test('a delivered or closed task with files, a ticket or no recent activity left is to tidy', () => {
+    for (const row of [delivered, abandoned]) {
+      expect(threadBand(row, situation('to-resume', 'local-files'), NOW)).toBe('to-tidy');
+      expect(threadBand(row, situation('to-resume', 'jira-open'), NOW)).toBe('to-tidy');
+      // Another known step on a delivered task is still the operator's move while it is recent.
+      expect(threadBand(row, situation('to-resume', 'native-request'), NOW)).toBe('yours');
+      expect(threadBand(row, situation('to-resume', 'unpushed-commits'), NOW)).toBe('yours');
+      const old = { ...row, lastActivityAt: instant(-8 * DAY) };
+      expect(threadBand(old, situation('to-resume', 'native-request'), NOW)).toBe('to-tidy');
+      expect(threadBand(old, situation('waiting', 'jira-after-merge'), NOW)).toBe('to-tidy');
+    }
+    // Without a settled pull request, local files are ordinary work.
+    expect(threadBand(fresh, situation('to-resume', 'local-files'), NOW)).toBe('yours');
+  });
+  test('an undelivered task without activity for more than seven days is dormant, whatever its hint', () => {
+    for (const [hint, reason] of [
+      ['to-resume', 'failing-checks'],
+      ['undecided', 'source-unknown'],
+      ['waiting', 'awaiting-review'],
+      ['waiting', 'explicit-wait'],
+      ['in-progress', 'running-session'],
+    ] as const) {
+      expect(threadBand(stale, situation(hint, reason), NOW)).toBe('dormant');
+    }
+  });
+  test('recent work that does not wait on the operator is in flight, a task to decide included', () => {
+    expect(threadBand(fresh, situation('in-progress', 'running-session'), NOW)).toBe('in-flight');
+    expect(threadBand(fresh, situation('waiting', 'pending-checks'), NOW)).toBe('in-flight');
+    expect(threadBand(fresh, situation('waiting', 'explicit-wait'), NOW)).toBe('in-flight');
+    // Nothing known waits on the operator: an unread source or an optional team review is not a step owed.
+    for (const reason of ['source-unknown', 'source-stale', 'next-step', 'team-review-requested'] as const) {
+      expect(threadBand(fresh, situation('undecided', reason), NOW)).toBe('in-flight');
+    }
+  });
+  test('yours holds only recent work with a step that waits on the operator', () => {
+    for (const reason of ['failing-checks', 'native-request', 'ready-to-merge', 'unpushed-commits'] as const) {
+      expect(threadBand(fresh, situation('to-resume', reason), NOW)).toBe('yours');
+    }
+  });
+  test('a commit made today keeps a task out of dormant, whatever the age of its last session', () => {
+    const silent = { lastActivityAt: instant(-8 * DAY) };
+    const committed = task({ local: [checkout({ ahead: 2, lastCommitAt: instant(-HOUR) })] }, silent);
+    const current = copyOf(committed);
+    expect(current.reason).toBe('unpushed-commits');
+    expect(threadWaitSince(committed, current)).toEqual({ at: instant(-HOUR), basis: 'last-commit' });
+    expect(threadBand(committed, current, NOW)).toBe('yours');
+    // The same task whose last commit is as old as its last session is dormant.
+    const idle = task({ local: [checkout({ ahead: 2, lastCommitAt: instant(-9 * DAY) })] }, silent);
+    expect(threadBand(idle, copyOf(idle), NOW)).toBe('dormant');
+    // The later of the two dates counts: an old commit does not age a task with a recent session.
+    const active = task({ local: [checkout({ ahead: 2, lastCommitAt: instant(-9 * DAY) })] });
+    expect(threadBand(active, copyOf(active), NOW)).toBe('yours');
+    // A delivered task with a fresh commit is not left behind by silence alone.
+    const resumed = task(
+      { pullRequests: [pullRequest(MERGED)], local: [checkout({ ahead: 1, lastCommitAt: instant(-HOUR) })] },
+      silent,
+    );
+    expect(copyOf(resumed).reason).toBe('unpushed-commits');
+    expect(threadBand(resumed, copyOf(resumed), NOW)).toBe('yours');
+  });
+  test('seven days exactly is not yet dormant; one millisecond more is', () => {
+    const resume = situation('to-resume', 'failing-checks');
+    expect(threadBand(task({}, { lastActivityAt: instant(-7 * DAY) }), resume, NOW)).toBe('yours');
+    expect(threadBand(task({}, { lastActivityAt: instant(-7 * DAY - 1) }), resume, NOW)).toBe('dormant');
+    expect(() => threadBand(fresh, resume, 'not a date')).toThrow(RangeError);
+  });
+  test('derived situations land in the expected bands', () => {
+    const bandOf = (row: WorkThreadRow) => threadBand(row, copyOf(row), NOW);
+    expect(bandOf(payment.row)).toBe('yours');
+    expect(bandOf(running.row)).toBe('in-flight');
+    expect(bandOf(ended.row)).toBe('done');
+    expect(bandOf(task({ pullRequests: [pullRequest({ checksRollup: 'pending' })] }))).toBe('in-flight');
+    expect(bandOf(task({ pullRequests: [pullRequest(MERGED)] }, { links: [...sessionLinks, ...branchLinks] }))).toBe(
+      'to-tidy',
+    );
+    expect(
+      bandOf(task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ dirty: true, untrackedCount: 1 })] })),
+    ).toBe('to-tidy');
+    expect(bandOf(task({ pullRequests: [pullRequest(MERGED)], jiraIssues: [ticket('in-progress')] }))).toBe('to-tidy');
+    // A task ranked only by an unread source owes the operator no known step.
+    expect(copyOf(task({ local: [neverReadCheckout] })).hint).toBe('undecided');
+    expect(bandOf(task({ local: [neverReadCheckout] }))).toBe('in-flight');
+    expect(bandOf(task())).toBe('in-flight');
+  });
+
+  const numbered = (suffix: number): WorkThreadRow =>
+    task({}, { thread: { ...payment.row.thread, threadId: `12000000-0000-4000-8000-0000000001${suffix}` } });
+  const [first, second, third, fourth, fifth, sixth] = [10, 11, 12, 13, 14, 15].map(numbered);
+  if (!(first && second && third && fourth && fifth && sixth)) {
+    throw new Error('Expected six band fixtures');
+  }
+  const placed = new Map<string, { readonly band: ThreadBand; readonly since: string }>([
+    [first.thread.threadId, { band: 'yours', since: instant(-DAY) }],
+    [second.thread.threadId, { band: 'yours', since: instant(-3 * DAY) }],
+    [third.thread.threadId, { band: 'yours', since: instant(-3 * DAY) }],
+    [fourth.thread.threadId, { band: 'dormant', since: instant(-20 * DAY) }],
+    [fifth.thread.threadId, { band: 'dormant', since: instant(-9 * DAY) }],
+    [sixth.thread.threadId, { band: 'done', since: instant(-2 * DAY) }],
+  ]);
+  const placeOf = (row: WorkThreadRow) => {
+    const place = placed.get(row.thread.threadId);
+    if (!place) {
+      throw new Error(`No band fixture for ${row.thread.threadId}`);
+    }
+    return place;
+  };
+  const rows = [first, third, second, fourth, fifth, sixth];
+  const group = (input: readonly WorkThreadRow[]) =>
+    groupThreadRowsByBand(
+      input,
+      (row) => placeOf(row).band,
+      (row) => placeOf(row).since,
+    );
+
+  test('groups keep the band order, skip empty bands and carry the list group shape', () => {
+    const groups = group(rows);
+    expect(groups.map((item) => item.band)).toEqual(['yours', 'dormant', 'done']);
+    expect(groups[0]).toEqual({
+      band: 'yours',
+      project: 'Yours',
+      label: 'Yours',
+      note: 'An answer, a fix or a merge waits on you',
+      tasks: [second, third, first],
+    });
+    expect(group([])).toEqual([]);
+  });
+  test('the longest wait leads a band, ties fall back to the task id, and dormant shows the most recent first', () => {
+    const groups = group(rows);
+    expect(groups[0]?.tasks.map((row) => row.thread.threadId)).toEqual(
+      [second, third, first].map((row) => row.thread.threadId),
+    );
+    expect(groups[1]?.tasks).toEqual([fifth, fourth]);
+    const tied = new Map(placed);
+    tied.set(fourth.thread.threadId, { band: 'dormant', since: instant(-9 * DAY) });
+    expect(
+      groupThreadRowsByBand(
+        [fifth, fourth],
+        () => 'dormant',
+        (row) => tied.get(row.thread.threadId)?.since ?? NOW,
+      )[0]?.tasks,
+    ).toEqual([fourth, fifth]);
+  });
+  test('ended follow-ups show the most recent first, like dormant tasks', () => {
+    const tasksIn = (band: ThreadBand) =>
+      groupThreadRowsByBand(
+        [fourth, sixth, fifth],
+        () => band,
+        (row) => placeOf(row).since,
+      )[0]?.tasks;
+    expect(tasksIn('done')).toEqual([sixth, fifth, fourth]);
+    expect(tasksIn('dormant')).toEqual([sixth, fifth, fourth]);
+    expect(tasksIn('to-tidy')).toEqual([fourth, fifth, sixth]);
+  });
+  test('the order does not depend on the order rows were collected in', () => {
+    expect(group([...rows].reverse())).toEqual(group(rows));
+    expect(group([sixth, fifth, first, fourth, second, third])).toEqual(group(rows));
+  });
+  test('counts name every band, empty ones included', () => {
+    expect(threadBandCounts(rows, (row) => placeOf(row).band)).toEqual({
+      yours: 3,
+      'in-flight': 0,
+      'to-tidy': 0,
+      dormant: 2,
+      done: 1,
+    });
+    expect(threadBandCounts([], () => 'yours')).toEqual({
+      yours: 0,
+      'in-flight': 0,
+      'to-tidy': 0,
+      dormant: 0,
+      done: 0,
+    });
+  });
+});
+
+describe('a wait is dated by its source, never by a collection', () => {
+  const waitOf = (row: WorkThreadRow) => threadWaitSince(row, copyOf(row));
+  const milestone = (at: WorkThreadMark['at'], fact: WorkThreadMark['fact'], number = 1487): WorkThreadMark => ({
+    at,
+    fact,
+    harness: null,
+    kind: 'event',
+    label: null,
+    source: { key: `github.example/synthetic/example-shop#${number}`, label: `PR #${number}` },
+  });
+  test('an agent question dates the wait from the earliest question still asked', () => {
+    const row = task(
+      {},
+      {
+        nativeRequests: [
+          nativeRequest({ key: 'late', askedAt: instant(-2 * HOUR) }),
+          nativeRequest({ key: 'early', askedAt: instant(-5 * HOUR) }),
+          nativeRequest({ key: 'undated', askedAt: null }),
+        ],
+      },
+    );
+    expect(waitOf(row)).toEqual({ at: instant(-5 * HOUR), basis: 'asked' });
+    expect(waitOf({ ...row, nativeRequests: [nativeRequest({ askedAt: null })] })).toEqual({
+      at: row.lastActivityAt,
+      basis: 'activity',
+    });
+  });
+  test('a delivered task waits since its latest merge', () => {
+    const row = task({
+      pullRequests: [
+        pullRequest({ ...MERGED, mergedAt: instant(-3 * DAY) }),
+        pullRequest({ ...MERGED, mergedAt: instant(-DAY), number: 1490 }),
+        pullRequest({ ...CLOSED, closedAt: instant(-HOUR), number: 1491 }),
+      ],
+    });
+    expect(copyOf(row).reason).toBe('merged-complete');
+    expect(waitOf(row)).toEqual({ at: instant(-DAY), basis: 'merged' });
+    expect(waitOf(task({ pullRequests: [pullRequest({ ...MERGED, mergedAt: null })] }))).toEqual({
+      at: payment.row.lastActivityAt,
+      basis: 'activity',
+    });
+  });
+  test('a task closed without merge waits since its latest closing', () => {
+    const row = task({
+      pullRequests: [
+        pullRequest({ ...CLOSED, closedAt: instant(-4 * DAY) }),
+        pullRequest({ ...CLOSED, closedAt: instant(-2 * DAY), number: 1490 }),
+      ],
+    });
+    expect(waitOf(row)).toEqual({ at: instant(-2 * DAY), basis: 'closed' });
+    expect(waitOf(task({ pullRequests: [pullRequest({ state: 'CLOSED', closedAt: null })] })).basis).toBe('activity');
+  });
+  test('a pull request step waits since its latest milestone, else since the pull request opened', () => {
+    const failing = pullRequest({ checksRollup: 'failure', createdAt: instant(-6 * DAY) });
+    const marks: readonly WorkThreadMark[] = [
+      milestone(instant(-6 * DAY), 'pull-request-opened'),
+      milestone(instant(-2 * DAY), 'pull-request-approved'),
+      // Another pull request and a session are not milestones of this one.
+      milestone(instant(-DAY), 'pull-request-merged', 1490),
+      { at: instant(-HOUR), fact: null, harness: 'claude', kind: 'session', label: null, source: null },
+    ];
+    const row = task({ pullRequests: [failing] }, { marks });
+    expect(copyOf(row).reason).toBe('failing-checks');
+    expect(waitOf(row)).toEqual({ at: instant(-2 * DAY), basis: 'pull-request' });
+    expect(waitOf({ ...row, marks: [] })).toEqual({ at: instant(-6 * DAY), basis: 'pull-request' });
+    // The observation date of the pull request is never the start of a wait.
+    expect(failing.latest?.observedAt).toBe(NOW);
+    expect(waitOf(task({ pullRequests: [pullRequest({ checksRollup: 'failure', createdAt: null })] }))).toEqual({
+      at: payment.row.lastActivityAt,
+      basis: 'activity',
+    });
+  });
+  test('local work waits since the last commit of its checkout', () => {
+    const dirty = task({ local: [checkout({ dirty: true, modifiedCount: 2, lastCommitAt: instant(-4 * DAY) })] });
+    expect(copyOf(dirty).reason).toBe('local-files');
+    expect(waitOf(dirty)).toEqual({ at: instant(-4 * DAY), basis: 'last-commit' });
+    const unpushed = task({ local: [checkout({ ahead: 2, lastCommitAt: instant(-3 * DAY) })] });
+    expect(copyOf(unpushed).reason).toBe('unpushed-commits');
+    expect(waitOf(unpushed)).toEqual({ at: instant(-3 * DAY), basis: 'last-commit' });
+    expect(waitOf(task({ local: [checkout({ ahead: 2, lastCommitAt: null })] })).basis).toBe('activity');
+  });
+  test('any other reason waits since the last activity', () => {
+    const open = task({ jiraIssues: [ticket('in-progress')] });
+    expect(copyOf(open).reason).toBe('jira-open');
+    expect(waitOf(open)).toEqual({ at: open.lastActivityAt, basis: 'activity' });
+    expect(waitOf(task())).toEqual({ at: payment.row.lastActivityAt, basis: 'activity' });
+    expect(waitOf(running.row)).toEqual({ at: running.row.lastActivityAt, basis: 'activity' });
+  });
+  test('each basis has its label', () => {
+    expect(
+      (['asked', 'pull-request', 'merged', 'closed', 'last-commit', 'activity'] as const).map(threadWaitSinceLabel),
+    ).toEqual(['Asked', 'PR status since', 'Merged', 'Closed', 'Last commit', 'Last activity']);
+  });
+  test.each([
+    [-5000, 'now'],
+    [0, 'now'],
+    [59_999, 'now'],
+    [60_000, '1 min'],
+    [59 * 60_000 + 59_999, '59 min'],
+    [HOUR, '1 h'],
+    [48 * HOUR - 1, '47 h'],
+    [48 * HOUR, '2 d'],
+    [14 * DAY - 1, '13 d'],
+    [14 * DAY, '2 w'],
+    [30 * DAY, '4 w'],
+  ])('an age of %d ms reads %s', (elapsed, expected) => {
+    expect(threadAge(instant(-elapsed), NOW)).toBe(expected);
+  });
+  test('an age needs two valid instants', () => {
+    expect(() => threadAge('not a date', NOW)).toThrow(RangeError);
+    expect(() => threadAge(NOW, 'not a date')).toThrow(RangeError);
+  });
+});
+
+describe('the lifecycle rail', () => {
+  const stepOf = (
+    row: WorkThreadRow,
+    key: ThreadLifecycleStep['key'],
+    sources: readonly WorkThreadSourceStatus[] = payment.sources,
+  ) => {
+    const step = threadLifecycle(row, copyOf(row, sources).remainders).find((item) => item.key === key);
+    if (!step) {
+      throw new Error(`Missing lifecycle step ${key}`);
+    }
+    return { state: step.state, detail: step.detail };
+  };
+  const statesOf = (row: WorkThreadRow) =>
+    threadLifecycle(row, copyOf(row).remainders).map((step) => `${step.key}:${step.state}`);
+
+  test('always shows the same eight positions in the same order', () => {
+    const fixed = THREAD_LIFECYCLE_STEPS.map((step) => [step.key, step.short, step.name]);
+    expect(fixed).toEqual([
+      ['sessions', 'Sess', 'Sessions'],
+      ['push', 'Push', 'Push'],
+      ['pull-request', 'PR', 'Pull request'],
+      ['checks', 'CI', 'Checks'],
+      ['review', 'Rev', 'Review'],
+      ['merge', 'Merge', 'Merge'],
+      ['disk', 'Disk', 'Disk'],
+      ['ticket', 'Ticket', 'Ticket'],
+    ]);
+    for (const row of [payment.row, analysis.row, review.row, ended.row, task({}, withoutSessions)]) {
+      const steps = threadLifecycle(row, copyOf(row).remainders);
+      expect(steps.map((step) => [step.key, step.short, step.name])).toEqual(fixed);
+      expect(steps.every((step) => step.detail.length > 0)).toBe(true);
+    }
+  });
+  test('reads a task in review end to end, with a text equivalent', () => {
+    const steps = threadLifecycle(payment.row, copyOf(payment.row).remainders);
+    expect(steps.map((step) => [step.key, step.state, step.detail])).toEqual([
+      ['sessions', 'done', '4 sessions · 1 delegated'],
+      ['push', 'done', 'Pushed · a pull request exists'],
+      ['pull-request', 'done', '#1487 open'],
+      ['checks', 'done', 'Checks pass'],
+      ['review', 'yours', 'Changes requested on #1487'],
+      ['merge', 'upcoming', 'Not merged yet'],
+      ['disk', 'upcoming', 'Checkout on disk'],
+      ['ticket', 'upcoming', 'SHOP-2085 follows the open pull request'],
+    ]);
+    expect(threadLifecycleSummary(steps)).toBe(
+      'Sessions: 4 sessions · 1 delegated; Push: Pushed · a pull request exists; Pull request: #1487 open; ' +
+        'Checks: Checks pass; Review: Changes requested on #1487; Merge: Not merged yet; Disk: Checkout on disk; ' +
+        'Ticket: SHOP-2085 follows the open pull request',
+    );
+    expect(threadLifecycleSummary([])).toBe('');
+  });
+  test('an analysis has sessions and nothing else', () => {
+    expect(statesOf(analysis.row)).toEqual([
+      'sessions:done',
+      'push:none',
+      'pull-request:none',
+      'checks:none',
+      'review:none',
+      'merge:none',
+      'disk:none',
+      'ticket:none',
+    ]);
+    expect(stepOf(analysis.row, 'disk').detail).toBe('No checkout linked');
+    expect(stepOf(analysis.row, 'ticket').detail).toBe('No ticket');
+    expect(stepOf(analysis.row, 'pull-request').detail).toBe('No pull request');
+  });
+  test('failing checks fail the checks step; running checks run it; unreported checks are unread', () => {
+    expect(stepOf(task({ pullRequests: [pullRequest({ checksRollup: 'failure' })] }), 'checks')).toEqual({
+      state: 'failed',
+      detail: 'Checks failing on #1487',
+    });
+    expect(stepOf(task({ pullRequests: [pullRequest({ checksRollup: 'pending' })] }), 'checks')).toEqual({
+      state: 'running',
+      detail: 'Checks running on #1487',
+    });
+    for (const checksRollup of [null, 'unknown'] as const) {
+      expect(stepOf(task({ pullRequests: [pullRequest({ checksRollup })] }), 'checks')).toEqual({
+        state: 'unread',
+        detail: 'Checks not reported',
+      });
+    }
+    expect(stepOf(task({ pullRequests: [pullRequest()] }), 'checks')).toEqual({ state: 'done', detail: 'Checks pass' });
+  });
+  test('a draft is the operator to finish and its review has not started', () => {
+    const draft = task({ pullRequests: [pullRequest({ draft: true })] });
+    expect(stepOf(draft, 'pull-request')).toEqual({ state: 'yours', detail: 'Draft #1487' });
+    expect(stepOf(draft, 'review')).toEqual({ state: 'upcoming', detail: 'Draft · review not started' });
+    expect(stepOf(draft, 'merge')).toEqual({ state: 'upcoming', detail: 'Not merged yet' });
+  });
+  test('a green approved pull request leaves the merge to the operator', () => {
+    const ready = task({ pullRequests: [pullRequest({ reviewDecision: 'APPROVED' })] });
+    expect(stepOf(ready, 'merge')).toEqual({ state: 'yours', detail: '#1487 ready to merge' });
+    expect(stepOf(ready, 'review')).toEqual({ state: 'done', detail: 'Approved' });
+    expect(stepOf(task({ pullRequests: [pullRequest()] }), 'review')).toEqual({
+      state: 'none',
+      detail: 'No review required',
+    });
+  });
+  test('a conflict fails the merge step; a branch behind its base only delays it', () => {
+    expect(stepOf(task({ pullRequests: [pullRequest({}, { mergeable: 'conflicting' })] }), 'merge')).toEqual({
+      state: 'failed',
+      detail: 'Conflicts on #1487',
+    });
+    expect(stepOf(task({ pullRequests: [pullRequest({}, { mergeStateStatus: 'BEHIND' })] }), 'merge')).toEqual({
+      state: 'upcoming',
+      detail: 'Behind its base',
+    });
+  });
+  test('review states: requested changes and threads are yours, a required review runs', () => {
+    expect(stepOf(task({ pullRequests: [pullRequest({ unresolvedReviewThreads: 2 })] }), 'review')).toEqual({
+      state: 'yours',
+      detail: '2 review threads to address on #1487',
+    });
+    expect(stepOf(task({ pullRequests: [pullRequest({ reviewDecision: 'CHANGES_REQUESTED' })] }), 'review')).toEqual({
+      state: 'yours',
+      detail: 'Changes requested on #1487',
+    });
+    expect(stepOf(task({ pullRequests: [pullRequest({ reviewDecision: 'REVIEW_REQUIRED' })] }), 'review')).toEqual({
+      state: 'running',
+      detail: 'Waiting on reviewers',
+    });
+  });
+  test("someone else's pull request only asks for the review", () => {
+    const requested = task({
+      pullRequests: [
+        pullRequest({ checksRollup: 'failure', reviewDecision: 'REVIEW_REQUIRED' }, { role: 'review-requested' }),
+      ],
+    });
+    expect(stepOf(requested, 'review')).toEqual({ state: 'yours', detail: 'Your review is requested on #1487' });
+    expect(stepOf(requested, 'checks')).toEqual({ state: 'none', detail: "Someone else's pull request" });
+    expect(stepOf(requested, 'merge')).toEqual({ state: 'none', detail: "Someone else's pull request" });
+    expect(stepOf(requested, 'pull-request')).toEqual({ state: 'done', detail: '#1487 open' });
+    const team = task({ pullRequests: [pullRequest({}, { role: 'team-review-requested' })] });
+    expect(stepOf(team, 'review')).toEqual({
+      state: 'upcoming',
+      detail: 'Your team was asked · take it or leave it',
+    });
+  });
+  test('a checkout never read on this machine is unread, on the disk and for the push', () => {
+    for (const row of [
+      task({}, { links: [...sessionLinks, ...branchLinks] }),
+      task({ local: [neverReadCheckout] }),
+      task({ local: [checkout({ outcome: 'timeout' })] }),
+    ]) {
+      expect(stepOf(row, 'disk')).toEqual({ state: 'unread', detail: 'Checkout not read on this machine' });
+      expect(stepOf(row, 'push')).toEqual({ state: 'unread', detail: 'Checkout not read on this machine' });
+      expect(stepOf(row, 'pull-request')).toEqual({ state: 'upcoming', detail: 'No pull request yet' });
+      for (const key of ['checks', 'review', 'merge'] as const) {
+        expect(stepOf(row, key)).toEqual({ state: 'upcoming', detail: 'No pull request yet' });
+      }
+    }
+    // A known pull request establishes the push whatever the disk says, and says what establishes it.
+    expect(stepOf(task({ pullRequests: [pullRequest()], local: [neverReadCheckout] }), 'push')).toEqual({
+      state: 'done',
+      detail: 'Pushed · a pull request exists',
+    });
+  });
+  test('a checkout gone from disk is done on the disk step', () => {
+    const gone = task({ local: [checkout({ outcome: 'missing' })] });
+    expect(stepOf(gone, 'disk')).toEqual({ state: 'done', detail: 'Checkout gone from disk' });
+    expect(stepOf(gone, 'push')).toEqual({ state: 'unread', detail: 'Checkout gone from disk · push state unknown' });
+    // One checkout still on disk outranks another that is gone; one never read outranks both.
+    expect(stepOf(task({ local: [checkout({ outcome: 'missing' }), checkout()] }), 'disk')).toEqual({
+      state: 'upcoming',
+      detail: 'Checkout on disk',
+    });
+    expect(
+      stepOf(task({ local: [checkout({ outcome: 'missing' }), checkout(), neverReadCheckout] }), 'disk').state,
+    ).toBe('unread');
+  });
+  test('a checkout gone from disk that last held local work is unread, not done', () => {
+    const lost = { state: 'unread', detail: 'Checkout gone from disk · local work was last seen there' } as const;
+    expect(stepOf(task({ local: [lostCheckout] }), 'disk')).toEqual(lost);
+    // It outranks the other checkouts that are gone with nothing left, and one still on disk.
+    const elsewhere = { ...checkout({ outcome: 'missing' }), key: 'checkout:/synthetic/elsewhere' };
+    expect(stepOf(task({ local: [elsewhere, lostCheckout] }), 'disk')).toEqual(lost);
+    expect(stepOf(task({ pullRequests: [pullRequest(MERGED)], local: [lostCheckout, elsewhere] }), 'disk')).toEqual(
+      lost,
+    );
+    const onDisk = { ...checkout(), key: 'checkout:/synthetic/elsewhere' };
+    expect(stepOf(task({ local: [onDisk, lostCheckout] }), 'disk')).toEqual(lost);
+  });
+  test('a checkout on disk is the operator step only while it holds local changes', () => {
+    // The list cannot tell a dedicated worktree from a primary clone: a clean checkout asks nothing.
+    const delivered = task({ pullRequests: [pullRequest(MERGED)], local: [checkout()] });
+    expect(stepOf(delivered, 'disk')).toEqual({ state: 'upcoming', detail: 'Checkout still on disk' });
+    expect(statesOf(delivered)).toEqual([
+      'sessions:done',
+      'push:done',
+      'pull-request:done',
+      'checks:done',
+      'review:done',
+      'merge:done',
+      'disk:upcoming',
+      'ticket:none',
+    ]);
+    expect(stepOf(delivered, 'pull-request').detail).toBe('#1487 merged');
+    expect(stepOf(delivered, 'merge').detail).toBe('Merged');
+    const dirty = task({ pullRequests: [pullRequest(MERGED)], local: [checkout({ dirty: true, untrackedCount: 1 })] });
+    expect(stepOf(dirty, 'disk')).toEqual({ state: 'yours', detail: '1 local change on disk' });
+    expect(stepOf(task({ pullRequests: [pullRequest(CLOSED)], local: [checkout()] }), 'disk')).toEqual({
+      state: 'upcoming',
+      detail: 'Checkout still on disk',
+    });
+    // Without a settled pull request the checkout is simply where the work happens.
+    expect(stepOf(task({ local: [checkout()] }), 'disk')).toEqual({ state: 'upcoming', detail: 'Checkout on disk' });
+    expect(stepOf(task({ local: [checkout({ dirty: true, modifiedCount: 3, stagedCount: 1 })] }), 'disk')).toEqual({
+      state: 'yours',
+      detail: '4 local changes on disk',
+    });
+    expect(stepOf(task({ local: [checkout({ dirty: true })] }), 'disk')).toEqual({
+      state: 'yours',
+      detail: 'Local changes on disk',
+    });
+  });
+  test('the push step never reads done past a checkout that was not read', () => {
+    const elsewhere = (marker: WorkThreadLocalMarker) => ({ ...marker, key: 'checkout:/synthetic/elsewhere' });
+    const unread = { state: 'unread', detail: 'Checkout not read on this machine' } as const;
+    // One checkout pushed says nothing of another that was never read or whose read failed.
+    expect(stepOf(task({ local: [checkout(), elsewhere(neverReadCheckout)] }), 'push')).toEqual(unread);
+    expect(stepOf(task({ local: [checkout(), elsewhere(checkout({ outcome: 'timeout' }))] }), 'push')).toEqual(unread);
+    // A checkout gone from disk is a read: the one still on disk speaks for the push.
+    expect(stepOf(task({ local: [checkout(), elsewhere(checkout({ outcome: 'missing' }))] }), 'push')).toEqual({
+      state: 'done',
+      detail: 'Branch pushed',
+    });
+    // Known unpushed commits stay the operator's step beside an unread checkout.
+    expect(stepOf(task({ local: [checkout({ ahead: 2 }), elsewhere(neverReadCheckout)] }), 'push')).toEqual({
+      state: 'yours',
+      detail: '2 commits to push',
+    });
+  });
+  test('the push step follows the commits, the upstream and the pull request', () => {
+    expect(stepOf(task({ local: [checkout({ ahead: 2 })] }), 'push')).toEqual({
+      state: 'yours',
+      detail: '2 commits to push',
+    });
+    expect(stepOf(task({ local: [checkout()] }), 'push')).toEqual({ state: 'done', detail: 'Branch pushed' });
+    expect(stepOf(task({ local: [checkout({ upstream: null, ahead: null })] }), 'push')).toEqual({
+      state: 'upcoming',
+      detail: 'Branch not pushed yet',
+    });
+    expect(stepOf(task({ local: [checkout({ ahead: null })] }), 'push')).toEqual({
+      state: 'unread',
+      detail: 'Push state unknown',
+    });
+    expect(stepOf(task(), 'push').state).toBe('none');
+  });
+  test('no sessions on this machine is said as such; linked sessions that could not be read are unread', () => {
+    expect(stepOf(task({}, withoutSessions), 'sessions')).toEqual({
+      state: 'none',
+      detail: 'No sessions on this machine',
+    });
+    expect(stepOf(task({}, { sessionCount: 0, delegatedSessionCount: 0 }), 'sessions')).toEqual({
+      state: 'unread',
+      detail: 'Linked sessions could not be read',
+    });
+  });
+  test('partial session coverage is unread; a running session runs; a waiting agent is yours', () => {
+    expect(stepOf(task({}, { nativeRequestCoverage: 'partial' }), 'sessions')).toEqual({
+      state: 'unread',
+      detail: '4 sessions · 1 delegated · not fully read',
+    });
+    expect(stepOf(task(), 'sessions', sessionsSource('truncated')).state).toBe('unread');
+    expect(stepOf(running.row, 'sessions')).toEqual({ state: 'running', detail: '1 session running' });
+    const asked = task({}, { nativeRequests: [nativeRequest()] });
+    expect(stepOf(asked, 'sessions')).toEqual({ state: 'yours', detail: 'An agent waits for your answer' });
+    // The worst fact wins: an agent waiting on the operator outranks another session still running.
+    expect(stepOf({ ...asked, runningSessions: 1 }, 'sessions').state).toBe('yours');
+  });
+  test('the ticket step follows the ticket, the pull requests and what was read', () => {
+    expect(stepOf(task({ jiraIssues: [ticket('in-progress')] }), 'ticket')).toEqual({
+      state: 'yours',
+      detail: 'SHOP-2085 to update',
+    });
+    expect(stepOf(task({ pullRequests: [pullRequest()], jiraIssues: [ticket('in-progress')] }), 'ticket')).toEqual({
+      state: 'upcoming',
+      detail: 'SHOP-2085 follows the open pull request',
+    });
+    expect(
+      stepOf(task({ pullRequests: [pullRequest(MERGED)], jiraIssues: [ticket('in-progress', true)] }), 'ticket'),
+    ).toEqual({ state: 'running', detail: 'Moves on without you' });
+    expect(stepOf(task({ jiraIssues: [ticket('done')] }), 'ticket')).toEqual({
+      state: 'done',
+      detail: 'SHOP-2085 done',
+    });
+    expect(stepOf(task({ jiraIssues: [ticket('unknown')] }), 'ticket')).toEqual({
+      state: 'unread',
+      detail: 'SHOP-2085 state unknown',
+    });
+    expect(stepOf(task({}, { links: [...sessionLinks, ...ticketLinks] }), 'ticket')).toEqual({
+      state: 'unread',
+      detail: 'SHOP-2085 state unknown',
+    });
+    expect(stepOf(task(), 'ticket')).toEqual({ state: 'none', detail: 'No ticket' });
+  });
+  test('a linked pull request never read is unread through every pull request step', () => {
+    const linked = task({}, { links: [...sessionLinks, ...pullRequestLinks] });
+    for (const key of ['pull-request', 'checks', 'review', 'merge'] as const) {
+      expect(stepOf(linked, key)).toEqual({ state: 'unread', detail: 'State of #1487 unknown' });
+    }
+    expect(stepOf(linked, 'push')).toEqual({ state: 'unread', detail: 'Push state unknown' });
+  });
+  test('a pull request closed without merge ends its steps without marking them done', () => {
+    const closed = task({ pullRequests: [pullRequest(CLOSED)] });
+    expect(stepOf(closed, 'pull-request')).toEqual({ state: 'done', detail: '#1487 closed without merge' });
+    expect(stepOf(closed, 'checks')).toEqual({ state: 'none', detail: 'Closed without merge' });
+    expect(stepOf(closed, 'review')).toEqual({ state: 'none', detail: 'Closed without merge' });
+    expect(stepOf(closed, 'merge')).toEqual({ state: 'none', detail: 'Closed without merge' });
+  });
+  test('with several pull requests the worst fact of each step wins', () => {
+    const several = task({
+      pullRequests: [pullRequest(MERGED), pullRequest({ checksRollup: 'failure', number: 1490 })],
+    });
+    expect(stepOf(several, 'pull-request')).toEqual({ state: 'done', detail: '2 pull requests' });
+    expect(stepOf(several, 'checks')).toEqual({ state: 'failed', detail: 'Checks failing on #1490' });
+    expect(stepOf(several, 'merge')).toEqual({ state: 'upcoming', detail: 'Not merged yet' });
+    const superseded = task({ pullRequests: [pullRequest({ ...CLOSED, number: 1480 }), pullRequest(MERGED)] });
+    expect(stepOf(superseded, 'merge')).toEqual({ state: 'done', detail: 'Merged' });
+    expect(stepOf(superseded, 'checks')).toEqual({ state: 'done', detail: 'Merged' });
+  });
+});
+
+describe('the recent activity strip', () => {
+  const session = (at: string): WorkThreadMark => ({
+    at: parseCanonicalInstant(at),
+    fact: null,
+    harness: 'claude',
+    kind: 'session',
+    label: null,
+    source: null,
+  });
+  const milestone = (at: string): WorkThreadMark => ({
+    ...session(at),
+    fact: 'pull-request-opened',
+    harness: null,
+    kind: 'event',
+    source: { key: 'github.example/synthetic/example-shop#1487', label: 'PR #1487' },
+  });
+  const followUp = (at: string): WorkThreadMark => ({ ...session(at), harness: null, kind: 'event' });
+  const now = '2026-10-24T11:00:00.000Z';
+
+  test('counts sessions and milestones per calendar day, today last', () => {
+    const activity = threadRecentActivity(
+      [
+        session('2026-10-24T09:00:00.000Z'),
+        session('2026-10-24T10:00:00.000Z'),
+        session('2026-10-23T23:30:00.000Z'),
+        milestone('2026-10-22T10:00:00.000Z'),
+        followUp('2026-10-22T11:00:00.000Z'),
+        // Outside the window.
+        session('2026-10-01T10:00:00.000Z'),
+      ],
+      now,
+      'UTC',
+    );
+    expect(activity.days).toHaveLength(14);
+    expect(activity.days[0]).toEqual({
+      key: '2026-10-11',
+      label: 'Sun, Oct 11',
+      sessions: 0,
+      milestones: 0,
+      today: false,
+    });
+    expect(activity.days.slice(-3)).toEqual([
+      { key: '2026-10-22', label: 'Thu, Oct 22', sessions: 0, milestones: 1, today: false },
+      { key: '2026-10-23', label: 'Fri, Oct 23', sessions: 1, milestones: 0, today: false },
+      { key: '2026-10-24', label: 'Sat, Oct 24', sessions: 2, milestones: 0, today: true },
+    ]);
+    expect(activity.description).toBe('Last 14 days: 3 sessions on 2 days, 1 pull request milestone');
+  });
+  test('buckets a mark by the viewer calendar day', () => {
+    const marks = [session('2026-10-24T00:30:00.000Z')];
+    const pacific = threadRecentActivity(marks, now, 'America/Los_Angeles');
+    expect(pacific.days.at(-1)).toMatchObject({ key: '2026-10-24', sessions: 0, today: true });
+    expect(pacific.days.at(-2)).toMatchObject({ key: '2026-10-23', sessions: 1, today: false });
+    const paris = threadRecentActivity(marks, now, 'Europe/Paris');
+    expect(paris.days.at(-1)).toMatchObject({ key: '2026-10-24', sessions: 1, today: true });
+    expect(paris.days.filter((day) => day.today)).toHaveLength(1);
+  });
+  test('describes one, several or no activity in words', () => {
+    expect(threadRecentActivity([session('2026-10-24T09:00:00.000Z')], now, 'UTC').description).toBe(
+      'Last 14 days: 1 session on 1 day',
+    );
+    expect(
+      threadRecentActivity([milestone('2026-10-20T09:00:00.000Z'), milestone('2026-10-21T09:00:00.000Z')], now, 'UTC')
+        .description,
+    ).toBe('Last 14 days: 2 pull request milestones');
+    expect(threadRecentActivity([], now, 'UTC').description).toBe('Last 14 days: no activity');
+    expect(threadRecentActivity([followUp('2026-10-24T09:00:00.000Z')], now, 'UTC').description).toBe(
+      'Last 14 days: no activity',
+    );
+  });
+  test('a shorter window keeps the most recent days; a window the timeline cannot serve is refused', () => {
+    const week = threadRecentActivity([session('2026-10-12T09:00:00.000Z')], now, 'UTC', 7);
+    expect(week.days.map((day) => day.key)).toEqual([
+      '2026-10-18',
+      '2026-10-19',
+      '2026-10-20',
+      '2026-10-21',
+      '2026-10-22',
+      '2026-10-23',
+      '2026-10-24',
+    ]);
+    expect(week.description).toBe('Last 7 days: no activity');
+    for (const days of [0, 15, 1.5, Number.NaN]) {
+      expect(() => threadRecentActivity([], now, 'UTC', days)).toThrow(RangeError);
+    }
+  });
 });

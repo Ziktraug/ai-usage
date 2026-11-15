@@ -19,14 +19,17 @@
   import {
     bucketThreadMarks,
     groupThreadRows,
+    groupThreadRowsByBand,
     groupThreadRowsBySituation,
     harnessName,
     projectShortLabel,
+    threadBand,
     threadDayMarks,
     threadPullRequestTracks,
     threadSituationCopy,
     threadTime,
     threadTimeline,
+    threadWaitSince,
   } from './work-thread-model';
   import WorkThreadSources from './work-thread-sources.svelte';
 
@@ -52,6 +55,7 @@
     loadingMore = false,
     moreUnavailable = false,
     continuation = false,
+    grouping = 'situation',
   }: {
     dataset: WorkThreadListDataset;
     rows: readonly WorkThreadRow[];
@@ -65,6 +69,8 @@
     loadingMore?: boolean;
     moreUnavailable?: boolean;
     continuation?: boolean;
+    /** Sections by situation, or by band (whose move it is) with the longest wait first. */
+    grouping?: 'situation' | 'band';
   } = $props();
   let moreSentinel = $state<HTMLDivElement>();
   $effect(() => {
@@ -139,6 +145,13 @@
     (): readonly { project: string; label: string; note?: string; tasks: readonly WorkThreadRow[] }[] => {
       if (groupByProject) {
         return groupThreadRows(rows);
+      }
+      if (grouping === 'band') {
+        return groupThreadRowsByBand(
+          rows,
+          (row) => threadBand(row, situationOf(row), dataset.generatedAt),
+          (row) => threadWaitSince(row, situationOf(row)).at,
+        );
       }
       return groupThreadRowsBySituation(rows, (row) => situationOf(row).hint);
     },

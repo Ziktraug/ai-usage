@@ -1,13 +1,17 @@
 import { parseWorkThreadLinkKey, type WorkThreadEvent } from '@ai-usage/report-core/work-thread';
 import {
   deriveWorkThreadSituation,
+  isUnreadRemainder,
+  settledPullRequests,
   WORK_THREAD_STALE_AFTER_MS,
   type WorkThreadRemainder,
+  type WorkThreadSituation,
 } from '@ai-usage/report-core/work-thread-situation';
 import {
   WORK_THREAD_VIEW_BOUNDS,
   type WorkThreadDetailDataset,
   type WorkThreadEpisode,
+  type WorkThreadFact,
   type WorkThreadFactEvent,
   type WorkThreadFactEventKind,
   type WorkThreadListQuery,
@@ -19,9 +23,15 @@ import {
   workThreadFactEventLabel,
 } from '@ai-usage/report-core/work-thread-view';
 
+export type ThreadView = 'pilot' | 'lanes';
+
+/** The Pilot presentation is chosen by the URL; any other value keeps the lanes. */
+export const threadView = (search: URLSearchParams): ThreadView => (search.get('view') === 'pilot' ? 'pilot' : 'lanes');
+
 export const threadListQuery = (search: URLSearchParams): WorkThreadListQuery => ({
   cursor: search.get('cursor') || null,
-  limit: 50,
+  // Pilot counts tasks per band, so it reads the whole followed set where it fits one page.
+  limit: threadView(search) === 'pilot' ? WORK_THREAD_VIEW_BOUNDS.maxPageSize : 50,
   project: search.get('project') || null,
   search: search.get('q')?.slice(0, 200) || null,
   tab: search.get('tab') === 'done' ? 'done' : 'open',
@@ -451,6 +461,11 @@ export const acknowledgedRemainderCopy = (remainders: readonly WorkThreadRemaind
       ];
 };
 
+/** A checkout read as gone from disk whose last successful read still held local work. */
+const isLostCheckout = (remainder: WorkThreadRemainder): boolean =>
+  remainder.kind === 'source-unavailable' && remainder.source === 'local' && remainder.outcome === 'missing';
+const LOST_CHECKOUT_COPY = 'Checkout gone from disk · local work was last seen there';
+
 export const remainderCopy = (remainder: WorkThreadRemainder): string => {
   switch (remainder.kind) {
     case 'native-request':
@@ -490,6 +505,9 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
     case 'jira-after-merge':
       return 'Merged · the ticket moves on without you';
     case 'source-unavailable':
+      if (isLostCheckout(remainder)) {
+        return LOST_CHECKOUT_COPY;
+      }
       return remainder.outcome === 'truncated'
         ? `${sourceName(remainder.source)} evidence incomplete`
         : `${sourceName(remainder.source)} read: ${remainder.outcome}`;
@@ -506,6 +524,99 @@ export const remainderCopy = (remainder: WorkThreadRemainder): string => {
 
 export const sourceName = (source: string): string =>
   ({ local: 'Local', checkouts: 'Local', github: 'GitHub', jira: 'Jira', sessions: 'Sessions' })[source] ?? source;
+
+const counted = (count: number, noun: string): string => `${count} ${count === 1 ? noun : `${noun}s`}`;
+
+/** The last state a source established: its latest read when it succeeded, else its latest success. */
+const lastKnownFact = <Observation extends { readonly outcome: string }>(
+  fact: WorkThreadFact<Observation>,
+): Observation | null => (fact.latest?.outcome === 'observed' ? fact.latest : fact.latestSuccessful);
+
+type PullRequestFact = NonNullable<WorkThreadPullRequestMarker['latest']>;
+
+const pullRequestNumber = (key: string): number | null => {
+  const parsed = parseWorkThreadLinkKey('pull-request', key);
+  return parsed?.kind === 'pull-request' ? parsed.number : null;
+};
+const pullRequestRef = (key: string): string => {
+  const number = pullRequestNumber(key);
+  return number === null ? 'the PR' : `#${number}`;
+};
+const ticketKey = (key: string): string | null => {
+  const parsed = parseWorkThreadLinkKey('jira-issue', key);
+  return parsed?.kind === 'jira-issue' ? parsed.key : null;
+};
+
+/** The changes git counted; `null` when it reported no count, so a dirty checkout never reads "0 changes". */
+const localChangeCount = (remainder: Extract<WorkThreadRemainder, { kind: 'local-files' }>): number | null => {
+  const total = (remainder.modified ?? 0) + (remainder.staged ?? 0) + (remainder.untracked ?? 0);
+  return total > 0 ? total : null;
+};
+
+/**
+ * The gesture a remainder asks for, where `remainderCopy` states the fact. A remainder the
+ * operator cannot act on (checks running, reviewers reading) names what is moving instead.
+ */
+export const remainderActionCopy = (remainder: WorkThreadRemainder, row: WorkThreadRow): string => {
+  switch (remainder.kind) {
+    case 'native-request':
+      return `Answer ${harnessName(remainder.request.harness)}: ${remainder.request.text}${remainder.request.state === 'uncertain' ? ' (answer unknown)' : ''}`;
+    case 'merge-conflict':
+      return `Resolve conflicts on ${pullRequestRef(remainder.key)}`;
+    case 'unresolved-review-threads':
+      return `Address ${counted(remainder.count, 'review thread')} on ${pullRequestRef(remainder.key)}`;
+    case 'changes-requested':
+      return `Address requested changes on ${pullRequestRef(remainder.key)}`;
+    case 'failing-checks':
+      return `Fix checks on ${pullRequestRef(remainder.key)}`;
+    case 'review-requested':
+      return `Review ${pullRequestRef(remainder.key)}`;
+    case 'team-review-requested':
+      return `Take or leave the team review on ${pullRequestRef(remainder.key)}`;
+    case 'local-files': {
+      const count = localChangeCount(remainder);
+      const changes = count === null ? 'local changes' : counted(count, 'local change');
+      // Once its pull requests are merged or closed, the files are what is left to look at. The list
+      // cannot tell a dedicated worktree from a primary clone, so it never asks to remove a checkout.
+      return settledPullRequests(row) === null ? `Commit or discard ${changes}` : `Check ${changes}, end follow-up`;
+    }
+    case 'unpushed-commits':
+      // A linked pull request that was never read still exists: only a task without any asks to open one.
+      return `Push ${counted(remainder.count, 'commit')}${threadDisplayMarkers(row).pullRequests.length === 0 ? ', open a PR' : ''}`;
+    case 'jira-open': {
+      const ticket = ticketKey(remainder.key);
+      return ticket === null ? 'Update the ticket' : `Update ticket ${ticket}`;
+    }
+    case 'jira-after-merge': {
+      const ticket = ticketKey(remainder.key);
+      return ticket === null ? 'The ticket moves on without you' : `Ticket ${ticket} moves on without you`;
+    }
+    case 'draft-pr': {
+      const number = pullRequestNumber(remainder.key);
+      return number === null ? 'Finish the draft PR' : `Finish draft #${number}`;
+    }
+    case 'pending-checks':
+      return `Checks running on ${pullRequestRef(remainder.key)}`;
+    case 'ready-to-merge':
+      return `Merge ${pullRequestRef(remainder.key)}`;
+    case 'awaiting-review':
+      return `Waiting on reviewers of ${pullRequestRef(remainder.key)}`;
+    case 'behind-base':
+      return `Update ${pullRequestRef(remainder.key)} from ${remainder.baseRef ?? 'its base'}`;
+    case 'open-pr':
+      return `Check on ${pullRequestRef(remainder.key)}`;
+    case 'running-session':
+      return `${counted(remainder.count, 'session')} running`;
+    case 'source-unavailable':
+    case 'source-stale':
+    case 'source-unknown':
+      return 'Choose the next step';
+    default: {
+      const unsupported: never = remainder;
+      throw new Error(`Unsupported remainder: ${String(unsupported)}`);
+    }
+  }
+};
 
 export interface ThreadSourceAvailabilityDetail {
   readonly label: string;
@@ -621,6 +732,113 @@ const sessionSourceRemainder = (
     : null;
 };
 
+const settledPullRequestsCopy = (row: WorkThreadRow, state: 'MERGED' | 'CLOSED'): string => {
+  const numbers = row.markers.pullRequests.flatMap((marker) => {
+    const fact = lastKnownFact(marker);
+    return fact?.state === state ? [fact.number] : [];
+  });
+  const verb = state === 'MERGED' ? 'merged' : 'closed without merge';
+  const [only] = numbers;
+  return numbers.length === 1 && only !== undefined ? `PR #${only} ${verb}` : `${numbers.length} PRs ${verb}`;
+};
+
+const hasUnreadSource = (remainders: readonly WorkThreadRemainder[], source: WorkThreadRemainder['source']): boolean =>
+  remainders.some((remainder) => isUnreadRemainder(remainder) && remainder.source === source);
+
+/**
+ * What the disk holds of a settled task, from observations only; nothing when no checkout is known.
+ * Work last seen in a checkout that is gone leads: it is the one thing an end could lose.
+ */
+const settledDiskCopy = (row: WorkThreadRow, remainders: readonly WorkThreadRemainder[]): string | null => {
+  if (remainders.some(isLostCheckout)) {
+    return 'checkout gone from disk, local work was last seen there';
+  }
+  const local = row.markers.local;
+  if (local.some((marker) => marker.latest?.outcome === 'observed')) {
+    return 'checkout still on disk';
+  }
+  if (local.length > 0 && local.every((marker) => marker.latest?.outcome === 'missing')) {
+    return 'checkout gone from disk';
+  }
+  return hasUnreadSource(remainders, 'local') ? 'checkout not read on this machine' : null;
+};
+
+/** The unread sources a suggested end names after the disk, which speaks for the local source. */
+const SETTLED_UNREAD_SOURCES = [
+  { source: 'sessions', copy: 'sessions not fully read' },
+  { source: 'jira', copy: 'ticket not read' },
+  { source: 'github', copy: 'pull request read not current' },
+] as const;
+
+/** An end is suggested from known facts; every source that stayed unread is named beside them. */
+const settledSituationWords = (
+  row: WorkThreadRow,
+  reason: 'merged-complete' | 'closed-unmerged',
+  remainders: readonly WorkThreadRemainder[],
+): { readonly headline: string; readonly caption: string } => {
+  const disk = settledDiskCopy(row, remainders);
+  const facts = [
+    settledPullRequestsCopy(row, reason === 'merged-complete' ? 'MERGED' : 'CLOSED'),
+    ...(disk ? [disk] : []),
+    ...SETTLED_UNREAD_SOURCES.flatMap(({ source, copy }) => (hasUnreadSource(remainders, source) ? [copy] : [])),
+  ];
+  return {
+    // The list cannot tell a dedicated worktree from a primary clone, so the gesture never removes a checkout.
+    headline: 'End follow-up',
+    caption: reason === 'merged-complete' ? `${facts.join(' · ')}. Deployment is not established.` : facts.join(' · '),
+  };
+};
+
+/** The headline is the gesture; an unread source is never one, so it stays in the caption. */
+const situationWords = (
+  row: WorkThreadRow,
+  situation: WorkThreadSituation,
+  timeZone: string,
+): { readonly headline: string; readonly caption: string } => {
+  switch (situation.reason) {
+    case 'follow-up-ended':
+      return {
+        headline: 'You ended this follow-up',
+        caption: row.afterDone
+          ? `${row.afterDone.count} newer observations · follow-up stays done`
+          : 'History and links stay available.',
+      };
+    case 'explicit-wait':
+      return {
+        headline: row.thread.waitingFor ?? 'Waiting for a response',
+        caption: 'No session needs to keep running while you wait.',
+      };
+    case 'no-remainder':
+      return {
+        headline: 'End follow-up',
+        caption:
+          row.thread.intent === 'review'
+            ? 'The review is done. Nothing known is left.'
+            : 'An analysis can be enough. No branch, PR or ticket is required.',
+      };
+    case 'merged-complete':
+    case 'closed-unmerged':
+      return settledSituationWords(row, situation.reason, situation.remainders);
+    case 'next-step':
+      return { headline: 'Choose the next step', caption: 'Follow-up stays yours to end' };
+    default: {
+      const primary = situation.remainders.find((remainder) => remainder.kind === situation.reason);
+      if (primary === undefined) {
+        // A running session always carries its own remainder: without one the situation is not
+        // the one `deriveWorkThreadSituation` produced, and no copy is invented for it.
+        if (situation.reason === 'running-session') {
+          throw new Error('A running-session situation carries no running-session remainder.');
+        }
+        return { headline: 'Choose the next step', caption: 'Follow-up stays yours to end' };
+      }
+      const evidence = remainderEvidenceCopy(primary, timeZone);
+      return isUnreadRemainder(primary)
+        ? { headline: 'Choose the next step', caption: `${remainderCopy(primary)} · ${evidence}` }
+        : { headline: remainderActionCopy(primary, row), caption: evidence };
+    }
+  }
+};
+
 export const threadSituationCopy = (
   row: WorkThreadRow,
   now: string,
@@ -637,30 +855,661 @@ export const threadSituationCopy = (
     undecided: 'To decide',
     done: 'Done',
   }[situation.hint];
-  const primary = situation.remainders.find((remainder) => remainder.kind === situation.reason);
-  let headline = primary ? remainderCopy(primary) : 'Choose the next step';
-  let caption = primary ? remainderEvidenceCopy(primary, timeZone) : 'Follow-up stays yours to end';
-  if (situation.reason === 'follow-up-ended') {
-    headline = 'You ended this follow-up';
-    caption = row.afterDone
-      ? `${row.afterDone.count} newer observations · follow-up stays done`
-      : 'History and links stay available.';
-  } else if (situation.reason === 'explicit-wait') {
-    headline = row.thread.waitingFor ?? 'Waiting for a response';
-    caption = 'No session needs to keep running while you wait.';
-  } else if (situation.reason === 'no-remainder') {
-    headline = row.thread.intent === 'review' ? 'Review follow-up is ready to end' : 'An analysis can be enough';
-    caption = 'No known remainder. No branch, PR or ticket is required.';
-  } else if (situation.reason === 'merged-complete') {
-    headline = 'Everything is aligned to finish';
-    caption = 'PR merged · linked tickets done · no local remainder. Deployment is not established.';
-  } else if (situation.reason === 'running-session') {
-    headline = 'Work is in progress';
-    caption = primary ? remainderEvidenceCopy(primary, timeZone) : 'Sessions · date unknown';
-  }
+  const { headline, caption } = situationWords(row, situation, timeZone);
   // The list repeats no source or date (the timeline shows when); it keeps only explanations.
-  const explained = ['follow-up-ended', 'explicit-wait', 'no-remainder', 'merged-complete'].includes(situation.reason);
+  const explained = ['follow-up-ended', 'explicit-wait', 'no-remainder', 'merged-complete', 'closed-unmerged'].includes(
+    situation.reason,
+  );
   return { ...situation, label, headline, caption, note: explained ? caption : null };
+};
+
+/** Linked sessions as this machine read them: none read never means none ran elsewhere. */
+export const threadSessionsLabel = (row: WorkThreadRow): string => {
+  if (row.sessionCount === 0 && row.delegatedSessionCount === 0) {
+    return 'No sessions on this machine';
+  }
+  const delegated = row.delegatedSessionCount > 0 ? ` · ${row.delegatedSessionCount} delegated` : '';
+  return `${counted(row.sessionCount, 'session')}${delegated}`;
+};
+
+const localBranch = (marker: WorkThreadMarkers['local'][number]): string | null => {
+  const observed = lastKnownFact(marker)?.branch ?? marker.latest?.branch;
+  if (observed) {
+    return observed;
+  }
+  const parsed = parseWorkThreadLinkKey('branch', marker.key);
+  return parsed?.kind === 'branch' ? parsed.ref : null;
+};
+
+/**
+ * The second line of a compact row: its pull requests (or, without any, its branch), its sessions
+ * and what it combines. A linked pull request that was never read stays named, as unknown.
+ */
+export const threadRowMeta = (row: WorkThreadRow): string => {
+  const { pullRequests, local } = threadDisplayMarkers(row);
+  const parts: string[] = [];
+  if (pullRequests.length > 2) {
+    parts.push(`${pullRequests.length} pull requests`);
+  } else {
+    for (const marker of pullRequests) {
+      const number = lastKnownFact(marker)?.number ?? pullRequestNumber(marker.key);
+      parts.push(`PR ${number === null ? '' : `#${number} `}${pullRequestBadge(marker).label.toLowerCase()}`);
+    }
+  }
+  if (pullRequests.length === 0) {
+    const branch = local.map(localBranch).find((name) => name !== null);
+    if (branch) {
+      parts.push(branch);
+    }
+  }
+  parts.push(threadSessionsLabel(row));
+  if (row.combinedThreads.length > 0) {
+    parts.push(`combines ${row.combinedThreads.length + 1} tasks`);
+  }
+  return parts.join(' · ');
+};
+
+export const THREAD_BANDS = [
+  { band: 'yours', label: 'Yours', note: 'An answer, a fix or a merge waits on you' },
+  { band: 'in-flight', label: 'In flight', note: 'Recent activity, nothing waits on you' },
+  { band: 'to-tidy', label: 'To tidy', note: 'Delivered, closed or finished: tidy up and end the follow-up' },
+  { band: 'dormant', label: 'Dormant', note: 'No activity for 7 days or more' },
+  { band: 'done', label: 'Done', note: 'Follow-up ended' },
+] as const;
+export type ThreadBand = (typeof THREAD_BANDS)[number]['band'];
+
+/** The band the URL filters on; an unknown value filters nothing. */
+export const threadBandFilter = (search: URLSearchParams): ThreadBand | null => {
+  const value = search.get('band');
+  return THREAD_BANDS.find((item) => item.band === value)?.band ?? null;
+};
+
+const elapsedBetween = (at: string, now: string): number => {
+  const elapsed = Date.parse(now) - Date.parse(at);
+  if (!Number.isFinite(elapsed)) {
+    throw new RangeError('Two valid instants are required.');
+  }
+  return elapsed;
+};
+
+/**
+ * Whose move it is, first match first: an end, something left behind, silence, a step that waits
+ * on the operator. Any other recent task is in flight: nothing known waits on the operator.
+ */
+export const threadBand = (
+  row: WorkThreadRow,
+  situation: Pick<WorkThreadSituation, 'hint' | 'reason' | 'remainders'>,
+  now: string,
+): ThreadBand => {
+  if (situation.hint === 'done') {
+    return 'done';
+  }
+  if (situation.hint === 'ready-to-close') {
+    return 'to-tidy';
+  }
+  // Silence is measured from the later of the last session activity and the source's own date
+  // for the current wait: a commit made today is activity, whatever the age of the last session.
+  const since = threadWaitSince(row, situation).at;
+  const lastMove = Date.parse(since) > Date.parse(row.lastActivityAt) ? since : row.lastActivityAt;
+  const stale = elapsedBetween(lastMove, now) > WORK_THREAD_STALE_AFTER_MS;
+  const leftBehind = situation.reason === 'local-files' || situation.reason === 'jira-open' || stale;
+  if (leftBehind && settledPullRequests(row) !== null) {
+    return 'to-tidy';
+  }
+  if (stale) {
+    return 'dormant';
+  }
+  return situation.hint === 'to-resume' ? 'yours' : 'in-flight';
+};
+
+export interface ThreadWaitSince {
+  readonly at: string;
+  readonly basis: 'asked' | 'pull-request' | 'merged' | 'closed' | 'last-commit' | 'activity';
+}
+
+const instantAtEdge = (
+  instants: readonly (string | null | undefined)[],
+  edge: 'earliest' | 'latest',
+): string | null => {
+  const direction = edge === 'latest' ? 1 : -1;
+  let found: string | null = null;
+  for (const at of instants) {
+    if (typeof at === 'string' && (found === null || direction * (Date.parse(at) - Date.parse(found)) > 0)) {
+      found = at;
+    }
+  }
+  return found;
+};
+
+const sourceWaitStart = (
+  row: WorkThreadRow,
+  { reason, remainders }: Pick<WorkThreadSituation, 'reason' | 'remainders'>,
+): { readonly at: string | null; readonly basis: ThreadWaitSince['basis'] } | null => {
+  const pullRequests = row.markers.pullRequests.flatMap((marker) => {
+    const fact = lastKnownFact(marker);
+    return fact === null ? [] : [{ key: marker.key, fact }];
+  });
+  if (reason === 'native-request') {
+    const asked = remainders.flatMap((item) => (item.kind === 'native-request' ? [item.request.askedAt] : []));
+    return { at: instantAtEdge(asked, 'earliest'), basis: 'asked' };
+  }
+  if (reason === 'merged-complete') {
+    return {
+      at: instantAtEdge(
+        pullRequests.map(({ fact }) => fact.mergedAt),
+        'latest',
+      ),
+      basis: 'merged',
+    };
+  }
+  if (reason === 'closed-unmerged') {
+    return {
+      at: instantAtEdge(
+        pullRequests.map(({ fact }) => fact.closedAt),
+        'latest',
+      ),
+      basis: 'closed',
+    };
+  }
+  const primary = remainders.find((item) => item.kind === reason);
+  if (primary?.source === 'github') {
+    const milestones = row.marks.flatMap((mark) =>
+      mark.fact !== null && mark.source?.key === primary.key ? [mark.at] : [],
+    );
+    const created = pullRequests.find(({ key }) => key === primary.key)?.fact.createdAt;
+    return { at: instantAtEdge(milestones, 'latest') ?? created ?? null, basis: 'pull-request' };
+  }
+  if (primary !== undefined && (reason === 'local-files' || reason === 'unpushed-commits')) {
+    const commits = row.markers.local.flatMap((marker) =>
+      marker.key === primary.key && marker.latest?.outcome === 'observed' ? [marker.latest.lastCommitAt] : [],
+    );
+    return { at: instantAtEdge(commits, 'latest'), basis: 'last-commit' };
+  }
+  return null;
+};
+
+/**
+ * When the current wait began, from the sources' own dates (a question asked, a merge, a milestone,
+ * a commit), never from the date the product observed them. Without one, the last activity.
+ */
+export const threadWaitSince = (
+  row: WorkThreadRow,
+  situation: Pick<WorkThreadSituation, 'reason' | 'remainders'>,
+): ThreadWaitSince => {
+  const start = sourceWaitStart(row, situation);
+  return start === null || start.at === null
+    ? { at: row.lastActivityAt, basis: 'activity' }
+    : { at: start.at, basis: start.basis };
+};
+
+const WAIT_SINCE_LABELS = {
+  asked: 'Asked',
+  'pull-request': 'PR status since',
+  merged: 'Merged',
+  closed: 'Closed',
+  'last-commit': 'Last commit',
+  activity: 'Last activity',
+} as const satisfies Record<ThreadWaitSince['basis'], string>;
+export const threadWaitSinceLabel = (basis: ThreadWaitSince['basis']): string => WAIT_SINCE_LABELS[basis];
+
+/** Compact elapsed time: "now", "12 min", "5 h", "3 d", "6 w". A date in the future reads "now". */
+export const threadAge = (at: string, now: string): string => {
+  const minutes = Math.floor(elapsedBetween(at, now) / 60_000);
+  if (minutes < 1) {
+    return 'now';
+  }
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) {
+    return `${hours} h`;
+  }
+  const days = Math.floor(hours / 24);
+  return days < 14 ? `${days} d` : `${Math.floor(days / 7)} w`;
+};
+
+/** Same group shape as `groupThreadRowsBySituation`, so one list renders either grouping. */
+export interface ThreadBandGroup {
+  readonly band: ThreadBand;
+  readonly label: string;
+  readonly note: string;
+  readonly project: string;
+  readonly tasks: WorkThreadRow[];
+}
+
+/**
+ * Tasks by band, in band order. Inside a band the longest wait leads, so the order follows the
+ * sources' dates and not the order rows were collected in; dormant tasks and ended follow-ups
+ * show the most recent first.
+ */
+export const groupThreadRowsByBand = (
+  rows: readonly WorkThreadRow[],
+  bandOf: (row: WorkThreadRow) => ThreadBand,
+  sinceOf: (row: WorkThreadRow) => string,
+): ThreadBandGroup[] => {
+  const placed = rows.map((row) => ({ row, band: bandOf(row), since: Date.parse(sinceOf(row)) }));
+  return THREAD_BANDS.flatMap(({ band, label, note }) => {
+    const direction = band === 'dormant' || band === 'done' ? -1 : 1;
+    const tasks = placed
+      .filter((item) => item.band === band)
+      .sort(
+        (left, right) =>
+          direction * (left.since - right.since) || left.row.thread.threadId.localeCompare(right.row.thread.threadId),
+      )
+      .map((item) => item.row);
+    return tasks.length ? [{ band, project: label, label, note, tasks }] : [];
+  });
+};
+
+export const threadBandCounts = (
+  rows: readonly WorkThreadRow[],
+  bandOf: (row: WorkThreadRow) => ThreadBand,
+): Record<ThreadBand, number> => {
+  const counts: Record<ThreadBand, number> = { yours: 0, 'in-flight': 0, 'to-tidy': 0, dormant: 0, done: 0 };
+  for (const row of rows) {
+    counts[bandOf(row)] += 1;
+  }
+  return counts;
+};
+
+export const THREAD_LIFECYCLE_STEPS = [
+  { key: 'sessions', short: 'Sess', name: 'Sessions' },
+  { key: 'push', short: 'Push', name: 'Push' },
+  { key: 'pull-request', short: 'PR', name: 'Pull request' },
+  { key: 'checks', short: 'CI', name: 'Checks' },
+  { key: 'review', short: 'Rev', name: 'Review' },
+  { key: 'merge', short: 'Merge', name: 'Merge' },
+  { key: 'disk', short: 'Disk', name: 'Disk' },
+  { key: 'ticket', short: 'Ticket', name: 'Ticket' },
+] as const;
+export type ThreadLifecycleKey = (typeof THREAD_LIFECYCLE_STEPS)[number]['key'];
+export type ThreadLifecycleState = 'done' | 'yours' | 'running' | 'failed' | 'upcoming' | 'unread' | 'none';
+export interface ThreadLifecycleStep {
+  /** A short plain phrase for the fact that decided the state. */
+  readonly detail: string;
+  readonly key: ThreadLifecycleKey;
+  readonly name: string;
+  readonly short: string;
+  readonly state: ThreadLifecycleState;
+}
+
+interface LifecycleFact {
+  readonly detail: string;
+  readonly state: ThreadLifecycleState;
+}
+interface LifecycleContext {
+  /** Observed markers plus the links never read, so an unread link still holds its step. */
+  readonly display: WorkThreadMarkers;
+  readonly remainders: readonly WorkThreadRemainder[];
+  readonly row: WorkThreadRow;
+}
+
+/** Worst first: when several facts apply to one step, the first state of this order wins. */
+const LIFECYCLE_SEVERITY: readonly ThreadLifecycleState[] = [
+  'failed',
+  'yours',
+  'running',
+  'unread',
+  'upcoming',
+  'done',
+  'none',
+];
+/** The worst of the facts that apply, the first one among equals; `otherwise` when none applies. */
+const worstFact = (facts: readonly LifecycleFact[], otherwise: LifecycleFact): LifecycleFact => {
+  const [first, ...others] = facts;
+  return first === undefined
+    ? otherwise
+    : others.reduce(
+        (worst, fact) =>
+          LIFECYCLE_SEVERITY.indexOf(fact.state) < LIFECYCLE_SEVERITY.indexOf(worst.state) ? fact : worst,
+        first,
+      );
+};
+
+/** The known remainders that speak for a step; they are the single source of what waits. */
+const projectedFacts = (
+  remainders: readonly WorkThreadRemainder[],
+  project: (remainder: WorkThreadRemainder) => LifecycleFact | null,
+): readonly LifecycleFact[] =>
+  remainders.flatMap((remainder) => {
+    const fact = project(remainder);
+    return fact === null ? [] : [fact];
+  });
+
+/** What the pull request steps show while the task has no pull request. */
+const withoutPullRequestFact = ({ display }: LifecycleContext): LifecycleFact =>
+  display.local.length > 0
+    ? { state: 'upcoming', detail: 'No pull request yet' }
+    : { state: 'none', detail: 'No pull request' };
+
+/**
+ * One base fact per pull request for the steps a pull request goes through. A merged or closed
+ * pull request, one never read and someone else's read the same on each of them; `ownOpen` says
+ * what the operator's own open pull request shows on the step.
+ */
+const pullRequestBaseFacts = (
+  { display }: LifecycleContext,
+  ownOpen: (fact: PullRequestFact, key: string) => LifecycleFact,
+): readonly LifecycleFact[] =>
+  display.pullRequests.map((marker): LifecycleFact => {
+    const fact = lastKnownFact(marker);
+    if (!fact?.state) {
+      return { state: 'unread', detail: `State of ${pullRequestRef(marker.key)} unknown` };
+    }
+    if (fact.state === 'MERGED') {
+      return { state: 'done', detail: 'Merged' };
+    }
+    if (fact.state === 'CLOSED') {
+      return { state: 'none', detail: 'Closed without merge' };
+    }
+    return marker.role === 'review-requested' || marker.role === 'team-review-requested'
+      ? { state: 'none', detail: "Someone else's pull request" }
+      : ownOpen(fact, marker.key);
+  });
+
+const sessionsLifecycleFact = ({ row, remainders }: LifecycleContext): LifecycleFact => {
+  if (row.sessionCount + row.delegatedSessionCount === 0) {
+    return row.links.some((link) => link.kind === 'session' && link.detachedAt === null)
+      ? { state: 'unread', detail: 'Linked sessions could not be read' }
+      : { state: 'none', detail: 'No sessions on this machine' };
+  }
+  const partlyRead =
+    row.nativeRequestCoverage === 'partial' ||
+    remainders.some((remainder) => isUnreadRemainder(remainder) && remainder.source === 'sessions');
+  const base: LifecycleFact = partlyRead
+    ? { state: 'unread', detail: `${threadSessionsLabel(row)} · not fully read` }
+    : { state: 'done', detail: threadSessionsLabel(row) };
+  const waits = projectedFacts(remainders, (remainder) => {
+    switch (remainder.kind) {
+      case 'running-session':
+        return { state: 'running', detail: remainderActionCopy(remainder, row) };
+      case 'native-request':
+        return { state: 'yours', detail: 'An agent waits for your answer' };
+      default:
+        return null;
+    }
+  });
+  return worstFact([...waits, base], base);
+};
+
+const pushLifecycleFact = ({ row, remainders, display }: LifecycleContext): LifecycleFact => {
+  const unpushed = remainders.reduce((sum, item) => sum + (item.kind === 'unpushed-commits' ? item.count : 0), 0);
+  if (unpushed > 0) {
+    return { state: 'yours', detail: `${counted(unpushed, 'commit')} to push` };
+  }
+  if (row.markers.pullRequests.some((marker) => lastKnownFact(marker) !== null)) {
+    // The pull request is what establishes the push, not a checkout read.
+    return { state: 'done', detail: 'Pushed · a pull request exists' };
+  }
+  if (display.local.length === 0) {
+    return display.pullRequests.length > 0
+      ? { state: 'unread', detail: 'Push state unknown' }
+      : { state: 'none', detail: 'No branch or pull request' };
+  }
+  // A checkout never read, or whose read failed, may hold commits: another one, pushed, says nothing of it.
+  const unread = display.local.some(
+    (marker) => marker.latest?.outcome !== 'observed' && marker.latest?.outcome !== 'missing',
+  );
+  if (unread) {
+    return { state: 'unread', detail: 'Checkout not read on this machine' };
+  }
+  const onDisk = display.local.flatMap((marker) => (marker.latest?.outcome === 'observed' ? [marker.latest] : []));
+  if (onDisk.length === 0) {
+    return { state: 'unread', detail: 'Checkout gone from disk · push state unknown' };
+  }
+  if (onDisk.every((fact) => fact.ahead === 0)) {
+    return { state: 'done', detail: 'Branch pushed' };
+  }
+  return onDisk.some((fact) => fact.upstream === null)
+    ? { state: 'upcoming', detail: 'Branch not pushed yet' }
+    : { state: 'unread', detail: 'Push state unknown' };
+};
+
+const PULL_REQUEST_STATE_WORDS = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed without merge' } as const;
+
+const pullRequestLifecycleFact = (context: LifecycleContext): LifecycleFact => {
+  const drafts = projectedFacts(context.remainders, (remainder) => {
+    if (remainder.kind !== 'draft-pr') {
+      return null;
+    }
+    const number = pullRequestNumber(remainder.key);
+    return { state: 'yours', detail: number === null ? 'Draft pull request' : `Draft #${number}` };
+  });
+  const known: string[] = [];
+  const unread: LifecycleFact[] = [];
+  for (const marker of context.display.pullRequests) {
+    const state = lastKnownFact(marker)?.state;
+    if (state) {
+      known.push(`${pullRequestRef(marker.key)} ${PULL_REQUEST_STATE_WORDS[state]}`);
+    } else {
+      unread.push({ state: 'unread', detail: `State of ${pullRequestRef(marker.key)} unknown` });
+    }
+  }
+  const [only] = known;
+  const read: readonly LifecycleFact[] =
+    only === undefined
+      ? []
+      : [{ state: 'done', detail: known.length === 1 ? only : counted(known.length, 'pull request') }];
+  return worstFact([...drafts, ...unread, ...read], withoutPullRequestFact(context));
+};
+
+const checksLifecycleFact = (context: LifecycleContext): LifecycleFact =>
+  worstFact(
+    [
+      ...projectedFacts(context.remainders, (remainder) => {
+        switch (remainder.kind) {
+          case 'failing-checks':
+            return { state: 'failed', detail: `Checks failing on ${pullRequestRef(remainder.key)}` };
+          case 'pending-checks':
+            return { state: 'running', detail: `Checks running on ${pullRequestRef(remainder.key)}` };
+          default:
+            return null;
+        }
+      }),
+      ...pullRequestBaseFacts(context, (fact) =>
+        fact.checksRollup === 'success'
+          ? { state: 'done', detail: 'Checks pass' }
+          : { state: 'unread', detail: 'Checks not reported' },
+      ),
+    ],
+    withoutPullRequestFact(context),
+  );
+
+const ownOpenReviewFact = (fact: PullRequestFact): LifecycleFact => {
+  if (fact.reviewDecision === 'APPROVED') {
+    return { state: 'done', detail: 'Approved' };
+  }
+  return fact.draft === true
+    ? { state: 'upcoming', detail: 'Draft · review not started' }
+    : { state: 'none', detail: 'No review required' };
+};
+
+const reviewLifecycleFact = (context: LifecycleContext): LifecycleFact =>
+  worstFact(
+    [
+      ...projectedFacts(context.remainders, (remainder) => {
+        switch (remainder.kind) {
+          case 'changes-requested':
+            return { state: 'yours', detail: `Changes requested on ${pullRequestRef(remainder.key)}` };
+          case 'unresolved-review-threads':
+            return {
+              state: 'yours',
+              detail: `${counted(remainder.count, 'review thread')} to address on ${pullRequestRef(remainder.key)}`,
+            };
+          case 'review-requested':
+            return { state: 'yours', detail: `Your review is requested on ${pullRequestRef(remainder.key)}` };
+          case 'awaiting-review':
+            return { state: 'running', detail: 'Waiting on reviewers' };
+          case 'team-review-requested':
+            return { state: 'upcoming', detail: 'Your team was asked · take it or leave it' };
+          default:
+            return null;
+        }
+      }),
+      ...pullRequestBaseFacts(context, ownOpenReviewFact),
+    ],
+    withoutPullRequestFact(context),
+  );
+
+const mergeLifecycleFact = (context: LifecycleContext): LifecycleFact =>
+  worstFact(
+    [
+      ...projectedFacts(context.remainders, (remainder) => {
+        switch (remainder.kind) {
+          case 'merge-conflict':
+            return { state: 'failed', detail: `Conflicts on ${pullRequestRef(remainder.key)}` };
+          case 'ready-to-merge':
+            return { state: 'yours', detail: `${pullRequestRef(remainder.key)} ready to merge` };
+          default:
+            return null;
+        }
+      }),
+      ...pullRequestBaseFacts(context, (_fact, key) => ({
+        state: 'upcoming',
+        detail: context.remainders.some((remainder) => remainder.kind === 'behind-base' && remainder.key === key)
+          ? 'Behind its base'
+          : 'Not merged yet',
+      })),
+    ],
+    withoutPullRequestFact(context),
+  );
+
+const diskLifecycleFact = ({ row, remainders, display }: LifecycleContext): LifecycleFact => {
+  const settled = settledPullRequests(row) !== null;
+  // Only files wait on the operator. A checkout on disk asks nothing by itself: the list cannot
+  // tell a dedicated worktree from a primary clone.
+  const waits = projectedFacts(remainders, (remainder) => {
+    if (isLostCheckout(remainder)) {
+      return { state: 'unread', detail: LOST_CHECKOUT_COPY };
+    }
+    if (remainder.kind !== 'local-files') {
+      return null;
+    }
+    const count = localChangeCount(remainder);
+    return {
+      state: 'yours',
+      detail: count === null ? 'Local changes on disk' : `${counted(count, 'local change')} on disk`,
+    };
+  });
+  const checkouts = display.local.map((marker): LifecycleFact => {
+    if (marker.latest?.outcome === 'observed') {
+      return { state: 'upcoming', detail: settled ? 'Checkout still on disk' : 'Checkout on disk' };
+    }
+    return marker.latest?.outcome === 'missing'
+      ? { state: 'done', detail: 'Checkout gone from disk' }
+      : { state: 'unread', detail: 'Checkout not read on this machine' };
+  });
+  // Without any checkout marker there is no disk to speak of, whatever a remainder says.
+  return worstFact(checkouts.length > 0 ? [...waits, ...checkouts] : [], {
+    state: 'none',
+    detail: 'No checkout linked',
+  });
+};
+
+const ticketLifecycleFact = ({ remainders, display }: LifecycleContext): LifecycleFact => {
+  const waits = projectedFacts(remainders, (remainder) => {
+    switch (remainder.kind) {
+      case 'jira-open':
+        return { state: 'yours', detail: `${ticketKey(remainder.key) ?? 'Ticket'} to update` };
+      case 'jira-after-merge':
+        return { state: 'running', detail: 'Moves on without you' };
+      default:
+        return null;
+    }
+  });
+  const tickets = display.jiraIssues.map((marker): LifecycleFact => {
+    const name = ticketKey(marker.key) ?? 'Ticket';
+    const fact = lastKnownFact(marker);
+    if (fact?.statusCategory === 'done') {
+      return { state: 'done', detail: `${name} done` };
+    }
+    const unread = remainders.some(
+      (remainder) => isUnreadRemainder(remainder) && remainder.source === 'jira' && remainder.key === marker.key,
+    );
+    // An unfinished ticket that is nobody's step yet: its pull request is still open.
+    return fact === null || unread
+      ? { state: 'unread', detail: `${name} state unknown` }
+      : { state: 'upcoming', detail: `${name} follows the open pull request` };
+  });
+  return worstFact(tickets.length > 0 ? [...waits, ...tickets] : [], { state: 'none', detail: 'No ticket' });
+};
+
+/**
+ * The task's eight fixed positions, from its first session to its ticket. Each state is the worst
+ * of the known remainders that speak for the step (what waits, as the situation ranks it) and of
+ * the base state its markers establish; a source that was not read shows as unread, never as done.
+ */
+export const threadLifecycle = (
+  row: WorkThreadRow,
+  remainders: readonly WorkThreadRemainder[],
+): readonly ThreadLifecycleStep[] => {
+  const context: LifecycleContext = { row, remainders, display: threadDisplayMarkers(row) };
+  const facts: Record<ThreadLifecycleKey, LifecycleFact> = {
+    sessions: sessionsLifecycleFact(context),
+    push: pushLifecycleFact(context),
+    'pull-request': pullRequestLifecycleFact(context),
+    checks: checksLifecycleFact(context),
+    review: reviewLifecycleFact(context),
+    merge: mergeLifecycleFact(context),
+    disk: diskLifecycleFact(context),
+    ticket: ticketLifecycleFact(context),
+  };
+  return THREAD_LIFECYCLE_STEPS.map((step) => ({ ...step, ...facts[step.key] }));
+};
+
+/** The rail in words, for assistive technology: "Sessions: 3 sessions; Push: Pushed; …". */
+export const threadLifecycleSummary = (steps: readonly ThreadLifecycleStep[]): string =>
+  steps.map((step) => `${step.name}: ${step.detail}`).join('; ');
+
+export interface ThreadRecentActivity {
+  readonly days: readonly {
+    readonly key: string;
+    readonly label: string;
+    readonly milestones: number;
+    readonly sessions: number;
+    readonly today: boolean;
+  }[];
+  readonly description: string;
+}
+
+/**
+ * Sessions and pull request milestones of the last calendar days, today last. The window is cut
+ * from the task timeline, so it cannot exceed the days that timeline always shows.
+ */
+export const threadRecentActivity = (
+  marks: readonly WorkThreadMark[],
+  now: string,
+  timeZone: string,
+  days = THREAD_TIMELINE_MIN_DAYS,
+): ThreadRecentActivity => {
+  if (!Number.isInteger(days) || days < 1 || days > THREAD_TIMELINE_MIN_DAYS) {
+    throw new RangeError(`The activity window is 1 to ${THREAD_TIMELINE_MIN_DAYS} days.`);
+  }
+  const byDay = bucketThreadMarks(marks, timeZone);
+  const window = threadTimeline(now, timeZone)
+    .slice(-days)
+    .map((day) => {
+      const dayMarks = byDay.get(day.key) ?? [];
+      return {
+        key: day.key,
+        label: day.label,
+        sessions: dayMarks.filter((mark) => mark.kind === 'session').length,
+        milestones: dayMarks.filter((mark) => mark.fact !== null).length,
+        today: day.today,
+      };
+    });
+  const sessions = window.reduce((sum, day) => sum + day.sessions, 0);
+  const milestones = window.reduce((sum, day) => sum + day.milestones, 0);
+  const activeDays = window.filter((day) => day.sessions > 0).length;
+  const parts = [
+    ...(sessions > 0 ? [`${counted(sessions, 'session')} on ${counted(activeDays, 'day')}`] : []),
+    ...(milestones > 0 ? [counted(milestones, 'pull request milestone')] : []),
+  ];
+  return {
+    days: window,
+    description: `Last ${counted(days, 'day')}: ${parts.length > 0 ? parts.join(', ') : 'no activity'}`,
+  };
 };
 
 /** An observed source URL may be opened, but never executable schemes or credentials. */
