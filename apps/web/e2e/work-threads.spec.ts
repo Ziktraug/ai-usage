@@ -80,6 +80,12 @@ const open = async (page: Page, threadId?: string): Promise<void> => {
   await page.goto(threadId ? `/work?task=${threadId}` : '/work');
   await hydrated(page);
 };
+/** The flat journal the cascade replaced; it stays behind `history=journal`. */
+const openJournal = async (page: Page, threadId: string): Promise<void> => {
+  await page.goto(`/work?task=${threadId}&history=journal`);
+  await hydrated(page);
+};
+const pane = (page: Page) => page.getByRole('complementary', { name: 'Task detail', exact: true });
 const endFollowUp = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'End follow-up', exact: true }).first().click();
 };
@@ -325,8 +331,10 @@ test('task availability only names linked sources while My work retains global a
   await expect(page.locator('details[aria-label="Source availability"]')).toHaveCount(0);
   await page.getByRole('link', { name: '← My work', exact: true }).click();
   await expect(page.locator('details[aria-label="Source availability"] summary')).toContainText('Jira disabled');
+  // A plain click opens the task beside the list: each keeps its own availability line.
   await row(page, ids.payments).getByRole('link', { name: 'Prevent duplicate payments', exact: true }).click();
-  const availability = page.locator('details[aria-label="Source availability"]');
+  await expect(page.locator('details[aria-label="Source availability"]')).toHaveCount(2);
+  const availability = pane(page).locator('details[aria-label="Source availability"]');
   await expect(availability.locator('summary')).toContainText('Jira disabled');
   await availability.locator('summary').click();
   await expect(availability).toContainText('Jira collection is disabled');
@@ -408,7 +416,7 @@ test('a task lane shows its pull request milestones up to the merge without open
 });
 
 test('episode durations and PR fact events use their own evidence dates', async ({ page }) => {
-  await open(page, ids.payments);
+  await openJournal(page, ids.payments);
   const episode = page.locator('[data-session-key="session:fixture-machine/claude/payment-approaches"]');
   await expect(episode.locator('.wt-duration')).toContainText('14 min');
   await expect(episode).toContainText('over 3 days');
@@ -416,11 +424,11 @@ test('episode durations and PR fact events use their own evidence dates', async 
   await expect(episode).toContainText("14 min recorded for this episode · not the task's lifetime");
   await expect(episode).toContainText('first to last activity, pauses included');
   await expect(page.locator('.wt-reason h2')).toHaveText('Address 2 review threads on #1487');
-  await open(page, ids.unknownDuration);
+  await openJournal(page, ids.unknownDuration);
   await expect(page.locator('.wt-duration')).toHaveCount(0);
   await page.locator('.wt-session-button').first().click();
   await expect(page.locator('.wt-inspector')).toContainText('Duration not recorded');
-  await open(page, ids.mergedPr);
+  await openJournal(page, ids.mergedPr);
   await expect(page.locator('.wt-id')).toContainText('Since Oct 20');
   await expect(page.locator('.wt-fact-event strong')).toHaveText(['PR #1502 merged', 'PR #1502 opened']);
   await expect(page.locator('.wt-fact-event .wt-event-source')).toHaveText(['GitHub', 'GitHub']);
@@ -431,7 +439,7 @@ test('episode durations and PR fact events use their own evidence dates', async 
 });
 
 test('delegation groups reveal five children at a time without losing keyboard focus', async ({ page }) => {
-  await open(page, ids.longTitle);
+  await openJournal(page, ids.longTitle);
   const parent = page.locator('[data-session-key="session:fixture-machine/claude/ownership-design"]');
   const children = parent.locator(':scope > .wt-children > .wt-episode');
   const toggle = parent.locator(':scope > .wt-delegations');
@@ -468,7 +476,7 @@ test('delegation groups reveal five children at a time without losing keyboard f
 });
 
 test('overnight episodes name the next day in both the row and the inspector', async ({ page }) => {
-  await open(page, ids.longTitle);
+  await openJournal(page, ids.longTitle);
   const episode = page.locator('[data-session-key="session:fixture-machine/claude/ownership-check"]');
   await expect(episode.locator(':scope > .wt-session-button')).toContainText('22:06–02:19 +1d');
   await episode.locator(':scope > .wt-session-button').click();
@@ -491,7 +499,7 @@ test('links a recent served session of the project, detaches it, and can undo th
   request,
 }) => {
   const task = await createTask(request, { projectLabel: 'ai-usage' });
-  await open(page, task.threadId);
+  await openJournal(page, task.threadId);
   await page.getByRole('button', { name: 'Link an earlier session', exact: true }).click();
   const picker = page.getByRole('region', { name: 'Link an earlier session', exact: true });
   await expect(picker.getByRole('heading', { name: 'Recent sessions · ai-usage', exact: true })).toBeVisible();
@@ -567,9 +575,29 @@ test('searches PR and session titles and preserves filters through task navigati
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('Example shop');
   await expect(row(page, ids.payments)).toBeVisible();
   const listUrl = page.url();
+  // A plain click shows the task beside the list, which keeps its filters; the full page is one link away.
   await row(page, ids.payments).getByRole('link', { name: 'Prevent duplicate payments' }).first().click();
-  await expect(page.getByRole('heading', { name: 'Prevent duplicate payments', exact: true })).toBeVisible();
+  await expect(
+    pane(page).getByRole('heading', { level: 2, name: 'Prevent duplicate payments', exact: true }),
+  ).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('detail')).toBe('side');
+  await expect(page.getByRole('searchbox', { name: 'Search tasks' })).toHaveValue('Compare retry approaches');
+  await pane(page).getByRole('link', { name: 'Open full page', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Prevent duplicate payments', exact: true })).toBeVisible();
+  await expect(pane(page)).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.has('detail')).toBe(false);
   await expect(page.getByText('4 linked sessions · 1 delegated · one task', { exact: true })).toBeVisible();
+  // The sessions are a cascade by default; the journal is one press away and names itself in the URL.
+  const history = page.locator('.wt-journal');
+  await expect(history).toHaveAttribute('data-history-layout', 'cascade');
+  await expect(
+    history.locator('[role="treeitem"][data-session-key="session:fixture-machine/claude/payment-approaches"]'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cascade', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Journal', exact: true }).click();
+  await expect(history).toHaveAttribute('data-history-layout', 'journal');
+  expect(new URL(page.url()).searchParams.get('history')).toBe('journal');
+  await expect(history.locator('[role="treeitem"]')).toHaveCount(0);
   await page.getByRole('button', { name: '+ 1 delegated session', exact: true }).click();
   await expect(page.getByRole('button', { name: '− 1 delegated session', exact: true })).toHaveAttribute(
     'aria-expanded',
@@ -593,7 +621,12 @@ test('keyboard path opens a task, ends follow-up, and operates the tablist', asy
     .first();
   await taskLink.focus();
   await expect(taskLink).toBeFocused();
+  // Enter shows the task beside the list; its full page is reached from the pane, still by keyboard.
   await page.keyboard.press('Enter');
+  const full = pane(page).getByRole('link', { name: 'Open full page', exact: true });
+  await full.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { level: 1, name: task.title, exact: true })).toBeVisible();
   const end = page.getByRole('button', { name: 'End follow-up', exact: true }).first();
   await end.focus();
   await page.keyboard.press('Enter');

@@ -22,6 +22,7 @@ const BAND_PARAMETER = /[?&]band=/;
 const YOURS_BAND_URL = /[?&]band=yours/;
 const PILOT_VIEW_URL = /[?&]view=pilot/;
 const TASK_URL = /[?&]task=/;
+const SIDE_PANE_URL = /[?&]detail=side/;
 const YOURS_BAND = /^Yours\b/;
 const IN_FLIGHT_BAND = /^In flight\b/;
 const TO_TIDY_BAND = /^To tidy\b/;
@@ -93,13 +94,66 @@ test('a band counter filters the Pilot list and releases it', async ({ page }) =
   await expect(row(page, ids.analysis)).toBeVisible();
 });
 
-test('a compact row opens its task from the keyboard and Back returns to it in the Pilot view', async ({ page }) => {
+test('a compact row opens its task beside the Pilot list from the keyboard, and Escape returns to it', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1680, height: 1050 });
   await openPilot(page);
   const title = row(page, ids.payments).getByRole('link');
   await title.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { level: 1, name: 'Prevent duplicate payments' })).toBeVisible();
+  const pane = page.getByRole('complementary', { name: 'Task detail', exact: true });
+  await expect(pane.getByRole('heading', { level: 2, name: 'Prevent duplicate payments' })).toBeVisible();
   await expect(page).toHaveURL(PILOT_VIEW_URL);
+  await expect(page).toHaveURL(SIDE_PANE_URL);
+  await expect(row(page, ids.payments)).toHaveAttribute('aria-current', 'true');
+  await expect(page.locator('li[data-work-thread][aria-current="true"]')).toHaveCount(1);
+  expect(await page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
+  // Beside the pane the board is narrower: the next step and the age stay inside it.
+  const board = await page.locator('.wt-pilot-board').boundingBox();
+  for (const cell of ['.wt-row-next', '.wt-row-age']) {
+    const box = await row(page, ids.payments).locator(cell).boundingBox();
+    if (!(board && box)) {
+      throw new Error(`The Pilot row must keep ${cell} on screen beside the pane.`);
+    }
+    expect(box.x).toBeGreaterThanOrEqual(board.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(board.x + board.width + 0.5);
+  }
+  // Down moves to the next row shown and the pane follows it.
+  const rows = page.locator('.wt-pilot-board li[data-work-thread]');
+  const index = await rows.evaluateAll(
+    (items, id) => items.findIndex((item) => item.getAttribute('data-work-thread') === id),
+    ids.payments,
+  );
+  const below = rows.nth(index + 1);
+  await page.keyboard.press('ArrowDown');
+  await expect(below.getByRole('link')).toBeFocused();
+  await expect(below).toHaveAttribute('aria-current', 'true');
+  await expect(row(page, ids.payments)).not.toHaveAttribute('aria-current', 'true');
+  await page.keyboard.press('ArrowUp');
+  await expect(title).toBeFocused();
+  await expect(row(page, ids.payments)).toHaveAttribute('aria-current', 'true');
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+  expect(results.violations).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(pane).toHaveCount(0);
+  await expect(page).not.toHaveURL(TASK_URL);
+  await expect(page).toHaveURL(PILOT_VIEW_URL);
+  await expect(title).toBeFocused();
+});
+
+test('a compact row opens the full page from its pane and Back returns to the row in the Pilot view', async ({
+  page,
+}) => {
+  await openPilot(page);
+  const title = row(page, ids.payments).getByRole('link');
+  await title.click();
+  const pane = page.getByRole('complementary', { name: 'Task detail', exact: true });
+  await pane.getByRole('link', { name: 'Open full page', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Prevent duplicate payments' })).toBeVisible();
+  await expect(pane).toHaveCount(0);
+  await expect(page).toHaveURL(PILOT_VIEW_URL);
+  await expect(page).not.toHaveURL(SIDE_PANE_URL);
   await page.goBack();
   await expect(page).not.toHaveURL(TASK_URL);
   await expect(title).toBeFocused();
