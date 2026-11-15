@@ -5,7 +5,7 @@ import type { WebQueryRuntime } from '../../query/composition';
 import { prefetchWorkThreadRoute } from '../../query/options/work-threads';
 import { createWorkThreadsClient } from '../../rpc/work-threads-client';
 import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';
-import { threadListQuery, threadPageCursors } from './work-thread-model';
+import { threadListNeeded, threadListQuery, threadPageCursors } from './work-thread-model';
 
 export interface ThreadPageData {
   readonly mode: RuntimeMode;
@@ -31,7 +31,8 @@ export const prefetchThreadsRoute = async (runtime: WebQueryRuntime, url: URL): 
   const client = createWorkThreadsClient(runtime.rpc.workThreads);
   const task = url.searchParams.get('task');
   await prefetchWorkThreadRoute(runtime.queryClient, client, {
-    cursors: threadPageCursors(url.searchParams),
+    // The Timeline and Disk lenses read their own pages: the lanes page is not fetched for them.
+    cursors: threadListNeeded(url.searchParams) ? threadPageCursors(url.searchParams) : [],
     query: threadListQuery(url.searchParams),
     threadId: isWorkThreadId(task) ? task : null,
   });

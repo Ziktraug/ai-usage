@@ -1,6 +1,9 @@
+import { workThreadsListInputSchema } from '@ai-usage/web-contract/work-threads';
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
+import { parse } from 'valibot';
 import { expect, test } from './browser-test';
+import { decodeRpcResponseBody } from './rpc-test-transport';
 
 // Stable seeds of the process fixture; journeys in other specs add their own tasks beside them.
 const ids = {
@@ -295,6 +298,73 @@ test('a plain click opens the task beside the lanes, arrows move the selection, 
   await pane(page).getByRole('link', { name: 'Close task detail', exact: true }).click();
   await expect(pane(page)).toHaveCount(0);
   await expect(title).toBeFocused();
+});
+
+for (const width of [1024, 480]) {
+  test(`at ${width}px the pane lies over the list and holds the keyboard until it closes`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await openWork(page);
+    const list = page.locator('main[data-work-threads]');
+    const title = lanesRow(page, ids.payments).locator('.wt-task-title');
+    await expect(list).not.toHaveAttribute('inert');
+    await title.click();
+    await expect(pane(page).getByRole('heading', { level: 2, name: 'Prevent duplicate payments' })).toBeVisible();
+    // The pane covers the list: the keyboard moves into it and the list behind it is out of reach.
+    await expect(pane(page)).toBeFocused();
+    await expect(list).toHaveAttribute('inert');
+    const inPane = () =>
+      page.evaluate(() => document.querySelector('[data-work-pane]')?.contains(document.activeElement) ?? false);
+    const stops = new Set<string>();
+    for (let step = 0; step < 60; step += 1) {
+      await page.keyboard.press('Tab');
+      expect(await inPane()).toBe(true);
+      stops.add(await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120) ?? ''));
+    }
+    // Sixty stops are more than the pane holds: the keyboard came round instead of leaving.
+    expect(stops.size).toBeGreaterThan(2);
+    expect(stops.size).toBeLessThan(60);
+    const close = pane(page).getByRole('link', { name: 'Close task detail', exact: true });
+    await pane(page).getByRole('link', { name: 'Open full page', exact: true }).focus();
+    await page.keyboard.press('Shift+Tab');
+    expect(await inPane()).toBe(true);
+    await expect(close).not.toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(pane(page).getByRole('link', { name: 'Open full page', exact: true })).toBeFocused();
+    await assertAxe(page);
+    await page.keyboard.press('Escape');
+    await expect(pane(page)).toHaveCount(0);
+    await expect(list).not.toHaveAttribute('inert');
+    await expect(title).toBeFocused();
+    expect(param(page, 'task')).toBeNull();
+  });
+}
+
+test('the Disk and Timeline lenses do not read the lanes page they do not show', async ({ page }) => {
+  // The lanes list asks for pages of 50; Pilot, Disk and Timeline read pages of 100 themselves. The
+  // first page of a visit is read on the server, so the journey moves between lenses in the browser.
+  const lanesPages: string[] = [];
+  await page.route('**/rpc/workThreads/list', async (route) => {
+    const input = parse(workThreadsListInputSchema, decodeRpcResponseBody(route.request().postData() ?? '{}'));
+    if (input.limit === 50) {
+      lanesPages.push(new URL(page.url()).search);
+    }
+    await route.continue();
+  });
+  await openWork(page, '?view=pilot');
+  await expect(page.locator(`li[data-work-thread="${ids.payments}"]`)).toBeVisible();
+  await lensLink(page, 'Disk').click();
+  await expect(page.locator('tr[data-disk-checkout]')).toHaveCount(3);
+  await lensLink(page, 'Timeline').click();
+  const lane = timeline(page).getByRole('region', { name: EXAMPLE_SHOP }).first();
+  await lane.locator('.wtl-lane-toggle').click();
+  const title = lane.getByRole('link', { name: 'Prevent duplicate payments', exact: true });
+  await expect(title).toBeVisible();
+  expect(lanesPages).toEqual([]);
+  // A task opened from a lens still knows its neighbours: that is what the lanes page is read for.
+  await title.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Prevent duplicate payments', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Next task', exact: true })).toBeVisible();
+  expect(lanesPages.length).toBeGreaterThan(0);
 });
 
 test('a modified click and the pane’s own link open the task as a full page', async ({ page, context }) => {

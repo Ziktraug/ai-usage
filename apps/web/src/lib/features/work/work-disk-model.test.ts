@@ -504,7 +504,7 @@ describe('disk lens: merged with leftovers', () => {
       mainCheckout(),
       task('a', { local: [marker(WORKTREE, observed(WORKTREE, commit))], pullRequests: [merged(9, pr)] }),
     ];
-    const unread = { group: 'needs-a-look', reason: 'PR #9 merged, but commit chronology not read' };
+    const unread = { group: 'needs-a-look', reason: 'PR #9 merged, but commit chronology not read' } as const;
     expect(classified(rows({ lastCommitAt: null }, {}), WORKTREE)).toEqual(unread);
     expect(classified(rows({}, { mergedAt: null }), WORKTREE)).toEqual(unread);
     expect(classified(rows({ lastCommitAt: null }, { mergedAt: null }), WORKTREE)).toEqual(unread);

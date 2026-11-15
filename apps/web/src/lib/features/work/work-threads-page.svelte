@@ -39,6 +39,7 @@
     type ThreadBand,
     type ThreadView,
     threadBandFilter,
+    threadListNeeded,
     threadListQuery,
     threadMoreUrl,
     threadPageCursors,
@@ -84,9 +85,19 @@
   let timeZone = $state('UTC');
   let hydrated = $state(false);
   let pickerOpen = $state(false);
+  // Below this width the pane lies over the list (work-task-pane.css) instead of beside it.
+  const PANE_OVERLAY_QUERY = '(max-width: 1180px)';
+  let overlay = $state(false);
   onMount(() => {
     timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     hydrated = true;
+    const media = window.matchMedia(PANE_OVERLAY_QUERY);
+    const sync = (): void => {
+      overlay = media.matches;
+    };
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
   });
   const currentUrl = $derived(new URL(page.url.href));
   const taskId = $derived(currentUrl.searchParams.get('task'));
@@ -105,11 +116,15 @@
     }
     return navigate(url, true);
   };
+  // Over the list, the pane is the only thing the keyboard can reach until it closes.
+  const covering = $derived(side && overlay);
   const query = $derived(threadListQuery(currentUrl.searchParams));
   const cursors = $derived(threadPageCursors(currentUrl.searchParams));
+  // Timeline and Disk read their own pages; there the list only serves an open task's neighbours.
+  const listNeeded = $derived(threadListNeeded(currentUrl.searchParams));
   const listQueries = createQueries(() => ({
     queries: cursors.map((cursor) =>
-      workThreadListQueryOptions(clients.threads, { ...query, cursor }, { browser, enabled: true }),
+      workThreadListQueryOptions(clients.threads, { ...query, cursor }, { browser, enabled: listNeeded }),
     ),
   }));
   const answered = $derived(listQueries.flatMap((result) => (result.data?.ok ? [result.data.data] : [])));
@@ -195,7 +210,50 @@
       closeSide();
     }
   };
+  const PANE_FOCUSABLE =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  /** While the pane covers the list, Tab goes round inside it: nothing behind it is reachable. */
+  const holdTab = (event: KeyboardEvent): void => {
+    const pane = document.querySelector<HTMLElement>('[data-work-pane]');
+    if (pane === null) {
+      return;
+    }
+    const stops = [...pane.querySelectorAll<HTMLElement>(PANE_FOCUSABLE)].filter(
+      // Not a stop: a roving item (tabindex -1), or anything inside a folded <details> or hidden box.
+      (element) => element.tabIndex >= 0 && element.checkVisibility({ visibilityProperty: true }),
+    );
+    const first = stops[0] ?? pane;
+    const last = stops.at(-1) ?? pane;
+    const active = document.activeElement;
+    let target: HTMLElement | null = null;
+    if (!pane.contains(active)) {
+      target = event.shiftKey ? last : first;
+    } else if (event.shiftKey && (active === first || active === pane)) {
+      target = last;
+    } else if (!event.shiftKey && active === last) {
+      target = first;
+    }
+    if (target !== null) {
+      event.preventDefault();
+      target.focus();
+    }
+  };
+  $effect(() => {
+    // The pane opening over the list, or the window narrowing under an open pane, takes the keyboard.
+    if (covering && hydrated) {
+      tick().then(() => {
+        const pane = document.querySelector<HTMLElement>('[data-work-pane]');
+        if (pane !== null && !pane.contains(document.activeElement)) {
+          pane.focus({ preventScroll: true });
+        }
+      });
+    }
+  });
   const keyPane = (event: KeyboardEvent): void => {
+    if (event.key === 'Tab' && covering && !event.defaultPrevented) {
+      holdTab(event);
+      return;
+    }
     // Escape closes the pane from inside it or from a link of the list that opens it. A field being
     // edited or an open form of the pane keeps it: closing would drop what was typed.
     const target = event.target instanceof Element ? event.target : null;
@@ -475,6 +533,7 @@
     data-route-shell="work"
     data-work-hydrated={hydrated}
     data-work-threads
+    inert={covering}
     tabindex="-1"
     class:wt-focus={Boolean(taskId) && !side}
   >

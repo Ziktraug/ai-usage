@@ -60,6 +60,7 @@ import {
   threadHistory,
   threadLifecycle,
   threadLifecycleSummary,
+  threadListNeeded,
   threadListQuery,
   threadMoreUrl,
   threadPageCursors,
@@ -192,6 +193,19 @@ describe('task presentation model', () => {
     const timeline = new URL('http://localhost/work?view=timeline&from=2026-10-01&to=2026-11-01&open=a&quiet=1');
     const away = new URL(threadViewUrl(timeline, 'disk'), timeline);
     expect(threadViewUrl(away, 'timeline')).toBe('/work?view=timeline&from=2026-10-01&to=2026-11-01&open=a&quiet=1');
+  });
+  test('the lanes page is read where it is shown, and for the neighbours of an open task', () => {
+    const needed = (search: string) => threadListNeeded(new URLSearchParams(search));
+    expect(needed('')).toBe(true);
+    expect(needed('view=lanes&group=bands')).toBe(true);
+    expect(needed('view=pilot')).toBe(true);
+    expect(needed('view=unknown')).toBe(true);
+    // Timeline and Disk read every page themselves.
+    expect(needed('view=timeline')).toBe(false);
+    expect(needed('view=disk&project=Example+shop')).toBe(false);
+    // An open task reads its previous and next from the page, whatever lens it was opened from.
+    expect(needed(`view=disk&task=${WORK_THREADS_FIXTURE_IDS.payments}`)).toBe(true);
+    expect(needed(`view=timeline&task=${WORK_THREADS_FIXTURE_IDS.payments}&detail=side`)).toBe(true);
   });
   test('a time range accepts instants or dates and names the days it crosses', () => {
     expect(threadTimeRange('2026-11-08T08:24:00.000Z', '2026-11-08T22:53:00.000Z', 'Europe/Paris')).toBe('09:24–23:53');
@@ -2359,7 +2373,7 @@ describe('the lifecycle rail', () => {
   });
   test('a pull request whose read is not current shows "not read" on its steps, never its last known facts', () => {
     const old = instant(-10 * DAY);
-    const notRead = { state: 'unread', detail: '#1487 not read' };
+    const notRead = { state: 'unread', detail: '#1487 not read' } as const;
     const ready = task({ pullRequests: [pullRequest({ reviewDecision: 'APPROVED', observedAt: old })] });
     for (const key of ['pull-request', 'checks', 'review', 'merge'] as const) {
       expect(stepOf(ready, key)).toEqual(notRead);

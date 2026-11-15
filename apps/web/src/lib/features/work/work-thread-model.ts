@@ -66,6 +66,16 @@ export const threadListQuery = (search: URLSearchParams): WorkThreadListQuery =>
   tab: search.get('tab') === 'done' ? 'done' : 'open',
 });
 
+/**
+ * Whether the page reads the lanes list. Lanes and Pilot draw it. Timeline and Disk read every
+ * page of both tabs themselves, so there it only serves an open task, whose previous and next
+ * come from it.
+ */
+export const threadListNeeded = (search: URLSearchParams): boolean => {
+  const view = threadView(search);
+  return view === 'lanes' || view === 'pilot' || Boolean(search.get('task'));
+};
+
 /** Bound concurrent readers; browser Back preserves the previous window on continuation. */
 export const THREAD_PAGE_WINDOW = 20;
 export const threadPageCursors = (search: URLSearchParams): readonly (string | null)[] =>
