@@ -5,12 +5,10 @@
   import { untrack } from 'svelte';
   import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import Episode from './work-thread-episode.svelte';
+  import WorkThreadEpisodeDetail from './work-thread-episode-detail.svelte';
   import {
-    episodeContext,
     episodeDuration,
     episodeDurationDetail,
-    episodeResumeText,
-    episodeSpan,
     episodeSpanContext,
     episodeTimeRange,
     harnessName,
@@ -27,6 +25,7 @@
     links = [],
     busy = false,
     initiallyOpen = false,
+    nested = false,
   }: {
     episode: WorkThreadEpisode;
     taskTitle: string;
@@ -38,6 +37,7 @@
     links?: readonly WorkThreadLink[];
     busy?: boolean;
     initiallyOpen?: boolean;
+    nested?: boolean;
   } = $props();
   let expanded = $state(untrack(() => initiallyOpen));
   let childrenOpen = $state(false);
@@ -48,7 +48,6 @@
       visibleChildCount = 5;
     }
   });
-  const resume = $derived(episodeResumeText(episode, taskTitle));
   const spanContext = $derived(episodeSpanContext(episode));
   const who = $derived(
     episode.origin
@@ -84,96 +83,17 @@
     <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
   </button>
   {#if expanded}
-    <div class="wt-inspector">
-      <dl class="wt-context">
-        <div>
-          <dt>Linked because</dt>
-          <dd>
-            {#if links.find((link) => link.key === episode.linkKey)?.provenance === 'user'}
-              You linked this session
-            {:else if links.some((link) => link.key === episode.linkKey)}
-              Recorded task association
-            {:else}
-              Delegated by a linked session
-            {/if}
-          </dd>
-        </div>
-        <div>
-          <dt>Activity range</dt>
-          <dd>{episodeTimeRange(episode, timeZone)}</dd>
-        </div>
-        <div>
-          <dt>Initial request</dt>
-          <dd>{episode.firstPrompt ?? 'Not observed'}</dd>
-        </div>
-        <div>
-          <dt>Last instruction</dt>
-          <dd>{episode.lastInstruction ?? 'Not observed'}</dd>
-        </div>
-        <div>
-          <dt>What the session left</dt>
-          <dd>{episode.result ?? 'No result observed'}</dd>
-        </div>
-        <div>
-          <dt>Current question</dt>
-          <dd>
-            {#each episode.nativeRequests as request (request.key)}
-              <p>{request.text} · {request.state}<br>{request.detail}</p>
-            {:else}
-              No question observed; request coverage may be incomplete.
-            {/each}
-          </dd>
-        </div>
-        {#if episode.launchedBy}
-          <div>
-            <dt>Launched by</dt>
-            <dd>{harnessName(episode.launchedBy.harness)} · {episode.launchedBy.title ?? 'Untitled session'}</dd>
-          </div>
-        {/if}
-      </dl>
-      <p class="wt-meta">
-        {episodeDurationDetail(episode)}
-      </p>
-      <p class="wt-meta">
-        {episodeSpan(episode)}
-        · first to last activity, pauses included. It is not human working time.
-      </p>
-      {#if episode.resume.kind === 'cli-resume'}
-        <code class="wt-code">{episode.resume.command}</code>
-        {#if episode.resume.cwd}
-          <p class="wt-meta">Working directory: {episode.resume.cwd}</p>
-        {/if}
-        <p class="wt-meta">
-          Resume this session copies the verified command and context. Run the command in your terminal; nothing is
-          executed here.
-        </p>
-      {:else}
-        <p class="wt-meta">Resume unavailable: {episode.resume.reason}</p>
-      {/if}
-      <div class="wt-actions">
-        {#if resume}
-          <button
-            class="wt-button wt-primary"
-            onclick={() => onCopy(resume, 'Resume command and context copied — nothing was executed')}
-            type="button"
-          >
-            Resume this session
-          </button>
-        {/if}
-        <button
-          class="wt-button"
-          onclick={() => onCopy(episodeContext(episode, taskTitle), 'Session context copied')}
-          type="button"
-        >
-          Copy context
-        </button>
-        {#if linkedKeys.includes(episode.linkKey)}
-          <button class="wt-link" disabled={busy} onclick={() => onDetach(episode.linkKey)} type="button">
-            Detach session
-          </button>
-        {/if}
-      </div>
-    </div>
+    <WorkThreadEpisodeDetail
+      {busy}
+      {episode}
+      {linkedKeys}
+      {links}
+      {nested}
+      {onCopy}
+      {onDetach}
+      {taskTitle}
+      {timeZone}
+    />
   {/if}
   {#if episode.children.length}
     <button
@@ -193,6 +113,7 @@
             episode={child}
             {linkedKeys}
             {links}
+            nested
             {onCopy}
             {onDetach}
             {showDelegations}

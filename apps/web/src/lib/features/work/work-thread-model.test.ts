@@ -46,9 +46,11 @@ import {
   threadPageCursors,
   threadPullRequestTracks,
   threadRefs,
+  threadSideUrl,
   threadSituationCopy,
   threadSourceAvailability,
   threadTimeline,
+  threadTimeRange,
   threadUrl,
 } from './work-thread-model';
 
@@ -109,6 +111,32 @@ describe('task presentation model', () => {
     expect(threadRefs({ ...review.row, sessionCount: 2, delegatedSessionCount: 0 })).toBe(
       'PR #1492 · 2 linked sessions',
     );
+  });
+  test('the side pane keeps the list filters, and the full page and the list drop the pane', () => {
+    const url = new URL('http://localhost/work?tab=done&q=1487&history=journal');
+    const side = new URL(threadSideUrl(url, WORK_THREADS_FIXTURE_IDS.payments, '2026-10-24'), url);
+    expect(side.searchParams.get('task')).toBe(WORK_THREADS_FIXTURE_IDS.payments);
+    expect(side.searchParams.get('detail')).toBe('side');
+    expect(side.searchParams.get('day')).toBe('2026-10-24');
+    expect(side.searchParams.get('q')).toBe('1487');
+    const next = new URL(threadSideUrl(side, WORK_THREADS_FIXTURE_IDS.review), side);
+    expect(next.searchParams.get('detail')).toBe('side');
+    expect(next.searchParams.get('day')).toBeNull();
+    const full = new URL(threadUrl(side, WORK_THREADS_FIXTURE_IDS.payments), side);
+    expect(full.searchParams.get('task')).toBe(WORK_THREADS_FIXTURE_IDS.payments);
+    expect(full.searchParams.has('detail')).toBe(false);
+    expect(full.searchParams.get('history')).toBe('journal');
+    const back = new URL(threadUrl(side, null), side);
+    expect(back.searchParams.has('task')).toBe(false);
+    expect(back.searchParams.has('detail')).toBe(false);
+    expect(back.searchParams.get('tab')).toBe('done');
+  });
+  test('a time range accepts instants or dates and names the days it crosses', () => {
+    expect(threadTimeRange('2026-11-08T08:24:00.000Z', '2026-11-08T22:53:00.000Z', 'Europe/Paris')).toBe('09:24–23:53');
+    expect(
+      threadTimeRange(new Date('2026-11-08T19:44:00.000Z'), new Date('2026-11-09T08:05:00.000Z'), 'Europe/Paris'),
+    ).toBe('20:44–09:05 +1d');
+    expect(threadTimeRange('2026-11-08T08:24:00.000Z', null, 'Europe/Paris')).toBe('09:24');
   });
   test('filters and scroll survive task links and the return URL', () => {
     const url = new URL('http://localhost/work?tab=done&project=Example+shop&q=1487&cursor=next&scroll=550');

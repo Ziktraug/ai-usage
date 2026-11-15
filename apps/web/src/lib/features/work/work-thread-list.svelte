@@ -49,6 +49,8 @@
     onFilter,
     onMore,
     onCommand,
+    selectedId = null,
+    onSelect,
     loadingMore = false,
     moreUnavailable = false,
     continuation = false,
@@ -62,6 +64,9 @@
     onFilter: (patch: Partial<WorkThreadListQuery>) => Promise<void>;
     onMore: () => void;
     onCommand: (command: WorkThreadCommand) => Promise<WorkThreadCommandResult | WorkIntakeCommandResult>;
+    /** The task shown in the pane beside the list, when one is. */
+    selectedId?: string | null;
+    onSelect?: (id: string) => void;
     loadingMore?: boolean;
     moreUnavailable?: boolean;
     continuation?: boolean;
@@ -149,6 +154,29 @@
       document.getElementById(`wt-mark-${selectedMarks.threadId}-${selectedMarks.day}`)?.focus();
     }
     selectedMarks = null;
+  };
+  // Up and Down move between tasks in the order shown; with the pane open, the selection follows.
+  const keyTask = (event: KeyboardEvent): void => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+    const current =
+      event.currentTarget instanceof Element ? event.currentTarget.closest<HTMLElement>('[data-work-thread]') : null;
+    if (current === null) {
+      return;
+    }
+    const tasks = [...(board?.querySelectorAll<HTMLElement>('[data-work-thread]') ?? [])];
+    const next = tasks[tasks.indexOf(current) + (event.key === 'ArrowDown' ? 1 : -1)];
+    const target = next?.querySelector<HTMLElement>('.wt-task-title');
+    const id = next?.dataset.workThread;
+    if (!(target && id)) {
+      return;
+    }
+    event.preventDefault();
+    target.focus();
+    if (selectedId !== null) {
+      onSelect?.(id);
+    }
   };
   // The selected tab keeps focus across the navigation that loads its list (APG tabs pattern).
   const keyTabs = async (event: KeyboardEvent): Promise<void> => {
@@ -274,6 +302,7 @@
           {@const buckets = bucketThreadMarks(row.marks, timeZone)}
           {@const lane = threadPullRequestTracks(row.marks, timeZone)}
           <article
+            aria-current={selectedId === row.thread.threadId ? 'true' : undefined}
             class="wt-task-row"
             data-work-thread={row.thread.threadId}
             class:wt-waiting={row.thread.followState === 'waiting'}
@@ -290,6 +319,7 @@
                 class="wt-task-title"
                 href={href(row.thread.threadId)}
                 onclick={(event) => onOpen(event, row.thread.threadId)}
+                onkeydown={keyTask}
                 title={row.thread.title}
               >
                 <strong>{row.thread.title}</strong>
@@ -410,6 +440,7 @@
               class="wt-next"
               href={href(row.thread.threadId)}
               onclick={(event) => onOpen(event, row.thread.threadId)}
+              onkeydown={keyTask}
             >
               <span class="wt-hint" data-hint={situation.hint}
                 ><span aria-hidden="true">●</span>

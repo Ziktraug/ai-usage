@@ -1,0 +1,391 @@
+/* The session cascade of a task: a label column and an hour lane per row (work-session-cascade.svelte). */
+.wc {
+  --wc-label: clamp(260px, 42%, 440px);
+  --wc-row: 28px;
+  --wc-bar: color-mix(in srgb, var(--wt-muted) 55%, var(--wt-paper));
+  display: grid;
+  gap: 4px;
+
+  container: wc / inline-size;
+}
+.wc-stretch {
+  min-width: 0;
+}
+.wc-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: baseline;
+  padding-bottom: 6px;
+}
+.wc-head .wt-day-label {
+  padding: 14px 0 0;
+  color: var(--wt-ink);
+}
+.wc-head .wt-meta {
+  margin: 0;
+}
+.wc-body {
+  position: relative;
+  min-width: 0;
+}
+
+/* Axis: hour labels over the lane column, milestone flags on the same scale. */
+.wc-axis {
+  display: grid;
+  grid-template-columns: var(--wc-label) minmax(0, 1fr);
+  align-items: end;
+  height: 38px;
+  font-size: 10px;
+  color: var(--wt-muted);
+  border-bottom: 1px solid var(--wt-line);
+}
+.wc-axis-label {
+  padding: 0 0 5px 4px;
+}
+.wc-scale {
+  position: relative;
+  height: 100%;
+}
+.wc-tick {
+  position: absolute;
+  bottom: 5px;
+  padding-left: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The day sits above its first hour, so a midnight tick is no wider than the others. */
+.wc-tick-day {
+  position: absolute;
+  bottom: 100%;
+  left: 4px;
+  color: var(--wt-ink);
+}
+.wc-flag {
+  position: absolute;
+  top: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--wt-ink);
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line-strong);
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+.wc-flag[data-milestone="pull-request-merged"] {
+  color: var(--wt-contrast);
+  background: var(--wt-accent);
+  border-color: var(--wt-accent);
+}
+.wc-flag[data-milestone="pull-request-approved"] {
+  color: var(--wt-ok);
+  border-color: var(--wt-ok);
+}
+.wc-flag[data-milestone="pull-request-changes-requested"] {
+  color: var(--wt-danger);
+  border-color: var(--wt-danger);
+}
+
+/* Hour lines and milestone cuts run behind every row of the stretch. */
+.wc-grid {
+  position: absolute;
+  inset: 16px 0 0 var(--wc-label);
+  pointer-events: none;
+}
+.wc-gridline,
+.wc-cut {
+  position: absolute;
+  top: 18px;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid color-mix(in srgb, var(--wt-line) 60%, transparent);
+}
+.wc-cut {
+  top: 0;
+  z-index: 1;
+  border-left: 1px dashed var(--wt-line-strong);
+}
+.wc-cut[data-milestone="pull-request-merged"] {
+  border-left: 1px solid var(--wt-accent);
+}
+.wc-cut[data-milestone="pull-request-changes-requested"] {
+  border-left-color: var(--wt-danger);
+}
+
+.wc-tree {
+  position: relative;
+}
+.wc-item {
+  outline: none;
+  border-radius: 4px;
+}
+.wc-row {
+  display: grid;
+  grid-template-columns: var(--wc-label) minmax(0, 1fr);
+  align-items: center;
+  min-height: var(--wc-row);
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, var(--wt-line) 45%, transparent);
+}
+.wc-row:hover {
+  background: color-mix(in srgb, var(--wt-soft) 55%, transparent);
+}
+.wc-row.wc-shown {
+  background: var(--wt-tint);
+}
+/* The row carries the focus ring: the item also wraps its open panel and its children. */
+.wt-surface .wc .wc-item:focus-visible {
+  outline: none;
+}
+.wc-item:focus-visible > .wc-row {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+.wc-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 10px 2px calc(2px + var(--wc-depth, 0) * 16px);
+}
+.wc-twist {
+  flex: none;
+  width: 14px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--wt-muted);
+  text-align: center;
+}
+.wc-label .wt-glyph {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  line-height: 1;
+}
+.wc-count {
+  font-variant-numeric: tabular-nums;
+}
+.wc-title {
+  display: flex;
+  flex: 1;
+  gap: 7px;
+  align-items: baseline;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wc-title-text {
+  flex: 0 1 auto;
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.wc-id {
+  flex: none;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: var(--wt-muted);
+}
+.wc-id-alone {
+  font-size: 11px;
+  color: var(--wt-ink);
+}
+.wc-fold {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: var(--wt-muted);
+}
+.wc-times,
+.wc-span {
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-muted);
+  white-space: nowrap;
+}
+.wc-span {
+  min-width: 46px;
+  color: var(--wt-ink);
+  text-align: right;
+}
+
+/* Two marks per row: round for the session itself, a diamond for the sessions under it. */
+.wc-marks {
+  display: inline-flex;
+  flex: none;
+  gap: 3px;
+  align-items: center;
+}
+.wc-mark,
+.wc-mark-gap {
+  display: inline-block;
+  flex: none;
+  width: 9px;
+  height: 9px;
+}
+.wc-mark {
+  background: var(--wt-line-strong);
+  border: 1.5px solid var(--wt-line-strong);
+  border-radius: 50%;
+}
+.wc-mark-below {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+.wc-mark[data-mark="quiet"] {
+  background: transparent;
+}
+.wc-mark[data-mark="open-ended"] {
+  background: transparent;
+  border-style: dashed;
+}
+.wc-mark[data-mark="running"] {
+  background: var(--wt-paper);
+  border-color: var(--wt-accent);
+  box-shadow:
+    inset 0 0 0 1.5px var(--wt-paper),
+    inset 0 0 0 5px var(--wt-accent);
+}
+.wc-mark[data-mark="unclear"] {
+  background: var(--wt-warn-soft);
+  border-color: var(--wt-warn);
+  border-style: dashed;
+}
+.wc-mark[data-mark="asks"] {
+  background: var(--wt-warn);
+  border-color: var(--wt-warn);
+}
+
+/* Lane: the bar spans first to last observed activity. */
+.wc-lane {
+  position: relative;
+  min-width: 0;
+  height: var(--wc-row);
+}
+.wc-bar,
+.wc-strip {
+  position: absolute;
+  min-width: 3px;
+  background: var(--wc-bar);
+  border-radius: 2px;
+}
+.wc-bar {
+  top: 8px;
+  height: 12px;
+}
+.wt-surface .wc-lane [data-harness="claude"],
+.wt-surface .wc-lane [data-harness="claude-code"] {
+  background: color-mix(in srgb, var(--wt-claude) 62%, var(--wt-paper));
+}
+.wt-surface .wc-lane [data-harness="codex"] {
+  background: color-mix(in srgb, var(--wt-codex) 62%, var(--wt-paper));
+}
+.wt-surface .wc-lane [data-mark="asks"] {
+  outline: 2px solid var(--wt-warn);
+  outline-offset: 1px;
+}
+/* No observed end: a start tick and a short dashed tail, never a made-up length. */
+.wt-surface .wc-lane [data-mark="open-ended"] {
+  width: 14px !important;
+  min-width: 14px;
+  background: transparent;
+  border-top: 2px dashed var(--wt-line-strong);
+  border-left: 3px solid var(--wt-line-strong);
+  border-radius: 0;
+}
+.wt-surface .wc-lane [data-mark="running"] {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 4px,
+    color-mix(in srgb, var(--wt-paper) 45%, transparent) 4px 8px
+  );
+  border-right: 3px solid var(--wt-accent);
+}
+/* A folded group draws its sessions as thin stacked strips: overlap reads as parallel work. */
+.wc-strip {
+  --wc-strip-height: calc((var(--wc-row) - 8px) / var(--wc-strips, 1) - 1px);
+
+  top: calc(4px + var(--wc-strip, 0) * (var(--wc-strip-height) + 1px));
+  height: var(--wc-strip-height);
+  opacity: 0.85;
+}
+.wc-ghosts .wc-strip {
+  top: 22px;
+  height: 3px;
+  opacity: 0.6;
+}
+.wc-burst .wc-title-text {
+  font-weight: 450;
+}
+
+.wc-group {
+  position: relative;
+}
+.wc-detail {
+  position: relative;
+  z-index: 3;
+  padding: 0 0 10px calc(22px + var(--wc-depth, 0) * 16px);
+  cursor: auto;
+  background: var(--wt-paper);
+}
+.wc-events,
+.wc-interlude {
+  padding-top: 6px;
+}
+.wc-interlude .wt-entry-time {
+  white-space: normal;
+}
+.wc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 16px;
+  padding: 14px 0 4px;
+  font-size: 10px;
+  color: var(--wt-muted);
+}
+.wc-legend > span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+/* Narrow containers (the side inspector, phones): the time range lives in the row's name and panel. */
+@container wc (max-width: 720px) {
+  .wc-times {
+    display: none;
+  }
+  .wc-fold {
+    display: none;
+  }
+}
+@container wc (max-width: 720px) {
+  .wc-tick:nth-child(even) {
+    visibility: hidden;
+  }
+  .wc-tick:nth-child(even) .wc-tick-day {
+    visibility: visible;
+  }
+}
+@container wc (max-width: 520px) {
+  .wc {
+    --wc-label: 56%;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wc-row {
+    transition: background-color 120ms ease;
+  }
+}
