@@ -42,6 +42,7 @@
     threadUrl,
   } from './work-thread-model';
   import { threadListShell, threadSurface } from './work-thread-styles';
+  import WorkTimelineView from './work-timeline-view.svelte';
   import './work-threads.css';
 
   let { data }: { data: ThreadPageData } = $props();
@@ -72,7 +73,10 @@
   });
   const currentUrl = $derived(new URL(page.url.href));
   const taskId = $derived(currentUrl.searchParams.get('task'));
-  const view = $derived(currentUrl.searchParams.get('view'));
+  const view = $derived.by((): 'disk' | 'lanes' | 'timeline' => {
+    const value = currentUrl.searchParams.get('view');
+    return value === 'timeline' || value === 'disk' ? value : 'lanes';
+  });
   const query = $derived(threadListQuery(currentUrl.searchParams));
   const cursors = $derived(threadPageCursors(currentUrl.searchParams));
   const listQueries = createQueries(() => ({
@@ -138,6 +142,22 @@
     lanes.searchParams.delete('view');
     return `${lanes.pathname}${lanes.search}`;
   });
+  const viewHref = (target: 'lanes' | 'timeline'): string => {
+    const url = new URL(currentUrl);
+    if (target === 'timeline') {
+      url.searchParams.set('view', target);
+    } else {
+      url.searchParams.delete('view');
+    }
+    return `${url.pathname}${url.search}`;
+  };
+  const openView = async (event: MouseEvent, target: 'lanes' | 'timeline'): Promise<void> => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    await navigate(viewHref(target));
+  };
   const updateFilter = (patch: Partial<ReturnType<typeof threadListQuery>>): Promise<void> => {
     const url = new URL(currentUrl);
     url.searchParams.delete('cursor');
@@ -185,16 +205,32 @@
     await tick();
     restoreList();
   };
+  // The timeline draws its rows after its own read: a restoration that finds no row yet is run
+  // again when the view reports its first render.
+  let pendingRestore = false;
   const restoreList = (): void => {
     const scroll = Number(currentUrl.searchParams.get('scroll') ?? 0);
     const focus = currentUrl.searchParams.get('focus');
     if (focus && isWorkThreadId(focus)) {
-      document
-        .querySelector<HTMLElement>(`[data-work-thread="${focus}"] .wt-task-title`)
-        ?.focus({ preventScroll: true });
+      const title = document.querySelector<HTMLElement>(`[data-work-thread="${focus}"] .wt-task-title`);
+      title?.focus({ preventScroll: true });
+      pendingRestore = view === 'timeline' && title === null;
     }
     window.scrollTo(0, Number.isFinite(scroll) ? Math.max(0, scroll) : 0);
   };
+  const restoreTimeline = (): void => {
+    if (pendingRestore) {
+      restoreList();
+      // Cleared after the second attempt, which must not arm a third.
+      pendingRestore = false;
+    }
+  };
+  $effect(() => {
+    // Leaving the timeline abandons a restoration it never got to run.
+    if (view !== 'timeline') {
+      pendingRestore = false;
+    }
+  });
   let previousTask = untrack(() => taskId);
   $effect(() => {
     const current = taskId;
@@ -327,7 +363,21 @@
           <a class="wt-link" href="/work/sessions#work-delegations-heading">Delegation results&nbsp;↗</a>
         </div>
       </header>
-      {#if listError}
+      <nav aria-label="Work views" class="wtl-views">
+        <a
+          aria-current={view === 'lanes' ? 'page' : undefined}
+          href={viewHref('lanes')}
+          onclick={(event) => openView(event, 'lanes')}
+          >Lanes</a
+        >
+        <a
+          aria-current={view === 'timeline' ? 'page' : undefined}
+          href={viewHref('timeline')}
+          onclick={(event) => openView(event, 'timeline')}
+          >Timeline</a
+        >
+      </nav>
+      {#if listError && view === 'lanes'}
         <div class="wt-alert" role="alert">
           <strong>Tasks unavailable</strong>
           <p>{listError} This does not establish that there are no tasks.</p>
@@ -344,7 +394,19 @@
           </button>
         </div>
       {/if}
-      {#if dataset}
+      {#if view === 'timeline'}
+        <WorkTimelineView
+          client={clients.threads}
+          {href}
+          {navigate}
+          onFilter={updateFilter}
+          onOpen={open}
+          onReady={restoreTimeline}
+          {query}
+          {timeZone}
+          url={currentUrl}
+        />
+      {:else if dataset}
         <WorkThreadList
           continuation={cursors.length >= THREAD_PAGE_WINDOW}
           {dataset}
