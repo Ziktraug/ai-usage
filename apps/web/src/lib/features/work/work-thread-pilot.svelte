@@ -58,6 +58,8 @@
     band,
     onBand,
     focusId,
+    selectedId = null,
+    onSelect,
     loadingMore = false,
     moreUnavailable = false,
     continuation = false,
@@ -75,6 +77,9 @@
     onBand: (band: ThreadBand | null) => void;
     /** The task the operator returns from, whose row takes focus back; `null` when there is none. */
     focusId: string | null;
+    /** The task shown in the pane beside the list, when one is. */
+    selectedId?: string | null;
+    onSelect?: (id: string) => void;
     loadingMore?: boolean;
     moreUnavailable?: boolean;
     continuation?: boolean;
@@ -120,15 +125,42 @@
       : `first ${rows.length} of ${dataset.counts.open} tasks counted`,
   );
 
-  // A filter on the dormant band, a search or the return from a dormant task (its row takes focus
-  // back, so it has to be rendered) opens the fold; a toggle holds for the view it was made in.
+  // A filter on the dormant band, a search, the return from a dormant task (its row takes focus
+  // back, so it has to be rendered) or a dormant task shown in the pane opens the fold; a toggle holds for the view it was made in.
   const dormantWanted = $derived(
-    band === 'dormant' || Boolean(query.search) || (focusId !== null && placed.get(focusId)?.band === 'dormant'),
+    band === 'dormant' ||
+      Boolean(query.search) ||
+      (focusId !== null && placed.get(focusId)?.band === 'dormant') ||
+      (selectedId !== null && placed.get(selectedId)?.band === 'dormant'),
   );
   let dormantToggle = $state<{ wanted: boolean; open: boolean } | null>(null);
   const dormantOpen = $derived(
     dormantToggle !== null && dormantToggle.wanted === dormantWanted ? dormantToggle.open : dormantWanted,
   );
+  let board = $state<HTMLDivElement>();
+  // Up and Down move between the rows shown; with the pane open, the selection follows.
+  const keyTask = (event: KeyboardEvent): void => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
+    const current =
+      event.currentTarget instanceof Element ? event.currentTarget.closest<HTMLElement>('[data-work-thread]') : null;
+    if (current === null) {
+      return;
+    }
+    const tasks = [...(board?.querySelectorAll<HTMLElement>('[data-work-thread]') ?? [])];
+    const next = tasks[tasks.indexOf(current) + (event.key === 'ArrowDown' ? 1 : -1)];
+    const target = next?.querySelector<HTMLElement>('.wt-row-title');
+    const id = next?.dataset.workThread;
+    if (!(target && id)) {
+      return;
+    }
+    event.preventDefault();
+    target.focus();
+    if (selectedId !== null) {
+      onSelect?.(id);
+    }
+  };
 </script>
 
 <div class="wt-pilot-bar">
@@ -235,15 +267,17 @@
       band={place.band}
       href={href(row.thread.threadId)}
       now={dataset.generatedAt}
+      onKey={keyTask}
       onOpen={(event) => onOpen(event, row.thread.threadId)}
       {row}
+      selected={selectedId === row.thread.threadId}
       situation={place.situation}
       {timeZone}
     />
   {/each}
 {/snippet}
 
-<div class="wt-pilot-board">
+<div class="wt-pilot-board" bind:this={board}>
   {#if visible.length > 0}
     <div aria-hidden="true" class="wt-pilot-cols wt-pilot-colhead">
       <span>Project</span>

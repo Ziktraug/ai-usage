@@ -59,6 +59,18 @@
     inset 3px 0 0 var(--wt-accent),
     1px 0 0 var(--wt-line);
 }
+/* The Pilot's compact row shown in the pane. */
+.wt-row[aria-current="true"],
+.wt-row[aria-current="true"]:hover {
+  background: var(--wt-tint);
+  box-shadow: inset 3px 0 0 var(--wt-accent);
+}
+@media (forced-colors: active) {
+  .wt-surface .wt-row[aria-current="true"] .wt-row-title {
+    font-weight: 700;
+    text-decoration: underline;
+  }
+}
 /* Too narrow for two columns: the pane lies over the list instead of squeezing it. */
 @media (max-width: 1180px) {
   .wt-split {

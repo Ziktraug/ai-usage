@@ -27,6 +27,8 @@
     timeZone,
     href,
     onOpen,
+    onKey,
+    selected = false,
   }: {
     row: WorkThreadRow;
     situation: ReturnType<typeof threadSituationCopy>;
@@ -35,6 +37,9 @@
     timeZone: string;
     href: string;
     onOpen: (event: MouseEvent) => void;
+    onKey?: (event: KeyboardEvent) => void;
+    /** The task shown in the pane beside the list. */
+    selected?: boolean;
   } = $props();
 
   const since = $derived(threadWaitSince(row, situation));
@@ -81,7 +86,12 @@
   });
 </script>
 
-<li class="wt-pilot-cols wt-row" data-band={band} data-work-thread={row.thread.threadId}>
+<li
+  aria-current={selected ? 'true' : undefined}
+  class="wt-pilot-cols wt-row"
+  data-band={band}
+  data-work-thread={row.thread.threadId}
+>
   <span
     class="wt-project-tag"
     title={row.thread.projectLabel ?? undefined}
@@ -91,7 +101,12 @@
   <div class="wt-row-task">
     <!-- The row's single interactive element; its ::after stretches the click target over the row,
          so its tooltip is the one the pointer meets: it carries the full next step under the title. -->
-    <a class="wt-row-title" {href} onclick={onOpen} title={`${row.thread.title}\nNext: ${situation.headline}`}
+    <a
+      class="wt-row-title"
+      {href}
+      onclick={onOpen}
+      onkeydown={onKey}
+      title={`${row.thread.title}\nNext: ${situation.headline}`}
       >{row.thread.title}</a
     >
     <p class="wt-row-meta">{threadRowMeta(row)}</p>

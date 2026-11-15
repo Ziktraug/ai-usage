@@ -424,6 +424,31 @@ describe('the Pilot header states', () => {
   });
 });
 
+describe('the task shown in the side pane', () => {
+  test('no row is current without a selection', () => {
+    expect(html(Pilot, pilotProps())).not.toContain('aria-current');
+    expect(html(CompactRow, rowProps(payments))).not.toContain('aria-current');
+  });
+  test('the selected task marks its row, and only that one', () => {
+    const selected = html(Pilot, pilotProps({ selectedId: payments.thread.threadId }));
+    expect(selected.split('aria-current="true"').length - 1).toBe(1);
+    expect(selected).toContain(
+      `aria-current="true" class="wt-pilot-cols wt-row" data-band="yours" data-work-thread="${payments.thread.threadId}"`,
+    );
+  });
+  test('a selected dormant task unfolds its band, so the pane never shows a task the list hides', () => {
+    const [chosen] = dormantRows;
+    if (!chosen) {
+      throw new Error('Missing dormant fixture');
+    }
+    const body = html(Pilot, pilotProps({ selectedId: chosen.thread.threadId }));
+    const section = sections(body).find((item) => item.band === 'dormant');
+    expect(section?.rows).toBe(2);
+    expect(section?.content).not.toMatch(HIDDEN_LIST);
+    expect(body).toContain(`data-work-thread="${chosen.thread.threadId}"`);
+    expect(body.split('aria-current="true"').length - 1).toBe(1);
+  });
+});
 describe('a compact row', () => {
   const situation = situationOf(payments);
   const body = html(CompactRow, rowProps(payments));

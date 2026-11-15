@@ -558,8 +558,10 @@
           onFilter={updateFilter}
           onMore={loadMore}
           onOpen={open}
+          onSelect={select}
           {query}
           {rows}
+          selectedId={side ? taskId : null}
           {timeZone}
         />
       {:else if dataset}
