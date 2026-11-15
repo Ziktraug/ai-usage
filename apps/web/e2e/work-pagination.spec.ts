@@ -76,9 +76,18 @@ test('scrolling appends tasks once, preserves the viewport and restores the load
   await expect(page.getByRole('button', { name: 'Load more', exact: true })).toHaveCount(0);
   const link = tasks.last().locator('.wt-task-title');
   await link.scrollIntoViewIfNeeded();
-  const savedScroll = await page.evaluate(() => Math.round(window.scrollY));
+  // A plain click shows the task beside the list, which keeps its pages; the full page is one link away.
   await link.click();
+  await expect(tasks).toHaveCount(55);
+  const full = page
+    .getByRole('complementary', { name: 'Task detail', exact: true })
+    .getByRole('link', { name: 'Open full page', exact: true });
+  await full.click();
   await expect(page.getByRole('link', { name: '← My work', exact: true })).toBeVisible();
+  // The list beside the pane is narrower and settles at its own height, so the place to come back
+  // to is the one the page recorded as the operator left it.
+  const savedScroll = Number(new URL(page.url()).searchParams.get('scroll'));
+  expect(savedScroll).toBeGreaterThan(0);
   await page.goBack();
   await expect(tasks).toHaveCount(55);
   await expect(link).toBeFocused();

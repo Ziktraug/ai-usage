@@ -110,6 +110,15 @@ const hydrated = async (page: Page): Promise<void> => {
   await expect(page.locator('main[data-work-hydrated="true"]')).toBeVisible({ timeout: 15_000 });
 };
 const taskRow = (page: Page, threadId: string) => page.locator(`[data-work-thread="${threadId}"]`);
+/** A plain click shows the task beside the list; these journeys continue on its full page. */
+const openFullPageFromRow = async (page: Page, threadId: string, title: string): Promise<void> => {
+  await taskRow(page, threadId).getByRole('link', { name: title }).first().click();
+  await page
+    .getByRole('complementary', { name: 'Task detail', exact: true })
+    .getByRole('link', { name: 'Open full page', exact: true })
+    .click();
+  await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible();
+};
 const clickEnd = async (page: Page): Promise<void> =>
   page.getByRole('button', { name: 'End follow-up', exact: true }).first().click();
 const expectDone = async (page: Page): Promise<void> => {
@@ -376,8 +385,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
     await hydrated(page);
     await expect(taskRow(page, threadId)).toContainText('0 linked sessions');
     await expect(taskRow(page, threadId)).toContainText('PR #77');
-    await taskRow(page, threadId).getByRole('link', { name: DISCOVERED_TITLE }).first().click();
-    await expect(page.getByRole('heading', { name: DISCOVERED_TITLE, exact: true })).toBeVisible();
+    await openFullPageFromRow(page, threadId, DISCOVERED_TITLE);
     await page.locator('summary').filter({ hasText: 'GITHUB' }).click();
     await expect(page.getByRole('link', { name: 'Open PR #77 on GitHub ↗', exact: true })).toHaveAttribute(
       'href',
@@ -421,7 +429,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
     await expect(page.getByRole('tab', { name: DONE_TAB })).toHaveAttribute('aria-selected', 'true');
     await expect(taskRow(page, threadId)).toBeVisible();
     expect(await readDiscoveredRows(request, 'done')).toHaveLength(1);
-    await taskRow(page, threadId).getByRole('link', { name: DISCOVERED_TITLE }).first().click();
+    await openFullPageFromRow(page, threadId, DISCOVERED_TITLE);
     await page.getByRole('button', { name: 'Reopen', exact: true }).first().click();
     await expect(page.locator('[data-follow-state="following"]')).toBeVisible();
     const reopened = await readDetail(request, threadId);
@@ -459,7 +467,7 @@ test('production Work threads survive source refresh, follow-up transitions and 
     await expect(page.getByRole('tab', { name: DONE_TAB })).toHaveAttribute('aria-selected', 'true');
     await page.getByRole('searchbox', { name: 'Search tasks', exact: true }).fill(ANALYSIS_TITLE);
     await expect(taskRow(page, analysisId)).toBeVisible();
-    await taskRow(page, analysisId).getByRole('link', { name: ANALYSIS_TITLE }).first().click();
+    await openFullPageFromRow(page, analysisId, ANALYSIS_TITLE);
     await page.getByRole('button', { name: 'Reopen', exact: true }).first().click();
     await expect(page.locator('[data-follow-state="following"]')).toBeVisible();
     const reopened = await readDetail(request, analysisId);
@@ -655,10 +663,11 @@ test('production P1 continuity and native decisions survive collection, closure 
       'An analysis can be enough',
     );
     const episode = page.locator(`[data-session-key="${ROOT_SESSION_KEY}"]`);
-    const toggle = episode.locator('> .wt-session-button');
-    if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
-      await toggle.click();
+    // The cascade shows a session's detail once its row is chosen.
+    if ((await episode.getAttribute('aria-selected')) !== 'true') {
+      await episode.locator('> .wc-row').click();
     }
+    await expect(episode).toHaveAttribute('aria-selected', 'true');
     await expect(episode).toContainText(P1_QUESTION);
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual(
       [],

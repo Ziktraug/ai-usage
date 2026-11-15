@@ -70,6 +70,31 @@ const APP_LOCAL_CUSTOM_PROPERTIES: ReadonlySet<string> = new Set([
   '--wt-row-bg',
   '--wt-task-w',
   '--wt-week-offset',
+  // Work lane rows: the session and pull request track heights the list sets per task.
+  '--wt-rows',
+  '--wt-session-row',
+  '--wt-track-row',
+  // Work Pilot lens: the colour a band sets on the count of its counter.
+  '--wt-chip-count',
+  // Work session cascade: the label column, the row height, the bar colour, a row's depth and
+  // the strips a folded group stacks in its lane.
+  '--wc-bar',
+  '--wc-depth',
+  '--wc-label',
+  '--wc-row',
+  '--wc-strip',
+  '--wc-strip-height',
+  '--wc-strips',
+  // Work Timeline lens geometry: the day columns, the name column and its padding, and the rows a
+  // track stacks for sessions and pull requests.
+  '--wtl-cols',
+  '--wtl-name',
+  '--wtl-pad',
+  '--wtl-pr-row',
+  '--wtl-pr-rows',
+  '--wtl-row',
+  '--wtl-session-row',
+  '--wtl-session-rows',
 ]);
 
 const UPPERCASE_PATTERN = /[A-Z]/g;
