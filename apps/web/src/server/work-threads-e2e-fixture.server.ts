@@ -237,7 +237,9 @@ const localMarker = (branch: string, modifiedCount = 0): WorkThreadMarkers['loca
     upstream: `origin/${branch}`,
   };
   return {
+    checkoutPath: observation.checkoutPath,
     key: branchLinkKey({ host, ref: branch, repository }),
+    lastSessionActivityAt: at(23, '09:44'),
     latest: observation,
     latestSuccessful: observation,
     via: 'branch-link',
@@ -946,7 +948,10 @@ export const createSyntheticWorkThreadStore = (
         .map(
           ({ key }) =>
             localFacts.get(key) ?? {
+              // A branch linked during the run: no checkout is known to hold it.
+              checkoutPath: null,
               key,
+              lastSessionActivityAt: null,
               latest: null,
               latestSuccessful: null,
               via: 'branch-link',

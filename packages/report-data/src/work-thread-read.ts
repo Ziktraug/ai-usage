@@ -84,6 +84,13 @@ const parentKeyOf = (session: WorkThreadSessionEvidence['sessions'][number]): st
         sessionId: session.member.parentSourceSessionId,
       });
 
+/** A session's latest known activity; its start stands in when no later instant was recorded. */
+const sessionActivityAtOf = (session: WorkThreadSessionEvidence['sessions'][number]): CanonicalInstant | null =>
+  session.desktop?.lastActivityAt ??
+  (session.member.activeAt === null
+    ? normalizeIsoTimestamp(session.member.startedAt)
+    : normalizeIsoTimestamp(new Date(session.member.activeAt).toISOString()));
+
 const episodeOf = (
   session: WorkThreadSessionEvidence['sessions'][number],
   parent: WorkThreadSessionEvidence['sessions'][number] | undefined,
@@ -298,7 +305,7 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
     ...evidence.branchCheckouts.map((entry) => ({
       ...entry,
       dedicated: true,
-      sessions: [] as { key: string; branch: string | null }[],
+      sessions: [] as { key: string; branch: string | null; activeAt: CanonicalInstant | null }[],
       via: 'branch-link' as const,
     })),
     ...evidence.sessions.flatMap((session) => {
@@ -315,6 +322,7 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
                 {
                   key: keyOf(session),
                   branch: session.desktop === null ? session.member.branch : session.desktop.branch,
+                  activeAt: sessionActivityAtOf(session),
                 },
               ],
               via: 'session-checkout' as const,
@@ -332,7 +340,15 @@ const checkoutPathsOf = (evidence: WorkThreadSessionEvidence) => {
       unique.set(identity, { ...existing, sessions: [...existing.sessions, ...entry.sessions] });
     }
   }
-  return [...unique.values()];
+  // The merge above gathers every linked session that ran in a checkout, however it was reached.
+  return [...unique.values()].map((entry) => ({
+    ...entry,
+    lastSessionActivityAt: entry.sessions.reduce<CanonicalInstant | null>(
+      (latest, { activeAt }) =>
+        activeAt !== null && (latest === null || Date.parse(activeAt) > Date.parse(latest)) ? activeAt : latest,
+      null,
+    ),
+  }));
 };
 
 const branchRef = (branch: string | null | undefined): string | null => {
@@ -487,6 +503,11 @@ const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<R
         }
       }
       for (const checkout of checkoutPathsOf(evidence).slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread)) {
+        // An empty stored path names no checkout: there is no observation to ask for, and the fact
+        // store refuses the whole batch for one empty key.
+        if (checkout.checkoutPath.length === 0) {
+          continue;
+        }
         checkouts.set(identityOf(checkout.machineId, checkout.checkoutPath), {
           machineId: checkout.machineId,
           checkoutPath: checkout.checkoutPath,
@@ -766,8 +787,14 @@ const readRow = (
     .slice(0, WORK_THREAD_BOUNDS.maxLinksPerThread)
     .flatMap<WorkThreadMarkers['local'][number]>((checkout) => {
       const observation = factsRead.checkouts.get(identityOf(checkout.machineId, checkout.checkoutPath));
+      const marker = (linkKey: string): WorkThreadMarkers['local'][number] => ({
+        ...factOf(linkKey, observation),
+        checkoutPath: checkout.checkoutPath.length === 0 ? null : checkout.checkoutPath,
+        lastSessionActivityAt: checkout.lastSessionActivityAt,
+        via: checkout.via,
+      });
       if (checkout.via === 'branch-link') {
-        return [{ ...factOf(checkout.key, observation), via: checkout.via }];
+        return [marker(checkout.key)];
       }
       const successful = observation?.latest.outcome === 'observed' ? observation.latest : observation?.latestObserved;
       const branch = branchRef(successful?.branch);
@@ -778,7 +805,7 @@ const readRow = (
             (session) => pullRequests.length === 0 || headRefs.has(branchRef(session.branch) ?? ''),
           )
         ) {
-          return [{ ...factOf(checkout.key, observation), via: checkout.via }];
+          return [marker(checkout.key)];
         }
         return [];
       }
@@ -789,7 +816,7 @@ const readRow = (
         pullRequests.length > 0
           ? checkout.key
           : (checkout.sessions.find((session) => branchRef(session.branch) === branch)?.key ?? null);
-      return key === null ? [] : [{ ...factOf(key, observation), via: checkout.via }];
+      return key === null ? [] : [marker(key)];
     });
   const sessions = [...new Map(evidence.sessions.map((session) => [keyOf(session), session])).values()];
   const linkedSessionKeys = new Set(sessionLinks.filter((link) => link.kind === 'session').map((link) => link.key));
@@ -837,11 +864,7 @@ const readRow = (
     }
   }
   const sessionDates = sessions.flatMap((session) => {
-    const activeAt =
-      session.desktop?.lastActivityAt ??
-      (session.member.activeAt === null
-        ? normalizeIsoTimestamp(session.member.startedAt)
-        : normalizeIsoTimestamp(new Date(session.member.activeAt).toISOString()));
+    const activeAt = sessionActivityAtOf(session);
     return activeAt === null ? [] : [activeAt];
   });
   const dates = [

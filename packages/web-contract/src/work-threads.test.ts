@@ -212,6 +212,51 @@ describe('Work thread wire contract', () => {
       }).success,
     ).toBe(false);
   });
+  test('a local marker carries its checkout path and last session activity, both required', () => {
+    const marker = {
+      checkoutPath: '/fixture/project',
+      key: 'session:test/codex/one',
+      lastSessionActivityAt: at,
+      latest: null,
+      latestSuccessful: null,
+      via: 'session-checkout',
+    };
+    const listOf = (local: unknown) => ({
+      ok: true,
+      data: {
+        counts: { done: 0, open: 1 },
+        generatedAt: at,
+        combineSuggestions: { items: [], truncated: false },
+        jiraIntake: { items: [], truncated: false },
+        machineId: 'test',
+        nextCursor: null,
+        projects: [],
+        rows: [{ ...row, markers: { ...row.markers, local: [local] } }],
+        sources: [],
+      },
+    });
+    expect(parse(workThreadsListOutputSchema, listOf(marker))).toMatchObject({
+      data: { rows: [{ markers: { local: [{ checkoutPath: '/fixture/project', lastSessionActivityAt: at }] } }] },
+    });
+    // A branch nobody holds has no path, and a checkout no linked session ran in has no activity.
+    expect(
+      safeParse(workThreadsListOutputSchema, listOf({ ...marker, checkoutPath: null, lastSessionActivityAt: null }))
+        .success,
+    ).toBe(true);
+    const { checkoutPath: _path, ...withoutPath } = marker;
+    const { lastSessionActivityAt: _activity, ...withoutActivity } = marker;
+    for (const invalid of [
+      withoutPath,
+      withoutActivity,
+      { ...marker, checkoutPath: '' },
+      { ...marker, checkoutPath: 'x'.repeat(4097) },
+      { ...marker, lastSessionActivityAt: '2026-10-24T10:00:00Z' },
+      { ...marker, lastSessionActivityAt: '2026-10-24 10:00:00' },
+      { ...marker, lastSessionActivityAt: Date.parse(at) },
+    ]) {
+      expect(safeParse(workThreadsListOutputSchema, listOf(invalid)).success).toBe(false);
+    }
+  });
   test('nested delegation preserves descendants and rejects invalid or excessive nesting', () => {
     expect(
       parse(workThreadEpisodeSchema, { ...episode, children: [{ ...episode, children: [episode] }] }),

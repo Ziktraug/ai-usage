@@ -427,7 +427,7 @@ export const threadDisplayMarkers = (row: WorkThreadRow): WorkThreadMarkers => {
   for (const link of row.links.filter((item) => item.detachedAt === null)) {
     const unknown = { key: link.key, latest: null, latestSuccessful: null };
     if (link.kind === 'branch' && !local.some((marker) => marker.key === link.key)) {
-      local.push({ ...unknown, via: 'branch-link' });
+      local.push({ ...unknown, checkoutPath: null, lastSessionActivityAt: null, via: 'branch-link' });
     }
     if (link.kind === 'pull-request' && !pullRequests.some((marker) => marker.key === link.key)) {
       pullRequests.push({ ...unknown, mergeable: null, mergeStateStatus: null, role: null });

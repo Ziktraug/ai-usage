@@ -64,6 +64,8 @@ const pr = (patch: Partial<PullRequestObservation> = {}): PullRequestObservation
   url: 'https://github.com/test/repo/pull/42',
   ...patch,
 });
+/** Local-marker fields the situation never reads. */
+const localRead = { checkoutPath: '/synthetic', lastSessionActivityAt: null } as const;
 const local = (patch: Partial<CheckoutStatusObservation> = {}): CheckoutStatusObservation => ({
   ahead: 0,
   behind: 0,
@@ -326,7 +328,7 @@ describe('Work thread situation', () => {
     const value = row({
       runningSessions: 2,
       markers: {
-        local: [{ key: 'checkout', latest: fact, latestSuccessful: fact, via: 'session-checkout' }],
+        local: [{ ...localRead, key: 'checkout', latest: fact, latestSuccessful: fact, via: 'session-checkout' }],
         jiraIssues: [],
         pullRequests: [],
       },
@@ -480,7 +482,7 @@ describe('Work thread situation', () => {
     const issue = jira({ statusCategory: 'in-progress', observedAt: older });
     const value = row({
       markers: {
-        local: [{ key: 'checkout', latest: null, latestSuccessful: null, via: 'session-checkout' }],
+        local: [{ ...localRead, key: 'checkout', latest: null, latestSuccessful: null, via: 'session-checkout' }],
         jiraIssues: [{ key: 'jira:default/TEST-1', latest: issue, latestSuccessful: issue }],
         pullRequests: [],
       },
@@ -573,7 +575,7 @@ describe('Work thread situation', () => {
       kinds(
         row({
           markers: {
-            local: [{ key: 'checkout', latest: fact, latestSuccessful: fact, via: 'branch-link' }],
+            local: [{ ...localRead, key: 'checkout', latest: fact, latestSuccessful: fact, via: 'branch-link' }],
             jiraIssues: [{ key: 'jira', latest: issue, latestSuccessful: issue }],
             pullRequests: [],
           },
@@ -644,7 +646,13 @@ test('a missing checkout keeps its unavailable evidence without treating histori
       jiraIssues: [],
       pullRequests: [],
       local: [
-        { key: 'checkout', via: 'session-checkout', latest: local({ outcome: 'missing' }), latestSuccessful: previous },
+        {
+          ...localRead,
+          key: 'checkout',
+          via: 'session-checkout',
+          latest: local({ outcome: 'missing' }),
+          latestSuccessful: previous,
+        },
       ],
     },
   });

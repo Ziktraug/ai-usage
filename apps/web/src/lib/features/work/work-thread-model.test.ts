@@ -1023,7 +1023,16 @@ describe('source availability belongs to the current task', () => {
     const row = {
       ...unrelated.row,
       markers: {
-        local: [{ key: 'session-checkout', via: 'session-checkout' as const, latest: null, latestSuccessful: null }],
+        local: [
+          {
+            checkoutPath: '/synthetic/session-checkout',
+            key: 'session-checkout',
+            lastSessionActivityAt: null,
+            via: 'session-checkout' as const,
+            latest: null,
+            latestSuccessful: null,
+          },
+        ],
         pullRequests: [{ ...prMarker, latest: null, latestSuccessful: null }],
         jiraIssues: [{ ...jiraMarker, latest: null, latestSuccessful: null }],
       },
