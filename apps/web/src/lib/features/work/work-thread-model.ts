@@ -770,15 +770,30 @@ const sessionSourceRemainder = (
     : null;
 };
 
-const settledPullRequestsCopy = (row: WorkThreadRow, state: 'MERGED' | 'CLOSED'): string => {
+/** The pull requests last known in one end state, in words; nothing when there is none. */
+const settledPullRequestsCopy = (row: WorkThreadRow, state: 'MERGED' | 'CLOSED'): string | null => {
   const numbers = row.markers.pullRequests.flatMap((marker) => {
     const fact = lastKnownFact(marker);
     return fact?.state === state ? [fact.number] : [];
   });
   const verb = state === 'MERGED' ? 'merged' : 'closed without merge';
   const [only] = numbers;
-  return numbers.length === 1 && only !== undefined ? `PR #${only} ${verb}` : `${numbers.length} PRs ${verb}`;
+  if (only === undefined) {
+    return null;
+  }
+  return numbers.length === 1 ? `PR #${only} ${verb}` : `${numbers.length} PRs ${verb}`;
 };
+
+/**
+ * The pull requests whose GitHub read is not current (never read, failed or aged). What was last
+ * known of them is not a fact to act on: a merge is terminal, everything else may have changed.
+ */
+const unreadPullRequestKeys = (remainders: readonly WorkThreadRemainder[]): ReadonlySet<string> =>
+  new Set(
+    remainders.flatMap((remainder) =>
+      remainder.source === 'github' && isUnreadRemainder(remainder) ? [remainder.key] : [],
+    ),
+  );
 
 const hasUnreadSource = (remainders: readonly WorkThreadRemainder[], source: WorkThreadRemainder['source']): boolean =>
   remainders.some((remainder) => isUnreadRemainder(remainder) && remainder.source === source);
@@ -815,8 +830,12 @@ const settledSituationWords = (
   remainders: readonly WorkThreadRemainder[],
 ): { readonly headline: string; readonly caption: string } => {
   const disk = settledDiskCopy(row, remainders);
+  // A merge may sit beside attempts closed without merge: the end rests on both, so both are named.
+  const pullRequests = (reason === 'merged-complete' ? (['MERGED', 'CLOSED'] as const) : (['CLOSED'] as const)).flatMap(
+    (state) => settledPullRequestsCopy(row, state) ?? [],
+  );
   const facts = [
-    settledPullRequestsCopy(row, reason === 'merged-complete' ? 'MERGED' : 'CLOSED'),
+    ...pullRequests,
     ...(disk ? [disk] : []),
     ...SETTLED_UNREAD_SOURCES.flatMap(({ source, copy }) => (hasUnreadSource(remainders, source) ? [copy] : [])),
   ];
@@ -868,6 +887,21 @@ const situationWords = (
           throw new Error('A running-session situation carries no running-session remainder.');
         }
         return { headline: 'Choose the next step', caption: 'Follow-up stays yours to end' };
+      }
+      // A step read from a pull request whose read is not current is not a gesture to offer: the
+      // unread source is named instead, as when it ranks the task by itself.
+      const notRead =
+        primary.source === 'github' && !isUnreadRemainder(primary)
+          ? situation.remainders.find(
+              (remainder) =>
+                remainder.source === 'github' && isUnreadRemainder(remainder) && remainder.key === primary.key,
+            )
+          : undefined;
+      if (notRead !== undefined) {
+        return {
+          headline: 'Choose the next step',
+          caption: `${remainderCopy(notRead)} · ${remainderEvidenceCopy(notRead, timeZone)}`,
+        };
       }
       const evidence = remainderEvidenceCopy(primary, timeZone);
       return isUnreadRemainder(primary)
@@ -1215,6 +1249,29 @@ const projectedFacts = (
     return fact === null ? [] : [fact];
   });
 
+const pullRequestNotRead = (key: string): LifecycleFact => ({
+  state: 'unread',
+  detail: `${pullRequestRef(key)} not read`,
+});
+
+/**
+ * The known remainders of pull requests that speak for a step. One read from a pull request whose
+ * read is not current shows as not read: its last known fact is not what waits now.
+ */
+const projectedPullRequestFacts = (
+  { remainders }: LifecycleContext,
+  project: (remainder: WorkThreadRemainder) => LifecycleFact | null,
+): readonly LifecycleFact[] => {
+  const unread = unreadPullRequestKeys(remainders);
+  return remainders.flatMap((remainder) => {
+    const fact = project(remainder);
+    if (fact === null) {
+      return [];
+    }
+    return [remainder.source === 'github' && unread.has(remainder.key) ? pullRequestNotRead(remainder.key) : fact];
+  });
+};
+
 /** What the pull request steps show while the task has no pull request. */
 const withoutPullRequestFact = ({ display }: LifecycleContext): LifecycleFact =>
   display.local.length > 0
@@ -1224,19 +1281,24 @@ const withoutPullRequestFact = ({ display }: LifecycleContext): LifecycleFact =>
 /**
  * One base fact per pull request for the steps a pull request goes through. A merged or closed
  * pull request, one never read and someone else's read the same on each of them; `ownOpen` says
- * what the operator's own open pull request shows on the step.
+ * what the operator's own open pull request shows on the step. A merge is terminal and counts by
+ * its last known state; any other state whose read is not current shows as not read.
  */
 const pullRequestBaseFacts = (
-  { display }: LifecycleContext,
+  { display, remainders }: LifecycleContext,
   ownOpen: (fact: PullRequestFact, key: string) => LifecycleFact,
-): readonly LifecycleFact[] =>
-  display.pullRequests.map((marker): LifecycleFact => {
+): readonly LifecycleFact[] => {
+  const unread = unreadPullRequestKeys(remainders);
+  return display.pullRequests.map((marker): LifecycleFact => {
     const fact = lastKnownFact(marker);
     if (!fact?.state) {
       return { state: 'unread', detail: `State of ${pullRequestRef(marker.key)} unknown` };
     }
     if (fact.state === 'MERGED') {
       return { state: 'done', detail: 'Merged' };
+    }
+    if (unread.has(marker.key)) {
+      return pullRequestNotRead(marker.key);
     }
     if (fact.state === 'CLOSED') {
       return { state: 'none', detail: 'Closed without merge' };
@@ -1245,6 +1307,7 @@ const pullRequestBaseFacts = (
       ? { state: 'none', detail: "Someone else's pull request" }
       : ownOpen(fact, marker.key);
   });
+};
 
 const sessionsLifecycleFact = ({ row, remainders }: LifecycleContext): LifecycleFact => {
   if (row.sessionCount + row.delegatedSessionCount === 0) {
@@ -1307,7 +1370,7 @@ const pushLifecycleFact = ({ row, remainders, display }: LifecycleContext): Life
 const PULL_REQUEST_STATE_WORDS = { OPEN: 'open', MERGED: 'merged', CLOSED: 'closed without merge' } as const;
 
 const pullRequestLifecycleFact = (context: LifecycleContext): LifecycleFact => {
-  const drafts = projectedFacts(context.remainders, (remainder) => {
+  const drafts = projectedPullRequestFacts(context, (remainder) => {
     if (remainder.kind !== 'draft-pr') {
       return null;
     }
@@ -1316,9 +1379,12 @@ const pullRequestLifecycleFact = (context: LifecycleContext): LifecycleFact => {
   });
   const known: string[] = [];
   const unread: LifecycleFact[] = [];
+  const notCurrent = unreadPullRequestKeys(context.remainders);
   for (const marker of context.display.pullRequests) {
     const state = lastKnownFact(marker)?.state;
-    if (state) {
+    if (state && state !== 'MERGED' && notCurrent.has(marker.key)) {
+      unread.push(pullRequestNotRead(marker.key));
+    } else if (state) {
       known.push(`${pullRequestRef(marker.key)} ${PULL_REQUEST_STATE_WORDS[state]}`);
     } else {
       unread.push({ state: 'unread', detail: `State of ${pullRequestRef(marker.key)} unknown` });
@@ -1335,7 +1401,7 @@ const pullRequestLifecycleFact = (context: LifecycleContext): LifecycleFact => {
 const checksLifecycleFact = (context: LifecycleContext): LifecycleFact =>
   worstFact(
     [
-      ...projectedFacts(context.remainders, (remainder) => {
+      ...projectedPullRequestFacts(context, (remainder) => {
         switch (remainder.kind) {
           case 'failing-checks':
             return { state: 'failed', detail: `Checks failing on ${pullRequestRef(remainder.key)}` };
@@ -1366,7 +1432,7 @@ const ownOpenReviewFact = (fact: PullRequestFact): LifecycleFact => {
 const reviewLifecycleFact = (context: LifecycleContext): LifecycleFact =>
   worstFact(
     [
-      ...projectedFacts(context.remainders, (remainder) => {
+      ...projectedPullRequestFacts(context, (remainder) => {
         switch (remainder.kind) {
           case 'changes-requested':
             return { state: 'yours', detail: `Changes requested on ${pullRequestRef(remainder.key)}` };
@@ -1393,7 +1459,7 @@ const reviewLifecycleFact = (context: LifecycleContext): LifecycleFact =>
 const mergeLifecycleFact = (context: LifecycleContext): LifecycleFact =>
   worstFact(
     [
-      ...projectedFacts(context.remainders, (remainder) => {
+      ...projectedPullRequestFacts(context, (remainder) => {
         switch (remainder.kind) {
           case 'merge-conflict':
             return { state: 'failed', detail: `Conflicts on ${pullRequestRef(remainder.key)}` };

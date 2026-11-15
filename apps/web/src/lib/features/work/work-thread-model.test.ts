@@ -1590,10 +1590,22 @@ describe('a task headline is a gesture; what was not read comes second', () => {
     expect(
       copyOf(task({ pullRequests: [pullRequest(MERGED), pullRequest({ ...MERGED, number: 1490 })] })).caption,
     ).toBe('2 PRs merged. Deployment is not established.');
-    // A superseded attempt closed without merge does not count as merged.
+    // A superseded attempt closed without merge does not count as merged, and is named as what it is.
     expect(
       copyOf(task({ pullRequests: [pullRequest({ ...CLOSED, number: 1480 }), pullRequest(MERGED)] })).caption,
-    ).toBe('PR #1487 merged. Deployment is not established.');
+    ).toBe('PR #1487 merged · PR #1480 closed without merge. Deployment is not established.');
+    expect(
+      copyOf(
+        task({
+          pullRequests: [
+            pullRequest({ ...CLOSED, number: 1480 }),
+            pullRequest({ ...CLOSED, number: 1481 }),
+            pullRequest(MERGED),
+          ],
+          local: [checkout()],
+        }),
+      ).caption,
+    ).toBe('PR #1487 merged · 2 PRs closed without merge · checkout still on disk. Deployment is not established.');
     const onDisk = copyOf(task({ pullRequests: [pullRequest(MERGED)], local: [checkout()] }));
     for (const caption of [alone.caption, onDisk.caption]) {
       expect(caption).not.toContain('ticket');
@@ -2344,6 +2356,75 @@ describe('the lifecycle rail', () => {
       expect(stepOf(linked, key)).toEqual({ state: 'unread', detail: 'State of #1487 unknown' });
     }
     expect(stepOf(linked, 'push')).toEqual({ state: 'unread', detail: 'Push state unknown' });
+  });
+  test('a pull request whose read is not current shows "not read" on its steps, never its last known facts', () => {
+    const old = instant(-10 * DAY);
+    const notRead = { state: 'unread', detail: '#1487 not read' };
+    const ready = task({ pullRequests: [pullRequest({ reviewDecision: 'APPROVED', observedAt: old })] });
+    for (const key of ['pull-request', 'checks', 'review', 'merge'] as const) {
+      expect(stepOf(ready, key)).toEqual(notRead);
+    }
+    // The pull request exists whatever its state became: the push is still established.
+    expect(stepOf(ready, 'push')).toEqual({ state: 'done', detail: 'Pushed · a pull request exists' });
+    const failing = task({ pullRequests: [pullRequest({ checksRollup: 'failure', observedAt: old })] });
+    expect(stepOf(failing, 'checks')).toEqual(notRead);
+    const requested = task({
+      pullRequests: [pullRequest({ reviewDecision: 'CHANGES_REQUESTED', unresolvedReviewThreads: 2, observedAt: old })],
+    });
+    expect(stepOf(requested, 'review')).toEqual(notRead);
+    const draft = task({ pullRequests: [pullRequest({ draft: true, observedAt: old })] });
+    expect(stepOf(draft, 'pull-request')).toEqual(notRead);
+    // A read that failed after a success leaves the same doubt as one that aged.
+    const failedRead: WorkThreadPullRequestMarker = {
+      ...pullRequest({ reviewDecision: 'APPROVED' }),
+      latest: { ...pullRequestFact, outcome: 'network', state: null },
+    };
+    expect(stepOf(task({ pullRequests: [failedRead] }), 'merge')).toEqual(notRead);
+    // A closed pull request can reopen: an old read does not end its steps.
+    const closed = task({ pullRequests: [pullRequest({ ...CLOSED, observedAt: old })] });
+    expect(stepOf(closed, 'pull-request')).toEqual(notRead);
+    expect(stepOf(closed, 'merge')).toEqual(notRead);
+    // A merge is terminal and counts by its last known state.
+    const merged = task({ pullRequests: [pullRequest({ ...MERGED, observedAt: old })] });
+    expect(stepOf(merged, 'pull-request')).toEqual({ state: 'done', detail: '#1487 merged' });
+    expect(stepOf(merged, 'merge')).toEqual({ state: 'done', detail: 'Merged' });
+    // Only the pull request that was not read is qualified; a current one beside it keeps its facts.
+    const mixed = task({
+      pullRequests: [
+        pullRequest({ reviewDecision: 'APPROVED', observedAt: old }),
+        pullRequest({ checksRollup: 'failure', number: 1490 }),
+      ],
+    });
+    expect(stepOf(mixed, 'checks')).toEqual({ state: 'failed', detail: 'Checks failing on #1490' });
+    expect(stepOf(mixed, 'merge')).toEqual(notRead);
+  });
+  test('a gesture is never worded from a pull request read that is not current', () => {
+    const old = instant(-10 * DAY);
+    const current = copyOf(task({ pullRequests: [pullRequest({ reviewDecision: 'APPROVED' })] }));
+    expect(current.headline).toBe('Merge #1487');
+    const stale = copyOf(task({ pullRequests: [pullRequest({ reviewDecision: 'APPROVED', observedAt: old })] }));
+    expect(stale.reason).toBe('ready-to-merge');
+    expect(stale.headline).toBe('Choose the next step');
+    expect(stale.caption).toContain('GitHub read is stale');
+    for (const patch of [
+      { checksRollup: 'failure' },
+      { reviewDecision: 'CHANGES_REQUESTED' },
+      { draft: true },
+    ] as const) {
+      const copy = copyOf(task({ pullRequests: [pullRequest({ ...patch, observedAt: old })] }));
+      expect(copy.headline).toBe('Choose the next step');
+      expect(copy.caption).toContain('GitHub read is stale');
+    }
+    // A stale pull request does not silence the step of another one that was read.
+    const mixed = copyOf(
+      task({
+        pullRequests: [
+          pullRequest({ reviewDecision: 'APPROVED', observedAt: old }),
+          pullRequest({ checksRollup: 'failure', number: 1490 }),
+        ],
+      }),
+    );
+    expect(mixed.headline).toBe('Fix checks on #1490');
   });
   test('a pull request closed without merge ends its steps without marking them done', () => {
     const closed = task({ pullRequests: [pullRequest(CLOSED)] });
