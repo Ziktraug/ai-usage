@@ -929,6 +929,57 @@ describe('unread sources never rank a task that a known fact ranks', () => {
       reason: 'merged-complete',
     });
   });
+  test('beside a merged PR, a closed one settles only on a current read', () => {
+    const mixed = (closed: PullRequestObservation): WorkThreadRow => {
+      const value = merged();
+      return {
+        ...value,
+        markers: {
+          ...value.markers,
+          pullRequests: [...withPr(closed).markers.pullRequests, ...value.markers.pullRequests],
+        },
+      };
+    };
+    // Read now: the closed attempt is superseded and the merge ends the task.
+    const fresh = deriveWorkThreadSituation(mixed(pr({ number: 41, state: 'CLOSED' })), at);
+    expect(fresh).toMatchObject({ hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up' });
+    expect(fresh.remainders).toEqual([]);
+    // Read weeks ago: it may have reopened since, so the merge beside it does not suggest an end.
+    const stale = deriveWorkThreadSituation(mixed(pr({ number: 41, state: 'CLOSED', observedAt: older })), at);
+    expect(stale).toMatchObject({ hint: 'undecided', reason: 'source-stale', action: 'open-pr' });
+    expect(stale.remainders).toEqual([
+      { key: 'github.com/test/repo#41', source: 'github', observedAt: older, kind: 'source-stale' },
+    ]);
+    // An unread GitHub source naming the closed pull request counts the same, wherever it comes from.
+    const unreadClosed: WorkThreadRemainder = {
+      key: 'github.com/test/repo#41',
+      source: 'github',
+      observedAt: null,
+      kind: 'source-unknown',
+    };
+    expect(deriveWorkThreadSituation(mixed(pr({ number: 41, state: 'CLOSED' })), at, [unreadClosed])).toMatchObject({
+      hint: 'undecided',
+      reason: 'source-unknown',
+    });
+    // The merged one is terminal: its own stale read, or an unread local source, changes nothing.
+    const staleMerge = (() => {
+      const value = withPr(pr({ state: 'MERGED', mergedAt: older, observedAt: older }));
+      return {
+        ...value,
+        markers: {
+          ...value.markers,
+          pullRequests: [
+            ...withPr(pr({ number: 41, state: 'CLOSED' })).markers.pullRequests,
+            ...value.markers.pullRequests,
+          ],
+        },
+      };
+    })();
+    expect(deriveWorkThreadSituation(staleMerge, at, [unreadSessions])).toMatchObject({
+      hint: 'ready-to-close',
+      reason: 'merged-complete',
+    });
+  });
   test('a closed PR whose latest read failed is not settled and asks for a decision', () => {
     const previous = pr({ state: 'CLOSED', observedAt: older });
     const value = withPr(pr({ state: null, outcome: 'network' }));

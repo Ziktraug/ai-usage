@@ -273,6 +273,19 @@ export const settledPullRequests = (row: WorkThreadRow): 'merged' | 'closed' | n
   return states.includes('MERGED') ? 'merged' : 'closed';
 };
 
+/**
+ * Whether GitHub is read and current for every pull request last known as closed. A closed pull
+ * request can reopen, so beside a merged one it still counts as settled only on a current read.
+ */
+const closedPullRequestsRead = (row: WorkThreadRow, remainders: readonly WorkThreadRemainder[]): boolean => {
+  const closed = new Set(
+    row.markers.pullRequests.filter((marker) => lastKnown(marker)?.state === 'CLOSED').map((marker) => marker.key),
+  );
+  return !remainders.some(
+    (remainder) => remainder.source === 'github' && isUnreadRemainder(remainder) && closed.has(remainder.key),
+  );
+};
+
 const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadRemainder[] => {
   const remainders: WorkThreadRemainder[] = [];
   for (const request of taskNativeRequests(row)) {
@@ -404,9 +417,9 @@ export const deriveWorkThreadSituation = (
     }
     // Merged is terminal: its last known state ranks the task whatever stayed unread. Closed is not
     // (a closed pull request can reopen), so a closing suggests an end only while GitHub is read and
-    // current; otherwise the task falls through to its unread sources.
+    // current, alone or beside a merge; otherwise the task falls through to its unread sources.
     const settled = settledPullRequests(row);
-    if (settled === 'merged') {
+    if (settled === 'merged' && closedPullRequestsRead(row, remainders)) {
       return { hint: 'ready-to-close', reason: 'merged-complete', action: 'end-follow-up', remainders };
     }
     if (settled === 'closed' && !remainders.some((remainder) => remainder.source === 'github')) {
