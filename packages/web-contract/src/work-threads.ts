@@ -88,7 +88,9 @@ const markers = strictObject({
   local: pipe(
     array(
       strictObject({
+        checkoutPath: nullable(pipe(string(), minLength(1), maxLength(4096))),
         key: text,
+        lastSessionActivityAt: nullable(instant),
         latest: nullable(checkout),
         latestSuccessful: nullable(checkout),
         via: picklist(['branch-link', 'session-checkout']),

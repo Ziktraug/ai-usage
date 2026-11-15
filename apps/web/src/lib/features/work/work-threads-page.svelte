@@ -27,6 +27,7 @@
   import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import { createWorkThreadsClient, type WorkThreadsClient } from '../../rpc/work-threads-client';
   import { useShellNavigationOwner } from '../shell/navigation-owner-context';
+  import WorkDiskView from './work-disk-view.svelte';
   import WorkJiraSync from './work-jira-sync.svelte';
   import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
   import WorkThreadDetail from './work-thread-detail.svelte';
@@ -71,6 +72,7 @@
   });
   const currentUrl = $derived(new URL(page.url.href));
   const taskId = $derived(currentUrl.searchParams.get('task'));
+  const view = $derived(currentUrl.searchParams.get('view'));
   const query = $derived(threadListQuery(currentUrl.searchParams));
   const cursors = $derived(threadPageCursors(currentUrl.searchParams));
   const listQueries = createQueries(() => ({
@@ -130,6 +132,12 @@
   const navigate = (url: string | URL, replaceState = false): Promise<void> =>
     navigation.goto(url, { replace: replaceState, reset: false });
   const href = (id: string, day?: string): string => threadUrl(currentUrl, id, day);
+  // The Disk lens' way back: the same list, filters kept, without the `view` parameter.
+  const diskLanesHref = $derived.by(() => {
+    const lanes = new URL(currentUrl);
+    lanes.searchParams.delete('view');
+    return `${lanes.pathname}${lanes.search}`;
+  });
   const updateFilter = (patch: Partial<ReturnType<typeof threadListQuery>>): Promise<void> => {
     const url = new URL(currentUrl);
     url.searchParams.delete('cursor');
@@ -302,6 +310,8 @@
       {:else}
         <p class="wt-empty" role="status">Reading this task…</p>
       {/if}
+    {:else if view === 'disk'}
+      <WorkDiskView {href} lanesHref={diskLanesHref} threads={clients.threads} {timeZone} />
     {:else}
       <header class="wt-page-head">
         <div>

@@ -76,6 +76,17 @@ export interface WorkThreadFact<Observation> {
 }
 
 export interface WorkThreadLocalMarker extends WorkThreadFact<CheckoutStatusObservation> {
+  /**
+   * The checkout the marker stands for, as the branch link or the session named it; known even
+   * when no observation exists. `null` when no path is known (the stored path is empty, or the
+   * browser added the marker for a linked branch that no checkout on this machine is known to hold).
+   */
+  readonly checkoutPath: string | null;
+  /**
+   * Latest activity among the thread's linked sessions that ran in this checkout (same machine,
+   * same path); `null` when none of them did. Says nothing about sessions outside the thread.
+   */
+  readonly lastSessionActivityAt: CanonicalInstant | null;
   /** The branch link or linked session the checkout was reached through. */
   readonly via: 'branch-link' | 'session-checkout';
 }
