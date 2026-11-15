@@ -106,6 +106,13 @@
     grid-column: 4;
   }
 }
+/* The root keeps scrolled-to elements clear of the report's sticky toolbar (scroll-padding-top).
+   The pane sticks to the top of the viewport, inside that padding: focusing one of its first
+   controls made the browser scroll the whole list to reveal an element that cannot move. The Work
+   page has no such toolbar, so the padding is dropped while the pane is shown. */
+:root:has(.wt-split) {
+  scroll-padding-top: 0;
+}
 /* Too narrow for two columns: the pane lies over the list instead of squeezing it. */
 @media (max-width: 1180px) {
   .wt-split {
