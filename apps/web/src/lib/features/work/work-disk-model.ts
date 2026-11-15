@@ -575,24 +575,55 @@ export interface DiskClassification {
   readonly reason: string;
 }
 
+const ageWords = (ageMs: number): string => {
+  const days = Math.floor(ageMs / DAY_MS);
+  return days < 1 ? 'less than a day' : plural(days, 'day');
+};
+
+/**
+ * Whether a commit follows the merge. A merge or a last commit whose date was not read answers
+ * nothing: an unread date never stands for "no commit after the merge".
+ */
+const commitChronology = (checkout: DiskCheckout, pullRequest: DiskPullRequest): readonly string[] => {
+  const mergedMs = pullRequest.mergedAt === null ? Number.NaN : Date.parse(pullRequest.mergedAt);
+  const commitMs = checkout.lastCommitAt === null ? Number.NaN : Date.parse(checkout.lastCommitAt);
+  if (!(Number.isFinite(mergedMs) && Number.isFinite(commitMs))) {
+    return ['commit chronology not read'];
+  }
+  return commitMs > mergedMs ? ['a commit is dated after the merge'] : [];
+};
+
+/** A linked session inside the recent-activity window: someone may still be working there. */
+const recentSession = (checkout: DiskCheckout, now: string): readonly string[] => {
+  const ageMs = checkout.lastSessionAt === null ? Number.NaN : Date.parse(now) - Date.parse(checkout.lastSessionAt);
+  return Number.isFinite(ageMs) && ageMs <= DISK_RECENT_ACTIVITY_MS
+    ? [`a linked session ran ${ageWords(Math.max(0, ageMs))} ago`]
+    : [];
+};
+
 /**
  * A present checkout whose pull request is merged. Every condition of "safe to remove" is checked
- * here, and each one that fails names itself: the tree and the upstream, the commit dates, the
- * checkout's role, the fork status, and last that a command can be worded at all.
+ * here, and each one that fails names itself: the tree and the upstream, the commit dates, recent
+ * sessions, the base branch, the checkout's role, the fork status, and last that a command can be
+ * worded at all.
  */
 const classifyMerged = (
   checkout: DiskCheckout,
   state: PresentState,
   pullRequest: DiskPullRequest,
+  now: string,
 ): DiskClassification => {
   const merged = `PR #${pullRequest.number} merged`;
-  const committedAfterMerge =
-    pullRequest.mergedAt !== null &&
-    checkout.lastCommitAt !== null &&
-    Date.parse(checkout.lastCommitAt) > Date.parse(pullRequest.mergedAt);
-  const blockers = [...leftovers(state), ...(committedAfterMerge ? ['a commit is dated after the merge'] : [])];
+  const blockers = [...leftovers(state), ...commitChronology(checkout, pullRequest), ...recentSession(checkout, now)];
   if (blockers.length > 0) {
     return { group: 'needs-a-look', reason: `${merged}, but ${blockers.join(' · ')}` };
+  }
+  // A branch other pull requests target (develop merged into main) outlives its own merge.
+  if (checkout.onBaseBranch && checkout.branch !== null) {
+    return {
+      group: 'needs-a-look',
+      reason: `${merged} and clean; on base branch ${checkout.branch}, which other pull requests target`,
+    };
   }
   if (checkout.role === 'primary') {
     return { group: 'needs-a-look', reason: `${merged} and clean; main checkout, switch branch instead of removing` };
@@ -640,11 +671,7 @@ const latestActivity = (
 const classifyWithoutMerge = (checkout: DiskCheckout, state: PresentState, now: string): DiskClassification => {
   const activity = latestActivity(checkout, now);
   if (activity !== null && activity.ageMs <= DISK_RECENT_ACTIVITY_MS) {
-    const days = Math.floor(activity.ageMs / DAY_MS);
-    return {
-      group: 'in-use',
-      reason: `${activity.kind} ${days < 1 ? 'less than a day' : plural(days, 'day')} ago`,
-    };
+    return { group: 'in-use', reason: `${activity.kind} ${ageWords(activity.ageMs)} ago` };
   }
   if (checkout.onBaseBranch && checkout.branch !== null && !state.changes && state.ahead === 0) {
     return { group: 'in-use', reason: `On base branch ${checkout.branch}, clean and pushed` };
@@ -685,7 +712,7 @@ export const classifyDiskCheckout = (checkout: DiskCheckout, now: string): DiskC
     return { group: 'in-use', reason: `PR #${pullRequest.number} open${pullRequest.draft ? ' (draft)' : ''}` };
   }
   if (pullRequest?.state === 'merged') {
-    return classifyMerged(checkout, state, pullRequest);
+    return classifyMerged(checkout, state, pullRequest, now);
   }
   return classifyWithoutMerge(checkout, state, now);
 };

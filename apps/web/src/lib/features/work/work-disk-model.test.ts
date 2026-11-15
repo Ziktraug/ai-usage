@@ -499,6 +499,69 @@ describe('disk lens: merged with leftovers', () => {
     expect(classified(committed({ lastCommitAt: daysAgo(3) }), WORKTREE).group).toBe('safe-to-remove');
   });
 
+  test('a merge or a last commit whose date was not read keeps a merged worktree out of safe to remove', () => {
+    const rows = (commit: Partial<CheckoutStatusObservation>, pr: Partial<PullRequestObservation>) => [
+      mainCheckout(),
+      task('a', { local: [marker(WORKTREE, observed(WORKTREE, commit))], pullRequests: [merged(9, pr)] }),
+    ];
+    const unread = { group: 'needs-a-look', reason: 'PR #9 merged, but commit chronology not read' };
+    expect(classified(rows({ lastCommitAt: null }, {}), WORKTREE)).toEqual(unread);
+    expect(classified(rows({}, { mergedAt: null }), WORKTREE)).toEqual(unread);
+    expect(classified(rows({ lastCommitAt: null }, { mergedAt: null }), WORKTREE)).toEqual(unread);
+    expect(classified(rows({ lastCommitAt: null, dirty: true, untrackedCount: 1 }, {}), WORKTREE)).toEqual({
+      group: 'needs-a-look',
+      reason: 'PR #9 merged, but 1 untracked · commit chronology not read',
+    });
+    expect(itemAt(rows({ lastCommitAt: null }, {}), WORKTREE).commands).toEqual([]);
+  });
+
+  test('a recent linked session keeps a merged, clean worktree out of safe to remove', () => {
+    const rows = (days: number) => [
+      mainCheckout(),
+      task('a', {
+        local: [marker(WORKTREE, observed(WORKTREE), { lastSessionActivityAt: daysAgo(days) })],
+        pullRequests: [merged(9)],
+      }),
+    ];
+    expect(classified(rows(2), WORKTREE)).toEqual({
+      group: 'needs-a-look',
+      reason: 'PR #9 merged, but a linked session ran 2 days ago',
+    });
+    expect(classified(rows(0.25), WORKTREE)).toEqual({
+      group: 'needs-a-look',
+      reason: 'PR #9 merged, but a linked session ran less than a day ago',
+    });
+    expect(itemAt(rows(2), WORKTREE).commands).toEqual([]);
+    // The same seven-day window as a checkout without pull request.
+    expect(classified(rows(7), WORKTREE).group).toBe('needs-a-look');
+    expect(classified(rows(7.01), WORKTREE).group).toBe('safe-to-remove');
+  });
+
+  test('a merged checkout on a base branch is never offered a branch deletion', () => {
+    const path = `${ROOT}/.claude/worktrees/develop`;
+    const rows = [
+      mainCheckout(),
+      task('a', {
+        local: [
+          marker(path, observed(path, { branch: 'develop', upstream: 'origin/develop' }), {
+            key: branchKey('develop'),
+          }),
+        ],
+        pullRequests: [merged(9, { baseRef: 'main', headRef: 'develop' })],
+      }),
+      // Another pull request targets develop: it is a base branch of this project.
+      task('b', { pullRequests: [pullRequest(12, { baseRef: 'develop', headRef: 'feat/next' })] }),
+    ];
+    const checkout = checkoutAt(rows, path);
+    expect(checkout).toMatchObject({ branch: 'develop', onBaseBranch: true, role: 'worktree' });
+    expect(checkout.pullRequest).toMatchObject({ number: 9, state: 'merged' });
+    expect(classifyDiskCheckout(checkout, NOW)).toEqual({
+      group: 'needs-a-look',
+      reason: 'PR #9 merged and clean; on base branch develop, which other pull requests target',
+    });
+    expect(itemAt(rows, path).commands).toEqual([]);
+  });
+
   test('a merged pull request whose fork status was not read is not safe', () => {
     const rows = [
       mainCheckout(),
