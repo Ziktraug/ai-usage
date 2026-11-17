@@ -1,12 +1,14 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import type { Component } from 'svelte';
+import { type Component, createRawSnippet } from 'svelte';
 import { createServer } from 'vite';
 import {
   createSyntheticWorkThreadStore,
   WORK_THREADS_FIXTURE_IDS,
 } from '../../../server/work-threads-e2e-fixture.server';
+import { buildSessionCascade } from './work-session-cascade';
 import { threadListQuery } from './work-thread-model';
 
 const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="exaprint\/Exalibur">Exalibur</;
@@ -16,7 +18,7 @@ const DAY_MILESTONE_PATTERN = /aria-hidden="true" class="wt-mark wt-milestone" d
 const DAY_EVENT_DOT_PATTERN = /class="wt-mark wt-event-mark"/;
 
 const SUMMARY_CONTENT = /<summary[^>]*>(.*?)<\/summary>/;
-const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Checks failing<\/h2>/;
+const FAILING_CHECKS_HEADING = /<h2(?:\s[^>]*)?>Fix checks on #1487<\/h2>/;
 
 const server = await createServer({
   appType: 'custom',
@@ -47,12 +49,17 @@ const render = renderer.render as (
   component: Component,
   options: { props: Record<string, unknown> },
 ) => { body: string };
-const [List, Detail, Episode, Markers, Sources] = await Promise.all(
-  ['work-thread-list', 'work-thread-detail', 'work-thread-episode', 'work-thread-markers', 'work-thread-sources'].map(
-    component,
-  ),
+const [List, Detail, Episode, Markers, Sources, Cascade] = await Promise.all(
+  [
+    'work-thread-list',
+    'work-thread-detail',
+    'work-thread-episode',
+    'work-thread-markers',
+    'work-thread-sources',
+    'work-session-cascade',
+  ].map(component),
 );
-if (!(List && Detail && Episode && Markers && Sources)) {
+if (!(List && Detail && Episode && Markers && Sources && Cascade)) {
   throw new Error('Incomplete components');
 }
 const html = (view: Component, props: Record<string, unknown>) =>
@@ -73,9 +80,12 @@ const detail = async (id: string) => {
 };
 const payments = await detail(WORK_THREADS_FIXTURE_IDS.payments);
 const analysis = await detail(WORK_THREADS_FIXTURE_IDS.analysis);
+// The journal is the layout these tests were written for; the cascade has its own block below.
 const baseDetailProps = {
   timeZone: 'Europe/Paris',
   backHref: '/work?project=Example+shop',
+  historyLayout: 'journal',
+  onHistoryLayout: noop,
   onBack: noop,
   onCommand: forbiddenCommand,
   onPickerOpen: noop,
@@ -520,7 +530,7 @@ describe('work thread SSR presentation', () => {
         onFilter: noop,
         onMore: noop,
       }),
-    ).toContain('Checks failing');
+    ).toContain('<strong>Fix checks on #1487</strong>');
     const banner = html(Sources, { sources, now: payments.generatedAt, timeZone: 'UTC' });
     expect(banner).toContain('Sessions: evidence incomplete');
     expect(banner).toContain('does not establish that nothing is left');
@@ -679,5 +689,164 @@ describe('work thread SSR presentation', () => {
     const body = html(Detail, { ...baseDetailProps, data: waiting });
     expect(body).toContain('Resume following');
     expect(body).toContain('End follow-up');
+  });
+});
+
+const TREE_ITEM_PATTERN = /role="treeitem"/g;
+const TICK_LABEL_PATTERN = /class="wc-tick"[^>]*>([^<]+)</g;
+const TAB_STOP_PATTERN = /role="treeitem" tabindex="0"/g;
+const SIDE_HEADING_PATTERN = /<h2 class="wt-task-title-heading"[^>]*>\s*Prevent duplicate payments\s*<\/h2>/;
+const PAGE_HEADING_PATTERN = /<h1 class="wt-task-title-heading"[^>]*>\s*Prevent duplicate payments\s*<\/h1>/;
+
+describe('session cascade SSR presentation', () => {
+  const cascadeProps = { ...baseDetailProps, historyLayout: 'cascade' };
+  const eventSnippet = createRawSnippet(() => ({ render: () => '<span>event</span>' }));
+  const cascade = (data: typeof payments, expandAll: boolean): string =>
+    html(Cascade, {
+      blocks: buildSessionCascade({
+        episodes: data.episodes,
+        events: [],
+        newestFirst: true,
+        nowMs: Date.parse(data.generatedAt),
+        timeZone: 'Europe/Paris',
+      }),
+      historyEntry: eventSnippet,
+      expandAll,
+      linkedKeys: [],
+      onCopy: noop,
+      onDetach: noop,
+      taskTitle: data.row.thread.title,
+      timeZone: 'Europe/Paris',
+    });
+
+  test('the cascade is the default layout and keeps the journal one press away', () => {
+    const body = html(Detail, { ...baseDetailProps, historyLayout: undefined, data: payments });
+    expect(body).toContain('data-history-layout="cascade"');
+    expect(body).toContain('<button aria-pressed="true" type="button">Cascade</button>');
+    expect(body).toContain('<button aria-pressed="false" type="button">Journal</button>');
+    expect(body).toContain('Expand all groups');
+    expect(body).not.toContain('wt-session-button');
+    expect(html(Detail, { ...baseDetailProps, data: payments })).toContain('data-history-layout="journal"');
+  });
+  test('each stretch is a tree with one tab stop and rows named with their times, span and mark', () => {
+    const body = html(Detail, { ...cascadeProps, data: payments });
+    const trees = body.split('role="tree"').length - 1;
+    expect(trees).toBeGreaterThan(0);
+    expect(body.match(TAB_STOP_PATTERN)?.length).toBe(trees);
+    expect(body).toContain(
+      'Respond to the review, Codex session payment-, started by you, no parent read, 11:20–11:44, span 24 min, No open request read',
+    );
+    // Bars are decoration: every lane is hidden from assistive technology.
+    expect(body.split('class="wc-lane"').length).toBe(body.split('aria-hidden="true" class="wc-lane"').length);
+  });
+  test('declared children stay folded under their parent with a count, a summed span and both marks', () => {
+    const parent = payments.episodes.find((item) => item.children.length > 0);
+    if (!parent) {
+      throw new Error('Missing delegated fixture');
+    }
+    const folded = cascade(payments, false);
+    expect(folded.match(TREE_ITEM_PATTERN)?.length).toBe(payments.episodes.length);
+    expect(folded).toContain('aria-expanded="false"');
+    expect(folded).toContain('+1 child session · spans sum to');
+    expect(folded).toContain(
+      'class="wc-mark wc-mark-below" data-mark="quiet" title="Among its sessions: no open request read"',
+    );
+    expect(folded).toContain('1 child session, spans sum to');
+    const open = cascade(payments, true);
+    expect(open.match(TREE_ITEM_PATTERN)?.length).toBe(payments.episodes.length + parent.children.length);
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('role="group"');
+    expect(open).toContain('aria-level="2"');
+    expect(open).toContain(`launched by ${parent.title}`);
+  });
+  test('parentless sessions started together fold into a group that declares no lineage', () => {
+    const [first] = payments.episodes;
+    if (!first) {
+      throw new Error('Expected episode');
+    }
+    const burst = Array.from({ length: 4 }, (_, index) => ({
+      ...first,
+      children: [],
+      firstPrompt: null,
+      harness: 'claude',
+      launchedBy: null,
+      linkKey: `${first.linkKey}-burst-${index}`,
+      sourceSessionId: `0${index}aa11bb-burst`,
+      title: `claude 0${index}aa11bb`,
+    }));
+    const body = cascade({ ...payments, episodes: burst }, false);
+    expect(body.match(TREE_ITEM_PATTERN)?.length).toBe(1);
+    expect(body).toContain('data-node-kind="burst"');
+    expect(body).toContain('4 started together');
+    expect(body).toContain('4 sessions started together at');
+    expect(body).toContain('no parent read');
+    expect(body).not.toContain('launched by');
+    const open = cascade({ ...payments, episodes: burst }, true);
+    expect(open.match(TREE_ITEM_PATTERN)?.length).toBe(5);
+    // A label that only restates the harness and the id is not shown as a title.
+    expect(open).toContain('No title read, Claude session 00aa11bb');
+    expect(open).toContain('<code class="wc-id wc-id-alone">00aa11bb</code>');
+  });
+  test('pull request facts cut the cascade and stay listed as text under their stretch', async () => {
+    const merged = await detail(WORK_THREADS_FIXTURE_IDS.mergedPr);
+    const body = html(Detail, { ...cascadeProps, data: merged });
+    expect(body).toContain('PR #1502 merged');
+    expect(body).toContain('PR #1502 opened');
+    expect(body.split('class="wt-event wt-fact-event"').length - 1).toBe(2);
+    // The payments task was created and its pull request opened during its first stretch.
+    const cutting = html(Detail, { ...cascadeProps, data: payments });
+    expect(cutting.split('class="wc-cut"').length - 1).toBe(2);
+    expect(cutting.split('class="wc-flag"').length - 1).toBe(2);
+    expect(cutting).toContain('title="Oct 19 10:00 · PR #1487 opened"');
+    expect(cutting).toContain('>Oct 19 11:00</time>');
+  });
+  test('day ticks keep the right date after a daylight-saving change', () => {
+    const [first] = payments.episodes;
+    if (!first) {
+      throw new Error('Expected episode');
+    }
+    // Europe/Paris leaves summer time on 2026-10-25: later ticks sit at 23:00 of the previous day.
+    const long = {
+      ...first,
+      children: [],
+      endedAt: parseCanonicalInstant('2026-11-05T09:00:00.000Z'),
+      startedAt: parseCanonicalInstant('2026-10-22T08:00:00.000Z'),
+    };
+    const body = cascade({ ...payments, episodes: [long] }, false);
+    const labels = [...body.matchAll(TICK_LABEL_PATTERN)].map((match) => match[1]?.trim());
+    expect(labels).toEqual(['Oct 22', 'Oct 24', 'Oct 26', 'Oct 28', 'Oct 30', 'Nov 1', 'Nov 3', 'Nov 5']);
+  });
+  test('beside the list the task titles its pane one level down and offers its full page', () => {
+    const body = html(Detail, {
+      ...cascadeProps,
+      data: payments,
+      presentation: 'side',
+      fullHref: '/work?task=full',
+    });
+    expect(body).toMatch(SIDE_HEADING_PATTERN);
+    expect(body).not.toContain('<h1');
+    expect(body).toContain('<a class="wt-button" href="/work?task=full">Open full page</a>');
+    expect(body).toContain('aria-label="Close task detail"');
+    expect(body).not.toContain('← My work');
+    expect(body).not.toContain('One task at a time');
+    expect(html(Detail, { ...cascadeProps, data: payments })).toMatch(PAGE_HEADING_PATTERN);
+  });
+  test('the list marks the task shown beside it and no other', () => {
+    const props = {
+      dataset: list,
+      rows: list.rows,
+      query,
+      timeZone: 'UTC',
+      href: () => '/work',
+      onOpen: noop,
+      onFilter: noop,
+      onMore: noop,
+    };
+    expect(html(List, props)).not.toContain('aria-current');
+    const selected = html(List, { ...props, selectedId: WORK_THREADS_FIXTURE_IDS.payments });
+    expect(selected.split('aria-current="true"').length - 1).toBe(1);
+    expect(selected).toContain(
+      `aria-current="true" class="wt-task-row" data-work-thread="${WORK_THREADS_FIXTURE_IDS.payments}"`,
+    );
   });
 });

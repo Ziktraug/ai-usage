@@ -1,5 +1,6 @@
 import type { WorkThreadsListInput } from '@ai-usage/web-contract/work-threads';
 import { type QueryClient, queryOptions } from '@tanstack/svelte-query';
+import { readWorkTimeline } from '../../features/work/work-timeline-load';
 import type { WorkThreadsClient } from '../../rpc/work-threads-client';
 import { collectionSwrKey } from '../keys';
 import { webQueryPolicies } from '../policies';
@@ -36,6 +37,18 @@ export const workThreadDetailQueryOptions = (
     enabled: context.browser && context.enabled,
     queryKey: workThreadDetailKey(threadId),
     queryFn: ({ signal }) => client.detail({ threadId }, { signal }),
+  });
+/** Keyed under the list prefix: whatever makes the task list stale makes its timeline stale too. */
+export const workThreadTimelineQueryOptions = (
+  client: Pick<WorkThreadsClient, 'list'>,
+  filter: { readonly project: string | null; readonly search: string | null },
+  context: WorkThreadsQueryContext,
+) =>
+  queryOptions({
+    ...webQueryPolicies.collectionFactsSwr,
+    enabled: context.browser && context.enabled,
+    queryKey: collectionSwrKey('work-threads', 'list', 'timeline', JSON.stringify([filter.project, filter.search])),
+    queryFn: ({ signal }) => readWorkTimeline(client, filter, { signal }),
   });
 /** An intake decision changes no task: only the list, which carries the intake, is stale. */
 export const invalidateWorkThreadListQueries = async (

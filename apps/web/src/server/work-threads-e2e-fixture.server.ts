@@ -219,12 +219,18 @@ const syntheticIntakeIssues = (): readonly WorkThreadMarkers['jiraIssues'][numbe
   ];
 };
 
-const localMarker = (branch: string, modifiedCount = 0): WorkThreadMarkers['local'][number] => {
+const PRIMARY_CHECKOUT = '/synthetic/example-shop';
+/** Checkouts differ per task where a lens lists them: a linked worktree of the shop, and another repository. */
+const localMarker = (
+  branch: string,
+  modifiedCount = 0,
+  checkoutPath = PRIMARY_CHECKOUT,
+): WorkThreadMarkers['local'][number] => {
   const observation: CheckoutStatusObservation = {
     ahead: 0,
     behind: 0,
     branch,
-    checkoutPath: '/synthetic/example-shop',
+    checkoutPath,
     dirty: modifiedCount > 0,
     headSha: 'a'.repeat(40),
     lastCommitAt: at(23),
@@ -237,7 +243,9 @@ const localMarker = (branch: string, modifiedCount = 0): WorkThreadMarkers['loca
     upstream: `origin/${branch}`,
   };
   return {
+    checkoutPath: observation.checkoutPath,
     key: branchLinkKey({ host, ref: branch, repository }),
+    lastSessionActivityAt: at(23, '09:44'),
     latest: observation,
     latestSuccessful: observation,
     via: 'branch-link',
@@ -382,7 +390,7 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
       makeThread(WORK_THREADS_FIXTURE_IDS.uploads, 'Fix file uploads'),
       {
         jiraIssues: [jiraMarker('SHOP-2086', true)],
-        local: [localMarker('fix/SHOP-2086/uploads')],
+        local: [localMarker('fix/SHOP-2086/uploads', 0, `${PRIMARY_CHECKOUT}/.claude/worktrees/uploads`)],
         pullRequests: [
           prMarker(1479, {
             draft: false,
@@ -417,7 +425,7 @@ const seedRecords = (): { readonly records: FixtureRecord[]; readonly episodes: 
         projectLabel: 'ai-usage',
         objective: 'Keep related sessions together without inferring links from timing.',
       }),
-      { jiraIssues: [], local: [localMarker('feat/work-threads', 3)], pullRequests: [] },
+      { jiraIssues: [], local: [localMarker('feat/work-threads', 3, '/synthetic/ai-usage')], pullRequests: [] },
       [
         makeEpisode('thread-implementation', 'Implement explicit session links', 24, {
           endedAt: null,
@@ -946,7 +954,10 @@ export const createSyntheticWorkThreadStore = (
         .map(
           ({ key }) =>
             localFacts.get(key) ?? {
+              // A branch linked during the run: no checkout is known to hold it.
+              checkoutPath: null,
               key,
+              lastSessionActivityAt: null,
               latest: null,
               latestSuccessful: null,
               via: 'branch-link',

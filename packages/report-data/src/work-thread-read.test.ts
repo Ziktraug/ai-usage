@@ -1114,7 +1114,9 @@ describe('work-thread reader', () => {
       const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
       expect(detail?.row.markers.local).toEqual([
         {
+          checkoutPath: '/fixture/project',
           key: sessionLink('local-session').key,
+          lastSessionActivityAt: at(-1),
           latest: failed,
           latestSuccessful: successful,
           via: 'session-checkout',
@@ -2419,6 +2421,139 @@ describe('work-thread reader', () => {
     const ended = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
     // The same checkout reached through branch and session remains one observed fact.
     expect(ended?.row.afterDone).toEqual({ count: 1, latestAt: at(-1) });
+  });
+
+  test('a local marker names its checkout and dates the linked sessions that ran in it', async () => {
+    const dbPath = await fixture();
+    const branch = {
+      kind: 'branch' as const,
+      key: branchLinkKey({ host: 'github.com', repository: 'fixture/repo', ref: 'feature' }),
+    };
+    const ranIn = (id: string, sourcePath: string, hours: number): SerializedRow =>
+      session(id, {
+        activeDate: at(hours),
+        endDate: at(hours),
+        source: { harnessKey: 'codex', machineId: MACHINE, rootSourceSessionId: id, sourceSessionId: id, sourcePath },
+      });
+    const holder = ranIn('holder', '/fixture/branch-checkout', -9);
+    await publish(dbPath, [
+      // Holds the branch, so the branch link resolves to its checkout; no task links it as a session.
+      {
+        ...holder,
+        source: {
+          ...holder.source,
+          harnessKey: 'codex',
+          sourceSessionId: 'holder',
+          vcs: {
+            branches: [
+              {
+                name: 'feature',
+                provenance: 'harness-recorded',
+                firstObservedAt: null,
+                lastObservedAt: null,
+                webUrl: null,
+              },
+            ],
+            headCommit: null,
+            partial: true,
+            pullRequests: [],
+            repository: {
+              host: 'github.com',
+              ownerPath: 'fixture/repo',
+              provenance: 'harness-recorded',
+              webUrl: 'https://github.com/fixture/repo',
+            },
+          },
+        },
+      },
+      ranIn('early', '/fixture/branch-checkout', -5),
+      ranIn('late', '/fixture/branch-checkout', -3),
+      ranIn('elsewhere', '/fixture/elsewhere', -1),
+    ]);
+    const unvisited = await create(dbPath, [branch], 'Branch only');
+    const visited = await create(
+      dbPath,
+      [branch, sessionLink('early'), sessionLink('late'), sessionLink('elsewhere')],
+      'Branch and sessions',
+    );
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    for (const [threadId, lastSessionActivityAt] of [
+      [unvisited, null],
+      // The newer session in another path does not date this checkout.
+      [visited, at(-3)],
+    ] as const) {
+      const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+      // No checkout observation was ever stored: the path still comes from the branch link.
+      expect(detail?.row.markers.local).toEqual([
+        {
+          checkoutPath: '/fixture/branch-checkout',
+          key: branch.key,
+          lastSessionActivityAt,
+          latest: null,
+          latestSuccessful: null,
+          via: 'branch-link',
+        },
+      ]);
+      expect(list.rows.find((row) => row.thread.threadId === threadId)?.markers.local).toEqual(
+        detail?.row.markers.local,
+      );
+    }
+  });
+
+  test('an empty stored checkout path names no checkout and leaves the list answering', async () => {
+    const dbPath = await fixture();
+    const branch = {
+      kind: 'branch' as const,
+      key: branchLinkKey({ host: 'github.com', repository: 'fixture/repo', ref: 'feature' }),
+    };
+    // A session that holds the branch but recorded an empty path: the branch link resolves to "".
+    await publish(dbPath, [
+      session('holder', {
+        source: {
+          harnessKey: 'codex',
+          machineId: MACHINE,
+          rootSourceSessionId: 'holder',
+          sourceSessionId: 'holder',
+          sourcePath: '',
+          vcs: {
+            branches: [
+              {
+                name: 'feature',
+                provenance: 'harness-recorded',
+                firstObservedAt: null,
+                lastObservedAt: null,
+                webUrl: null,
+              },
+            ],
+            headCommit: null,
+            partial: true,
+            pullRequests: [],
+            repository: {
+              host: 'github.com',
+              ownerPath: 'fixture/repo',
+              provenance: 'harness-recorded',
+              webUrl: 'https://github.com/fixture/repo',
+            },
+          },
+        },
+      }),
+    ]);
+    const threadId = await create(dbPath, [branch], 'Branch at an empty path');
+    const list = await run(queryWorkThreadList({ dbPath, query: QUERY, now: NOW }));
+    const detail = await run(queryWorkThreadDetail({ dbPath, threadId, now: NOW }));
+    // The marker stays, as before the path was carried; only the path it cannot name is null.
+    const expected = [
+      {
+        checkoutPath: null,
+        key: branch.key,
+        lastSessionActivityAt: null,
+        latest: null,
+        latestSuccessful: null,
+        via: 'branch-link' as const,
+      },
+    ];
+    expect(list.rows.find((row) => row.thread.threadId === threadId)?.markers.local).toEqual(expected);
+    expect(detail?.row.markers.local).toEqual(expected);
   });
 
   test('Jira sites cannot borrow another authority and source failures remain visible', async () => {

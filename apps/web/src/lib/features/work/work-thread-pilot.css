@@ -1,0 +1,500 @@
+/*
+ * The Pilot presentation of My work: compact rows in bands. This sheet can load before
+ * work-threads.css, so every rule that competes with a `.wt-surface <element>` rule there is
+ * written with a higher specificity instead of relying on the order of the two sheets.
+ */
+
+/* The lens switch (Lanes, Pilot, Timeline, Disk), shared by every page header. */
+.wt-views {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 1px;
+  border: 1px solid var(--wt-line);
+  border-radius: 7px;
+}
+.wt-surface .wt-views a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  border-radius: 5px;
+}
+.wt-surface .wt-views a:hover {
+  color: var(--wt-ink);
+}
+.wt-surface .wt-views a[aria-current="page"] {
+  font-weight: 600;
+  color: var(--wt-accent);
+  background: var(--wt-tint);
+}
+
+/* One-line page head of the Pilot view. */
+.wt-pilot-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.wt-surface .wt-pilot-head h1 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+.wt-pilot-head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: center;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--wt-muted);
+}
+.wt-pilot-head-meta .wt-link {
+  white-space: nowrap;
+}
+
+/* Bar: band counters on the left, project and search on the right. */
+.wt-pilot-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.wt-pilot-bands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  min-width: 0;
+}
+.wt-band-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.wt-surface .wt-band-chip {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 11px;
+  font-size: 12px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line);
+  border-radius: 999px;
+}
+.wt-surface .wt-band-chip:hover {
+  background: var(--wt-soft);
+}
+.wt-band-chip strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-chip-count, var(--wt-ink));
+}
+.wt-surface .wt-band-chip[aria-pressed="true"] {
+  --wt-chip-count: currentcolor;
+  font-weight: 600;
+  color: var(--wt-accent);
+  background: var(--wt-tint);
+  border-color: var(--wt-accent);
+  border-bottom-width: 2px;
+}
+.wt-band-dot {
+  flex-shrink: 0;
+}
+.wt-band-chip[data-band="yours"] .wt-band-dot {
+  color: var(--wt-warn);
+}
+.wt-band-chip[data-band="in-flight"] .wt-band-dot {
+  color: var(--wt-codex);
+}
+.wt-band-chip[data-band="to-tidy"] .wt-band-dot {
+  color: var(--wt-accent);
+}
+.wt-band-chip[data-band="dormant"] .wt-band-dot {
+  color: var(--wt-muted);
+}
+.wt-pilot-partial {
+  font-size: 11px;
+  color: var(--wt-muted);
+}
+
+/* Board: one shared column grid for the header and every row. */
+.wt-pilot-board {
+  overflow: clip;
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line);
+  border-radius: 10px;
+}
+.wt-pilot-cols {
+  display: grid;
+  grid-template-columns: 120px minmax(220px, 1fr) 264px 76px minmax(
+      170px,
+      250px
+    ) 44px;
+  column-gap: 12px;
+  align-items: center;
+  padding: 0 14px;
+}
+.wt-pilot-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 28px;
+  font-size: 10px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+  background: var(--wt-paper);
+  border-bottom: 1px solid var(--wt-line);
+}
+.wt-pilot-steps {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+/* Centred with flex, so a label wider than its column overflows evenly on both sides. */
+.wt-pilot-steps > span {
+  display: flex;
+  justify-content: center;
+}
+.wt-col-age {
+  text-align: right;
+}
+
+/* Bands. */
+.wt-band + .wt-band {
+  border-top: 1px solid var(--wt-line);
+}
+.wt-surface .wt-band-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  align-items: baseline;
+  padding: 10px 14px 5px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--wt-muted);
+  letter-spacing: 0;
+}
+.wt-band-head strong {
+  font-weight: 600;
+  color: var(--wt-ink);
+}
+.wt-band-count {
+  font-variant-numeric: tabular-nums;
+}
+/* The dormant heading is its own fold control, as wide as the board. */
+.wt-surface .wt-band-head:has(.wt-band-fold) {
+  padding: 0;
+}
+.wt-surface .wt-band-fold {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 14px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+.wt-surface .wt-band-fold:hover {
+  background: var(--wt-soft);
+}
+/* The board clips what leaves it, so the full-width control keeps its focus ring inside. */
+.wt-surface .wt-pilot-board .wt-band-fold:focus-visible {
+  outline-offset: -3px;
+}
+.wt-band-fold-action {
+  flex-shrink: 0;
+  color: var(--wt-accent);
+}
+.wt-pilot-rows {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.wt-pilot-rows[hidden] {
+  display: none;
+}
+
+/* Lifecycle rail: equal columns, one glyph each, joined by a thin line between neighbours. */
+.wt-rail {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  align-items: center;
+}
+.wt-rail-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+}
+/* Drawn as a border so the line survives forced colours; it stops short of both glyphs. */
+.wt-rail-step + .wt-rail-step::before {
+  position: absolute;
+  top: 50%;
+  right: calc(50% + 8px);
+  left: calc(-50% + 8px);
+  content: "";
+  border-top: 1px solid var(--wt-line);
+}
+.wt-rail-step svg {
+  display: block;
+  overflow: visible;
+}
+.wt-rail-step[data-state="done"] {
+  color: var(--wt-muted);
+}
+.wt-rail-step[data-state="done"] svg {
+  opacity: 0.7;
+}
+.wt-rail-step[data-state="yours"] {
+  color: var(--wt-warn);
+}
+.wt-rail-step[data-state="running"] {
+  color: var(--wt-codex);
+}
+.wt-rail-step[data-state="failed"] {
+  color: var(--wt-danger);
+}
+.wt-rail-step[data-state="upcoming"],
+.wt-rail-step[data-state="none"] {
+  color: var(--wt-line-strong);
+}
+.wt-rail-step[data-state="unread"] {
+  color: var(--wt-muted);
+}
+
+/* Compact row: two text lines in 44 px; the title link stretches over the whole row. */
+.wt-row {
+  position: relative;
+  min-height: 44px;
+  border-bottom: 1px solid var(--wt-line);
+}
+/* The next band's top border, or the board's own, closes a band. */
+.wt-pilot-rows > .wt-row:last-child {
+  border-bottom: 0;
+}
+.wt-row:hover {
+  background: color-mix(in srgb, var(--wt-tint) 55%, var(--wt-paper));
+}
+.wt-row .wt-project-tag {
+  justify-self: start;
+  margin-bottom: 0;
+}
+.wt-row-task {
+  min-width: 0;
+}
+.wt-surface .wt-row-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.wt-row-title::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+.wt-row-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--wt-muted);
+  white-space: nowrap;
+}
+.wt-row-next {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wt-row-next[data-tone="yours"] {
+  font-weight: 600;
+  color: var(--wt-warn);
+}
+.wt-row-next[data-tone="failed"] {
+  font-weight: 600;
+  color: var(--wt-danger);
+}
+.wt-row-next[data-tone="running"] {
+  color: var(--wt-codex);
+}
+.wt-row-next[data-tone="tidy"] {
+  color: var(--wt-accent);
+}
+.wt-row-next[data-tone="quiet"] {
+  color: var(--wt-muted);
+}
+/* Above the stretched link, so hovering a step or the age still shows its own title. */
+.wt-row .wt-rail,
+.wt-row-age {
+  position: relative;
+  z-index: 1;
+}
+.wt-row-age {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+.wt-row-activity {
+  display: block;
+  color: var(--wt-muted);
+}
+.wt-row-activity rect[data-day="idle"] {
+  opacity: 0.35;
+}
+.wt-row-activity rect.wt-today {
+  color: var(--wt-accent);
+}
+
+/* Legend: each glyph is a one-step rail followed by its word. */
+.wt-pilot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 0;
+  margin: 12px 2px 0;
+  font-size: 10px;
+  color: var(--wt-muted);
+  list-style: none;
+}
+.wt-pilot-legend > li {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.wt-pilot-legend .wt-rail {
+  width: 14px;
+}
+
+@media (max-width: 1279px) {
+  .wt-pilot-cols {
+    grid-template-columns: 84px minmax(180px, 1fr) 208px 60px minmax(
+        140px,
+        190px
+      ) 36px;
+    column-gap: 10px;
+  }
+  .wt-pilot-steps {
+    font-size: 9px;
+  }
+  /* The strip stretches to its narrower column; bar heights keep their scale. */
+  .wt-row-activity {
+    width: 60px;
+  }
+}
+@media (max-width: 980px) {
+  /* The activity strip goes first; with the 56 px navigation rail, 781 px leaves 623 px of columns. */
+  .wt-pilot-cols {
+    grid-template-columns: 76px minmax(130px, 1fr) 200px minmax(120px, 200px) 40px;
+  }
+  .wt-row-activity,
+  .wt-col-activity {
+    display: none;
+  }
+}
+@media (max-width: 780px) {
+  .wt-pilot-colhead {
+    display: none;
+  }
+  .wt-pilot-cols {
+    padding: 0 10px;
+  }
+  /* Two lines: project and task, then rail, next step and age. */
+  .wt-row {
+    grid-template-columns: 84px 74px minmax(0, 1fr) 40px;
+    row-gap: 3px;
+    padding-block: 7px;
+  }
+  .wt-row-task {
+    grid-column: 2 / -1;
+  }
+  .wt-row .wt-rail {
+    grid-row: 2;
+    grid-column: 1 / 3;
+  }
+  .wt-row-next {
+    grid-row: 2;
+    grid-column: 3;
+  }
+  .wt-row-age {
+    grid-row: 2;
+    grid-column: 4;
+  }
+  .wt-surface .wt-band-head {
+    padding-inline: 10px;
+  }
+  .wt-surface .wt-band-fold {
+    padding-inline: 10px;
+  }
+}
+@media (max-width: 640px) {
+  .wt-surface .wt-views a,
+  .wt-surface .wt-band-chip {
+    min-height: 44px;
+  }
+  .wt-pilot-head-meta {
+    margin-left: 0;
+  }
+  .wt-pilot-head-meta .wt-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .wt-surface .wt-band-fold {
+    min-height: 44px;
+  }
+  /* The lanes filters reserve a first cell for their switch; here the project takes the row. */
+  .wt-pilot-bar .wt-filters #work-task-project {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Forced colours drop backgrounds: selection is carried by borders, weight and underline. */
+@media (forced-colors: active) {
+  .wt-surface .wt-views a[aria-current="page"] {
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+  .wt-surface .wt-band-chip[aria-pressed="true"] {
+    text-decoration: underline;
+    border-width: 2px;
+    border-bottom-width: 4px;
+  }
+  .wt-row-activity rect[data-day="idle"] {
+    opacity: 1;
+  }
+  .wt-row-activity rect.wt-today {
+    stroke: currentColor;
+    stroke-width: 2px;
+  }
+  .wt-rail-step[data-state="done"] svg {
+    opacity: 1;
+  }
+}

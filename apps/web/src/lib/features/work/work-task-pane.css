@@ -1,0 +1,131 @@
+/* The task beside the list (`detail=side`): the list stays the page, the task is one of its panes. */
+.wt-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(460px, 42vw, 760px);
+  gap: 0 16px;
+  align-items: start;
+}
+.wt-surface.wt-pane {
+  position: sticky;
+  top: 0;
+  max-height: 100dvh;
+  padding: 0 20px 28px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--wt-paper);
+  border: 1px solid var(--wt-line);
+  border-radius: 10px;
+}
+.wt-pane-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  justify-content: space-between;
+  padding: 12px 0 10px;
+  margin-bottom: 12px;
+  background: var(--wt-paper);
+  border-bottom: 1px solid var(--wt-line);
+}
+.wt-pane .wt-task-head {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.wt-pane .wt-task-title-heading {
+  font-size: 19px;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.wt-pane .wt-journal {
+  padding: 4px 12px 10px;
+}
+.wt-pane .wt-history-top {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.wt-pane-bar .wt-button {
+  width: auto;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+/* The pinned cells paint the row's background, so the selection sets the variable they read. */
+.wt-task-row[aria-current="true"] {
+  --wt-row-bg: var(--wt-tint);
+
+  background: var(--wt-row-bg);
+}
+.wt-task-row[aria-current="true"] .wt-task-summary {
+  box-shadow:
+    inset 3px 0 0 var(--wt-accent),
+    1px 0 0 var(--wt-line);
+}
+/* The Pilot's compact row shown in the pane. */
+.wt-row[aria-current="true"],
+.wt-row[aria-current="true"]:hover {
+  background: var(--wt-tint);
+  box-shadow: inset 3px 0 0 var(--wt-accent);
+}
+@media (forced-colors: active) {
+  .wt-surface .wt-row[aria-current="true"] .wt-row-title {
+    font-weight: 700;
+    text-decoration: underline;
+  }
+}
+/* Beside the pane the Pilot board is narrower than the viewport its breakpoints read. Below the
+   width its six columns need (982px), it takes the two-line row the Pilot uses on narrow screens,
+   so the next step and the age are never clipped. */
+.wt-split .wt-pilot-board {
+  container: wt-pilot-board / inline-size;
+}
+@container wt-pilot-board (max-width: 981px) {
+  .wt-split .wt-pilot-colhead,
+  .wt-split .wt-row-activity {
+    display: none;
+  }
+  .wt-split .wt-pilot-cols {
+    padding: 0 10px;
+  }
+  .wt-split .wt-row {
+    grid-template-columns: 84px 74px minmax(0, 1fr) 40px;
+    row-gap: 3px;
+    padding-block: 7px;
+  }
+  .wt-split .wt-row-task {
+    grid-column: 2 / -1;
+  }
+  .wt-split .wt-row .wt-rail {
+    grid-row: 2;
+    grid-column: 1 / 3;
+  }
+  .wt-split .wt-row-next {
+    grid-row: 2;
+    grid-column: 3;
+  }
+  .wt-split .wt-row-age {
+    grid-row: 2;
+    grid-column: 4;
+  }
+}
+/* The root keeps scrolled-to elements clear of the report's sticky toolbar (scroll-padding-top).
+   The pane sticks to the top of the viewport, inside that padding: focusing one of its first
+   controls made the browser scroll the whole list to reveal an element that cannot move. The Work
+   page has no such toolbar, so the padding is dropped while the pane is shown. */
+:root:has(.wt-split) {
+  scroll-padding-top: 0;
+}
+/* Too narrow for two columns: the pane lies over the list instead of squeezing it. */
+@media (max-width: 1180px) {
+  .wt-split {
+    display: block;
+  }
+  .wt-surface.wt-pane {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 40;
+    width: min(100vw, 560px);
+    max-height: none;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: -12px 0 40px #0003;
+  }
+}
