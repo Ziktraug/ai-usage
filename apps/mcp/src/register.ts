@@ -5,8 +5,11 @@ import { fileURLToPath } from 'node:url';
 import {
   createCodexMcpCommandRunner,
   type McpRegistrationResult,
+  OpenCodeMcpRegistrationError,
+  type OpenCodeMcpRegistrationTarget,
   registerCodexMcp,
   registerJsonMcp,
+  registerOpenCodeMcp,
 } from '@ai-usage/mcp-adapter/registration';
 import { resolveUsageRuntimePaths } from '@ai-usage/usage-engine-control/node';
 
@@ -17,6 +20,31 @@ export interface McpRegistrationCommandOptions {
   readonly homeDirectory?: string;
 }
 
+/**
+ * The file OpenCode's own `opencode mcp add --global` edits: `$OPENCODE_CONFIG_DIR`, else `opencode` under
+ * `$XDG_CONFIG_HOME` or `~/.config`. One absolute path selects a single configuration file instead.
+ */
+const openCodeTarget = (
+  argv: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  homeDirectory: string,
+): OpenCodeMcpRegistrationTarget => {
+  const configPath = argv[1];
+  if (configPath !== undefined) {
+    if (!(path.isAbsolute(configPath) && argv.length === 2)) {
+      throw new Error('OpenCode MCP registration expects at most one absolute opencode.json or opencode.jsonc path.');
+    }
+    return { kind: 'config-file', path: configPath };
+  }
+  const directory =
+    environment.OPENCODE_CONFIG_DIR ??
+    path.join(environment.XDG_CONFIG_HOME || path.join(homeDirectory, '.config'), 'opencode');
+  if (!path.isAbsolute(directory)) {
+    throw new Error('OpenCode configuration directory must be an absolute path.');
+  }
+  return { kind: 'config-directory', path: directory };
+};
+
 export const runMcpRegistrationCommand = async ({
   argv,
   cwd = process.cwd(),
@@ -24,8 +52,10 @@ export const runMcpRegistrationCommand = async ({
   homeDirectory = os.homedir(),
 }: McpRegistrationCommandOptions): Promise<McpRegistrationResult> => {
   const mode = argv[0];
-  if (mode !== 'codex' && mode !== 'json') {
-    throw new Error('Usage: ai-usage MCP registration expects codex or json <absolute-config-path>.');
+  if (mode !== 'codex' && mode !== 'json' && mode !== 'opencode') {
+    throw new Error(
+      'Usage: ai-usage MCP registration expects codex, opencode [absolute-config-path] or json <absolute-config-path>.',
+    );
   }
   const paths = resolveUsageRuntimePaths({
     cwd,
@@ -48,6 +78,13 @@ export const runMcpRegistrationCommand = async ({
       registration,
     });
   }
+  if (mode === 'opencode') {
+    return await registerOpenCodeMcp({
+      privateStatePath: paths.stateDirectory,
+      registration,
+      target: openCodeTarget(argv, environment, paths.homeDirectory),
+    });
+  }
   if (argv.length !== 1) {
     throw new Error('Codex MCP registration takes no additional arguments.');
   }
@@ -63,13 +100,27 @@ export const runMcpRegistrationCommand = async ({
   });
 };
 
+/**
+ * What a failed registration writes to stderr. An OpenCode refusal names its reason and gives the entry to add by
+ * hand; every other failure stays one fixed line, so no private path or system error reaches the terminal.
+ */
+export const describeMcpRegistrationFailure = (error: unknown): string =>
+  error instanceof OpenCodeMcpRegistrationError
+    ? [
+        `ai-usage MCP registration failed (${error.reason}): ${error.message}`,
+        'Nothing was written. Merge this into your OpenCode configuration by hand:',
+        error.manualSnippet,
+        '',
+      ].join('\n')
+    : 'ai-usage MCP registration failed.\n';
+
 if (import.meta.main) {
   try {
     const result = await runMcpRegistrationCommand({ argv: process.argv.slice(2) });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.kind === 'refused-unmanaged' ? 2 : 0;
-  } catch {
-    process.stderr.write('ai-usage MCP registration failed.\n');
+  } catch (error) {
+    process.stderr.write(describeMcpRegistrationFailure(error));
     process.exitCode = 1;
   }
 }

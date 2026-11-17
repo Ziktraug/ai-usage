@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import { lstat, open, realpath, rename, rm } from 'node:fs/promises';
+import { access, lstat, open, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { projectionLockIdentityForTarget, withSkillProjectionLock } from '@ai-usage/skills/projection-lock';
 
@@ -67,11 +67,21 @@ const sameIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
 const sameObjectIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
   left.dev === right.dev && left.ino === right.ino;
 
+const maxConfigBytes = 1024 * 1024;
+
+class UnsafeTargetFileError extends Error {
+  override readonly name = 'UnsafeTargetFileError';
+
+  constructor() {
+    super('ai-usage MCP registration target must be a regular non-symlink file.');
+  }
+}
+
 const observeFile = async (filePath: string): Promise<FileIdentity | null> => {
   try {
     const stats = await lstat(filePath);
     if (stats.isSymbolicLink() || !stats.isFile()) {
-      throw new Error('ai-usage MCP registration target must be a regular non-symlink file.');
+      throw new UnsafeTargetFileError();
     }
     return identityOf(stats);
   } catch (error) {
@@ -93,7 +103,7 @@ const assertUnchanged = async (filePath: string, observed: FileIdentity | null):
 };
 
 const readObservedText = async (filePath: string, observed: FileIdentity): Promise<string> => {
-  if (observed.size > 1024 * 1024) {
+  if (observed.size > maxConfigBytes) {
     throw new Error('ai-usage MCP registration target exceeds its byte limit.');
   }
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are combined bitwise.
@@ -123,6 +133,33 @@ const assertParentIdentity = async (directory: string, canonical: string, observ
     (await realpath(directory)) !== canonical
   ) {
     throw new Error('ai-usage MCP registration directory changed after inspection.');
+  }
+};
+
+/** Writes the document beside the target and renames it over it, unless the directory or target changed since inspection. */
+const replaceObservedDocument = async (input: {
+  readonly canonicalDirectory: string;
+  readonly configPath: string;
+  readonly directory: string;
+  readonly document: Record<string, unknown>;
+  readonly observed: FileIdentity | null;
+  readonly parentIdentity: FileIdentity;
+}): Promise<void> => {
+  const temporaryPath = path.join(input.directory, `.${path.basename(input.configPath)}.${randomUUID()}.tmp`);
+  const handle = await open(temporaryPath, 'wx', input.observed?.mode ?? 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(input.document, null, 2)}\n`, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await assertParentIdentity(input.directory, input.canonicalDirectory, input.parentIdentity);
+    await assertUnchanged(input.configPath, input.observed);
+    await rename(temporaryPath, input.configPath);
+  } catch (error) {
+    await rm(temporaryPath, { force: true });
+    throw error;
   }
 };
 
@@ -182,21 +219,203 @@ export const registerJsonMcp = async (input: {
       ...document,
       mcpServers: { ...servers, [registeredMcpServerName]: input.registration },
     };
-    const temporaryPath = path.join(directory, `.${path.basename(configPath)}.${randomUUID()}.tmp`);
-    const handle = await open(temporaryPath, 'wx', observed?.mode ?? 0o600);
-    try {
-      await handle.writeFile(`${JSON.stringify(updated, null, 2)}\n`, 'utf8');
-      await handle.sync();
-    } finally {
-      await handle.close();
+    await replaceObservedDocument({
+      canonicalDirectory,
+      configPath,
+      directory,
+      document: updated,
+      observed,
+      parentIdentity,
+    });
+    return { kind: 'created', serverName: registeredMcpServerName };
+  });
+};
+
+export type OpenCodeMcpRegistrationFailureReason =
+  | 'directory-missing'
+  | 'directory-unsafe'
+  | 'jsonc-not-rewritable'
+  | 'malformed-document'
+  | 'target-not-regular-file'
+  | 'target-not-writable'
+  | 'target-too-large';
+
+const openCodeFailureMessages: Record<OpenCodeMcpRegistrationFailureReason, string> = {
+  'directory-missing': 'The OpenCode configuration directory does not exist.',
+  'directory-unsafe': 'The OpenCode configuration directory is a symlink or is reached through one.',
+  'jsonc-not-rewritable':
+    'The OpenCode configuration file holds comments or trailing commas that a rewrite would drop.',
+  'malformed-document':
+    'The OpenCode configuration file is not a JSON or JSONC object with object-valued mcp and mcp.servers.',
+  'target-not-regular-file': 'The OpenCode configuration file is a symlink or not a regular file.',
+  'target-not-writable': 'The OpenCode configuration file or its directory is read-only.',
+  'target-too-large': 'The OpenCode configuration file exceeds the 1 MiB registration limit.',
+};
+
+const openCodeEntry = (registration: McpStdioRegistration) => ({
+  type: 'local' as const,
+  command: [registration.command, ...registration.args],
+});
+
+/** The `mcp.servers` document an operator pastes when registration refuses to rewrite their configuration. */
+export const openCodeMcpManualSnippet = (registration: McpStdioRegistration): string =>
+  JSON.stringify({ mcp: { servers: { [registeredMcpServerName]: openCodeEntry(registration) } } }, null, 2);
+
+/** A typed, path-free refusal to rewrite an OpenCode configuration; nothing was written when it is thrown. */
+export class OpenCodeMcpRegistrationError extends Error {
+  readonly manualSnippet: string;
+  override readonly name = 'OpenCodeMcpRegistrationError';
+  readonly reason: OpenCodeMcpRegistrationFailureReason;
+
+  constructor(
+    reason: OpenCodeMcpRegistrationFailureReason,
+    registration: McpStdioRegistration,
+    options?: ErrorOptions,
+  ) {
+    super(openCodeFailureMessages[reason], options);
+    this.manualSnippet = openCodeMcpManualSnippet(registration);
+    this.reason = reason;
+  }
+}
+
+/** OpenCode reads both names with comments and trailing commas allowed; `opencode mcp add` prefers the first. */
+const openCodeConfigFileNames = ['opencode.json', 'opencode.jsonc'] as const;
+
+export type OpenCodeMcpRegistrationTarget =
+  /** The first existing of `opencode.json` and `opencode.jsonc` in the directory, else a new `opencode.json`. */
+  | { readonly kind: 'config-directory'; readonly path: string }
+  /** One `opencode.json` or `opencode.jsonc` file, for example a project configuration. */
+  | { readonly kind: 'config-file'; readonly path: string };
+
+const openCodeEntryMatches = (value: unknown, registration: McpStdioRegistration): boolean => {
+  const expected = openCodeEntry(registration);
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    value.type === expected.type &&
+    Array.isArray(value.command) &&
+    value.command.length === expected.command.length &&
+    value.command.every((entry, index) => entry === expected.command[index])
+  );
+};
+
+const hasErrorCode = (error: unknown, codes: readonly string[]): boolean =>
+  isRecord(error) && typeof error.code === 'string' && codes.includes(error.code);
+
+const parsedOrNull = (parse: (text: string) => unknown, text: string): { readonly value: unknown } | null => {
+  try {
+    return { value: parse(text) };
+  } catch {
+    return null;
+  }
+};
+
+const pathExists = async (filePath: string): Promise<boolean> => {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if (hasErrorCode(error, ['ENOENT'])) {
+      return false;
     }
+    throw error;
+  }
+};
+
+const notWritableCodes = ['EACCES', 'EPERM', 'EROFS'] as const;
+
+export const registerOpenCodeMcp = async (input: {
+  readonly privateStatePath: string;
+  readonly registration: McpStdioRegistration;
+  readonly target: OpenCodeMcpRegistrationTarget;
+}): Promise<McpRegistrationResult> => {
+  validRegistration(input.registration);
+  const refusal = (reason: OpenCodeMcpRegistrationFailureReason, cause?: unknown): OpenCodeMcpRegistrationError =>
+    new OpenCodeMcpRegistrationError(reason, input.registration, cause === undefined ? undefined : { cause });
+  const targetPath = path.resolve(input.target.path);
+  if (
+    input.target.kind === 'config-file' &&
+    !openCodeConfigFileNames.some((fileName) => fileName === path.basename(targetPath))
+  ) {
+    throw new Error('ai-usage MCP OpenCode registration target has an unsupported filename.');
+  }
+  const directory = input.target.kind === 'config-file' ? path.dirname(targetPath) : targetPath;
+  const canonicalDirectory = await realpath(directory).catch((error: unknown) => {
+    throw hasErrorCode(error, ['ENOENT']) ? refusal('directory-missing', error) : error;
+  });
+  const parentStats = await lstat(directory);
+  if (parentStats.isSymbolicLink() || !parentStats.isDirectory() || canonicalDirectory !== directory) {
+    throw refusal('directory-unsafe');
+  }
+  const parentIdentity = identityOf(parentStats);
+  const lockIdentity = await projectionLockIdentityForTarget(directory);
+  return await withSkillProjectionLock(input.privateStatePath, lockIdentity, async () => {
+    await assertParentIdentity(directory, canonicalDirectory, parentIdentity);
+    let configPath = targetPath;
+    if (input.target.kind === 'config-directory') {
+      const candidates = openCodeConfigFileNames.map((fileName) => path.join(directory, fileName));
+      const existing = await Promise.all(candidates.map(pathExists));
+      configPath = candidates[existing.indexOf(true)] ?? path.join(directory, openCodeConfigFileNames[0]);
+    }
+    const observed = await observeFile(configPath).catch((error: unknown) => {
+      throw error instanceof UnsafeTargetFileError ? refusal('target-not-regular-file', error) : error;
+    });
+    let document: Record<string, unknown> = {};
+    let rewritable = true;
+    if (observed !== null) {
+      if (observed.size > maxConfigBytes) {
+        throw refusal('target-too-large');
+      }
+      const text = await readObservedText(configPath, observed);
+      const strict = parsedOrNull(JSON.parse, text);
+      // A document that is only valid as JSONC is read, never rewritten: a rewrite would drop its comments.
+      const parsed = strict ?? parsedOrNull(Bun.JSONC.parse, text);
+      if (!(parsed && isRecord(parsed.value))) {
+        throw refusal('malformed-document');
+      }
+      document = parsed.value;
+      rewritable = strict !== null;
+    }
+    const mcp = document.mcp === undefined ? {} : document.mcp;
+    if (!isRecord(mcp)) {
+      throw refusal('malformed-document');
+    }
+    const servers = mcp.servers === undefined ? {} : mcp.servers;
+    if (!isRecord(servers)) {
+      throw refusal('malformed-document');
+    }
+    // OpenCode still merges the deprecated `mcp.<name>` form into `mcp.servers`, so a same-name entry there is unmanaged too.
+    if (mcp[registeredMcpServerName] !== undefined) {
+      return { kind: 'refused-unmanaged', reason: 'existing-server-differs', serverName: registeredMcpServerName };
+    }
+    const existing = servers[registeredMcpServerName];
+    if (existing !== undefined) {
+      return openCodeEntryMatches(existing, input.registration)
+        ? { kind: 'unchanged', serverName: registeredMcpServerName }
+        : { kind: 'refused-unmanaged', reason: 'existing-server-differs', serverName: registeredMcpServerName };
+    }
+    if (!rewritable) {
+      throw refusal('jsonc-not-rewritable');
+    }
+    const updated = {
+      ...document,
+      mcp: { ...mcp, servers: { ...servers, [registeredMcpServerName]: openCodeEntry(input.registration) } },
+    };
     try {
-      await assertParentIdentity(directory, canonicalDirectory, parentIdentity);
-      await assertUnchanged(configPath, observed);
-      await rename(temporaryPath, configPath);
+      // A rename would replace a read-only file through its writable directory; the operator's mode is a refusal.
+      await Promise.all(
+        [directory, ...(observed === null ? [] : [configPath])].map((entry) => access(entry, fs.constants.W_OK)),
+      );
+      await replaceObservedDocument({
+        canonicalDirectory,
+        configPath,
+        directory,
+        document: updated,
+        observed,
+        parentIdentity,
+      });
     } catch (error) {
-      await rm(temporaryPath, { force: true });
-      throw error;
+      throw hasErrorCode(error, notWritableCodes) ? refusal('target-not-writable', error) : error;
     }
     return { kind: 'created', serverName: registeredMcpServerName };
   });
