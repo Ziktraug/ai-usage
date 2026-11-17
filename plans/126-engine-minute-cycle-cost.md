@@ -180,3 +180,279 @@ bun run verify
 ```
 
 Real-data proof on a **copy** of the live store: run the engine with `AI_USAGE_PERF=1` before and after, sample `VmRSS` at 1 s for ≥ 5 cycles each, compare the served revision fingerprints for an identical input snapshot, and report the per-phase tables.
+
+## Execution notes
+
+### 2026-11-18 — Steps 0, 1 and 2 (branch `perf/engine-minute-cycle-cost`, from `037edb83`)
+
+Steps 3 to 5 are not started. Figures only: no prompt, title, project name or
+home path was copied out of the histories.
+
+#### Drift since `a42fc803`
+
+The drift check reports 982 insertions and 745 deletions over nine of the
+thirteen in-scope files (the collector-coherence fixes of 2026-11: explicit row
+retirement, OpenCode `session_v2`, Claude checkout attribution, Codex transcript
+retirement). `perf.ts`, `live.ts`, `served-report-store.ts` and `file-sink.ts`
+are unchanged. Every seam named in the plan still exists, but the line numbers
+in "Measured current state" no longer apply, and the OpenCode figures in
+section C are out of date: the collector now reads two databases and emits 878
+rows (209 from the stable database), not ~722.
+
+The plan names one `perf.ts`. There are two identical copies, one in
+`local-collectors` and one in `report-data`, because the package boundary
+rules forbid `report-data` from importing `local-collectors` or
+`effect-runtime`. Both were extended the same way. `usage-engine-runtime` had
+none and now imports the `local-collectors` one through a new `./perf` export.
+
+#### Step 0 — measurement target
+
+`docs/local-store-upgrade.md` ("Update") documents the supported way, with no
+code change. The engine ran as `bun --no-env-file src/main.ts serve --port 0`
+from `apps/usage-engine`, with:
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `AI_USAGE_DATABASE_PATH` | `<base>/home/.config/ai-usage/usage-store.sqlite` | the copy; its writer lock sits beside it |
+| `AI_USAGE_ENGINE_STATE_DIR` | `<base>/state` (`0700`) | own `rendezvous.json`, inbox and delegation directory |
+| `AI_USAGE_HOME` | `<base>/home` | harness caches, `machine.json` and `config.json` stay apart from the live ones |
+| `AI_USAGE_ROOT_DIR` | `<base>/root` | a copy of `ai-usage.config.ts`; the engine repairs modes under this root, so it must not be the main checkout |
+| `AI_USAGE_LOG_DIR` | `<base>/logs` | wide events outside the repository |
+| `AI_USAGE_TEMP_ROOT` | `<base>/tmp` | startup recovery sweeps this root |
+| `AI_USAGE_PERF` | `1` | spans on stderr |
+
+`<base>` is a `0700` directory outside the repository. `--port 0` asks the
+kernel for a free loopback port, published only in the copy's
+`rendezvous.json`, so it cannot collide with another engine.
+
+- **Copy.** `VACUUM INTO` through a read-only connection: 450.7 MB live,
+  372.8 MB copy, `user_version` 5, `integrity_check` ok, live mtime unchanged
+  by the copy, no `-wal` or `-shm` left beside the live store.
+- **Histories.** `AI_USAGE_HOME` moves the history roots together with the
+  caches. The measurement home therefore holds a symlink for each history root
+  (Claude Code, Claude Desktop, Codex, Cursor, OpenCode, RTK) and copies of
+  `machine.json` and `config.json`. The no-follow readers refuse a symlink only
+  as the last path component, so a linked parent directory is read normally.
+  Proof that the same histories were read under the same machine identity: the
+  first pass matched the copy's rows (Codex 5,130 unchanged and 2 updated of
+  5,132; Claude 1,173 unchanged, 17 inserted, 1 updated of 1,191; Cursor 87 of
+  87 unchanged). `machine.json` is copied because the engine creates a new
+  machine identity when the file is missing, and the copy's rows belong to the
+  existing one.
+- **Isolation.** The live store's mtime is not conclusive, and it did change
+  during the measurement. A watcher looked, twice per second for 9 minutes
+  (1,082 scans), for descriptors under the live `~/.config/ai-usage` in the
+  measurement engine, in its descendants (`gh`, `git`, `codex`, `claude`,
+  `opencode`) and in every `bun`, `node` and `sqlite3` process. The
+  measurement processes held none. The 34 hits all belong to one other
+  process, a separate engine (`bun` under `bun` under `systemd`) that held
+  the live store read-write for about 17 seconds, during which its mtime
+  changed 13 times. Over the three sessions (1,593 one-second samples of
+  `/proc/<pid>/fd`) the measurement engine's only `usage-store.sqlite*`
+  descriptors were the copy's.
+- **Publication.** Each session published on the copy (43 changed revisions
+  over 26 minutes); the copy holds three retained revisions, the current one
+  with 10,350 rows.
+- **What the engine did outside the copy.** It read the histories, and its
+  read-only SQLite connections created `-wal`/`-shm` siblings beside the
+  OpenCode and Cursor databases, as every engine does. The provider-usage and
+  GitHub sources ran as they do in a live engine (read-only lookups);
+  `jira.issues` never ran in this setup.
+- **Warm caches.** A first 5.5-minute session rebuilt the harness caches from
+  empty (first Codex pass 19.7 s CPU, first Claude pass 9.7 s). The measured
+  sessions started with those caches on disk, like a restarted live engine.
+
+#### Step 1 — one cycle per phase
+
+Setup: two sessions on the copy, 12 and 9 minutes, first 2 minutes of each
+dropped (startup), 15 one-minute windows kept. Other agent sessions were
+running on the machine (load average about 9 on 20 threads), so 5 to 9 Claude
+rows changed on every pass. Wall-clock durations are noisy for the same
+reason; **CPU seconds and RSS are the primary figures**. `VmRSS`, `RssAnon`,
+`RssFile` and the process CPU counters were sampled once per second.
+
+Totals in PR #61's terms (engine process only):
+
+| | CPU per active minute | Peak RSS | Idle floor |
+| --- | --- | --- | --- |
+| PR #61, after (`50fcf631`) | 3.5–4.0 s | 1,330 MB | not recorded |
+| Plan, live engine 2026-11-03 | ~16 s | 2,100 MB (`VmHWM` 2,290 MB) | 597–650 MB |
+| Session 1 (9 windows) | median 12.9 s, mean 12.0 s, range 5.4–18.9 s | 1,164 MB (median per minute 963 MB; `VmHWM` 1,176 MB) | median 229 MB |
+| Session 2 (6 windows) | median 10.4 s, mean 10.8 s, range 6.1–19.7 s | 1,163 MB (median per minute 1,072 MB; `VmHWM` 1,203 MB) | median 231 MB |
+
+CPU is about three times PR #61's level. Peak RSS is already under PR #61's
+1,330 MB, and well under the 2.1 GB the plan observed: this measurement does
+not reproduce the plan's 1.4 GB swing or its 600 MB floor. The setups differ
+(vacuumed copy, engine a few minutes old, collectors changed since
+`a42fc803`), so the gap to 2026-11-03 is not explained by phase. The floor
+rose from 171 MB to 243 MB over the first 9 minutes and from 183 MB to 248 MB
+over 6; neither session was long enough to say where it settles.
+
+Per phase, session 1 (medians per run; shares are of the engine's CPU and of
+the summed RSS increases, per minute):
+
+| Phase | Runs/min | Duration | CPU | ΔRSS | Δheap | Rows | CPU s/min | CPU share | RSS climb share |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **publication** | 1.89 | 3,263 ms | 3,493 ms | +394 MB | +98 MB | 10,349 | 6.49 | **54.0 %** | **45.8 %** |
+| — assemble (stored capture) | 1.89 | 508 ms | 581 ms | +53 MB | +33 MB | 10,349 | 1.16 | 9.7 % | 8.2 % |
+| — store side (revision minus assemble, difference of medians) | 1.89 | 2,193 ms | 2,404 ms | +380 MB | +65 MB | 10,349 | 4.48 | 37.2 % | 40.5 % |
+| — retain revisions | 1.89 | 230 ms | 199 ms | +3 MB | 0 | – | 0.38 | 3.2 % | 0.7 % |
+| — reconcile work branches | 1.89 | 239 ms | 213 ms | −13 MB | 0 | – | 0.45 | 3.7 % | 0 % |
+| **opencode.sessions** | 1.00 | 194 ms | 113 ms | +15 MB | 0 | 878 | 1.62 | 13.5 % | 5.3 % |
+| **codex.sessions** | 1.00 | 1,242 ms | 1,310 ms | +363 MB | +83 MB | 5,132 | 1.43 | 11.9 % | **25.9 %** |
+| — collect | 1.00 | 481 ms | 671 ms | +229 MB | +62 MB | 5,132 | 0.72 | 6.0 % | 15.5 % |
+| — importSkillObservations | 1.00 | 269 ms | 243 ms | +22 MB | 0 | 95,553 | 0.26 | 2.1 % | 1.9 % |
+| — importLocalRows | 1.00 | 144 ms | 150 ms | +98 MB | +21 MB | 5,132 | 0.16 | 1.4 % | 6.1 % |
+| — importCodexWorkObservations | 1.00 | 72 ms | 52 ms | +3 MB | 0 | 5,132 | 0.06 | 0.5 % | 0.4 % |
+| **rtk.savings** | 2.67 | 301 ms | 319 ms | +47 MB | +21 MB | 7,291 | 0.89 | 7.4 % | 11.4 % |
+| **claude.sessions** | 1.00 | 317 ms | 295 ms | +146 MB | +10 MB | 1,195 | 0.37 | 3.1 % | 10.5 % |
+| — collect | 1.00 | 163 ms | 215 ms | +132 MB | +10 MB | 1,195 | 0.27 | 2.2 % | 9.2 % |
+| — importLocalRows | 1.00 | 75 ms | 47 ms | +25 MB | 0 | 1,195 | 0.05 | 0.5 % | 1.5 % |
+| checkouts.status | 0.33 | 833 ms | 560 ms | −166 MB | +2 MB | 142 | 0.18 | 1.5 % | 0 % |
+| github.pull-requests | 0.22 | 33,633 ms | 722 ms | −111 MB | −6 MB | 24 | 0.16 | 1.3 % | 0 % |
+| claude.desktop-sessions | 1.00 | 87 ms | 59 ms | +14 MB | +1 MB | 129 | 0.07 | 0.6 % | 1.0 % |
+| the three usage-limits sources | 0.22 each | ~1,700 ms | 32–153 ms | ≤ 0 | ≤ 0 | 1 | 0.06 | 0.6 % | 0 % |
+| cursor.sessions | 1.00 | 32 ms | 13 ms | −9 MB | 0 | 87 | 0.02 | 0.1 % | 0 % |
+| **All top-level spans** | | | | | | | 11.29 | 94 % | 100 % |
+
+Coverage: the top-level spans (one per source run, one per publication) hold
+94 % of the engine's CPU, 96 % of its busy seconds and 100 % of the RSS
+increases seen by the sampler (session 2: 94 %, 99 %, 100 %). The peak RSS
+sample of every one of the 15 windows falls inside a publication.
+
+Session 2 gives the same order: publication 47.9 % of CPU and 49.2 % of the
+climb, opencode.sessions 16.7 % and 1.3 %, codex.sessions 14.9 % and 29.2 %,
+rtk.savings 7.2 % and 7.8 %, claude.sessions 3.4 % and 11.6 %.
+
+Inside one publication (session 2, 11 full publications, medians; the steps
+were timed through the store's existing publication-phase visitor, installed
+by a measurement-only entry script kept outside the repository):
+
+| Step | Duration | CPU | Share of the publication | ΔRSS | Δheap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| assemble the stored capture | 504 ms | 588 ms | 20 % | +32 MB | +33 MB |
+| validate, serialize and fingerprint it | 510 ms | 597 ms | 21 % | +155 MB | +43 MB |
+| insert the served projection | 746 ms | 865 ms | 30 % | +240 MB | +24 MB |
+| validate the staged revision | 608 ms | 683 ms | 24 % | +7 MB | +40 MB |
+| commit | 200 ms | 167 ms | 6 % | −1 MB | 0 |
+
+What the table says:
+
+- **Publication is the cycle.** It takes about half of the CPU and of the RSS
+  climb, 1.5 to 1.9 times per minute, and every one of the 26 publications in
+  the measured windows changed the revision. Four fifths of it is store-side work on a
+  capture that is already assembled: 10,349 rows are serialized,
+  fingerprinted, inserted and validated again each time. A fingerprint
+  computed before assembly, the plan's first idea for 3c, would not skip
+  anything on this workload, because the capture does change.
+- **OpenCode is cheap except after its own usage-limits call.** A pass costs
+  about 0.1 s when the database is unchanged. A full read costs 4.0 to 6.4 s
+  of CPU and happened 6 times in 21 minutes, each time one pass after a failed
+  open. The sequence: the `opencode.usage-limits` source runs the OpenCode
+  CLI; the next read-only open of the live database then fails the reader's
+  own identity check ("identity changed while opening"), so that pass reads
+  only the stable database (209 rows instead of 878); the pass after it finds
+  a changed WAL stat and reads everything. Of the 7 failed opens in the two
+  sessions, 5 directly follow that source and the other 2 coincide with the
+  separate engine working on the live store. The message row counts were the
+  same in all six full reads: nothing had been written. The likely mechanism,
+  inferred from the WAL file's mtime and not verified in the code: the CLI's
+  exit removes the WAL file and the engine's own read-only open creates it
+  again between the two identity readings.
+- **Codex rebuilds everything for two rows.** Each pass loads and parses the
+  session cache for 5,531 rollouts (95,553 skill observations), compares
+  5,132 rows and 95,553 observations, and updates 2 rows (104 on 6 of the 21
+  passes). It raises RSS by about 360 MB, a quarter of the climb.
+- **`rtk.savings` runs after each changed session source**, 2.3 to 2.7 times
+  per minute, re-reads 7,291 rows each time and changed nothing in any of its
+  62 runs.
+- **Claude is already proportional in CPU** (0.3 s for 5 to 9 changed rows of
+  1,195), but reading its cache still raises RSS by about 130 MB.
+
+Peak composition. At the peak, `RssAnon` is 96 % of RSS (1,123 of 1,164 MB)
+and `RssFile` stays at 41 MB, so it is not mapped files. At the highest-RSS
+step of a publication (medians): RSS 879 MB, `heapUsed` 232 MB (27 %),
+`heapTotal` 400 MB, `external` 140 MB. About a quarter of the peak is live JS
+heap; heap capacity and external buffers account for about 60 %; the rest is
+native (SQLite and allocator pages not yet returned). The climb is object and
+string churn around SQLite writes more than SQLite page cache.
+
+Garbage from earlier phases is still live in later ones. The heap floor at
+the start of a phase is 38 to 40 MB. Of 136 back-to-back transitions (gap
+≤ 5 s), 79 start at least 50 MB above it: `codex.sessions → rtk.savings`
++114 MB (median), `rtk.savings → publication` +93 MB in session 1 and +125 MB
+in session 2. It decides the peak: the 9 publications that started with
+`heapUsed` ≥ 150 MB (RSS 500–710 MB, right after `codex.sessions`) ended at
+1,034–1,149 MB, except two at 667 and 723 MB; the 17 that started below
+150 MB ended at 638–903 MB. Step 5's second condition holds on this
+measurement.
+
+Against the ≥ 20 % rule of Step 3:
+
+| Branch | CPU share | RSS climb share | Meets the rule |
+| --- | ---: | ---: | --- |
+| 3a OpenCode incremental | 13.5 % / 16.7 % | 5.3 % / 1.3 % | No |
+| 3b collection and import (Codex, Claude, `rtk.savings`, Cursor) | 22.5 % / 25.7 % | 47.8 % / 48.6 % | Yes as a group; alone, only `codex.sessions`, on the climb (25.9 % / 29.2 %) |
+| 3c publication | 54.0 % / 47.9 % | 45.8 % / 49.2 % | Yes; the assembly alone is 9.7 % |
+
+Two STOP conditions are close and belong to the operator, not to this
+execution: the remaining cost of 3c is publication freshness (the capture
+changes on every publication while agent sessions are active), and Step 5
+needs a publication cap.
+
+Sources and import paths added since `50fcf631`. Sources:
+`opencode.usage-limits` (5 min), `claude.desktop-sessions` (1 min),
+`executors.capabilities` (15 min), `checkouts.status` (5 min),
+`github.pull-requests` (10 min) and `jira.issues` (2 min);
+`cursor.commit-attribution` was removed. Import paths in `source-adapters.ts`:
+`retireLocalRows`, `importCodexWorkObservations`,
+`importClaudeDesktopSessions`, `importExecutorObservations`,
+`importCheckoutStatusObservations`, `importPullRequestObservations`,
+`importJiraIssueObservations`, `attachDeclaredWorkThreadSessions` and
+`applyWorkThreadWaitObservations`. Together the new sources cost 0.4 s of CPU
+per minute (4 %). `github.pull-requests` ran 11 times in 26 minutes against a
+10-minute cadence, in bursts of one run per minute, each holding the single
+worker for about 33 s of wall time: it delays the session sources behind it
+without costing CPU.
+
+Spans. `withPerfSpan` now reports `cpuMs`, `rssMbBefore`, `rssMbAfter`,
+`heapUsedMbBefore` and `heapUsedMbAfter` beside `durationMs`, on success and
+on failure. `cpuMs` is not in the plan's list; it was added because Step 3's
+rule is stated in CPU time. All figures are process-wide. New spans:
+`aiUsage.engine.source.<id>` around every source run,
+`aiUsage.engine.publication` around every publication,
+`aiUsage.engine.<source>.collect`, `.importLocalRows`, `.retireLocalRows`,
+`.importSkillObservations` and `.importCodexWorkObservations` in the session
+sources, `aiUsage.engine.rtk.savings.queryEnrichableUsageRows` and
+`.upsertContributions`, and `aiUsage.engine.publication.assemble`,
+`.revision`, `.retainRevisions` and `.reconcileWorkBranches`. With
+`AI_USAGE_PERF` unset the wrapped effect is returned as is.
+
+Not measured: the store-side publication steps have no span in the
+repository (the split above came from the test-only phase visitor); a
+minute with no agent activity; the cause of the two Codex rows rewritten on
+every pass; the engine after hours of uptime.
+
+#### Step 2 — the file sink's circuit recovers
+
+`file-sink.ts`: an open circuit drops and counts every record; once the
+cool-down has passed (30 s) and the blocked append has released the worker,
+the next record is tried as a probe. The first append that succeeds closes
+the circuit. A probe that misses its deadline reopens it with a doubled
+cool-down, up to 10 minutes. Any other probe failure is counted and leaves the
+circuit half-open. There is no timer: recovery is decided when a record
+arrives. The state is reported by a new `circuit-closed` warning with the
+dropped and failed counters, by a `circuit` field in the file transport's
+diagnostics and by `circuit=` in the shutdown loss summary. ADR 0014 carries
+the rule as a dated amendment.
+
+Tests (`file-sink.test.ts`): a slow append opens the circuit and drops the two
+records queued behind it; a record inside the cool-down is dropped; after the
+cool-down a fast append closes the circuit and later records are written,
+with `accepted`, `dropped` and `failed` matching; a failed probe doubles the
+cool-down up to the cap; no probe starts while the blocked append still holds
+the worker; an ordinary probe failure leaves the circuit half-open; the
+shutdown summary names the state.
+
+The measured sessions did not exercise the recovery: no append missed its
+deadline in 26 minutes.
