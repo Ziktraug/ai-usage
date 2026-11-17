@@ -19,6 +19,7 @@ import {
 } from '@ai-usage/local-collectors/github-pull-requests';
 import { discoverJiraIssues } from '@ai-usage/local-collectors/jira-issue-discovery';
 import { JIRA_NOT_INSTALLED_MESSAGE, observeJiraIssues } from '@ai-usage/local-collectors/jira-issues';
+import { withPerfSpan } from '@ai-usage/local-collectors/perf';
 import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavingsResult,
@@ -431,7 +432,16 @@ export const createSessionSource = (input: {
         return sourceUnavailableResult();
       }
       const adapter = yield* input.adapter();
-      const collection = yield* collectHarness(adapter).pipe(
+      const collection = yield* withPerfSpan(
+        `aiUsage.engine.${input.id}.collect`,
+        collectHarness(adapter),
+        (result) => ({
+          observations: result.observations?.length ?? 0,
+          retiredSourceSessionIds: result.retiredSourceSessionIds?.length ?? 0,
+          rows: result.rows.length,
+          workObservations: result.workObservations?.length ?? 0,
+        }),
+      ).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
         Effect.mapError((cause) => sourceFailure(input.id, cause)),
       );
@@ -452,12 +462,22 @@ export const createSessionSource = (input: {
         total: rows.length,
       });
       yield* abortIfRequested(context.signal);
-      const imported = yield* importLocalRows({
-        dbPath: input.dbPath,
-        importedAt: input.now(),
-        machine: input.machine,
-        rows,
-      }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      const imported = yield* withPerfSpan(
+        `aiUsage.engine.${input.id}.importLocalRows`,
+        importLocalRows({
+          dbPath: input.dbPath,
+          importedAt: input.now(),
+          machine: input.machine,
+          rows,
+        }),
+        (result) => ({
+          fleetChanged: result.fleetChanged,
+          inserted: result.inserted,
+          rows: rows.length,
+          unchanged: result.unchanged,
+          updated: result.updated,
+        }),
+      ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       // Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
       // collector positively declared, never what it stopped emitting. A session both emitted and
       // declared retired in one pass is a collector defect; the emitted row wins (it was observed as
@@ -469,13 +489,17 @@ export const createSessionSource = (input: {
       const conflictingRetirements = declaredRetirements.filter((sessionId) => emittedSessionIds.has(sessionId));
       const retirements = declaredRetirements.filter((sessionId) => !emittedSessionIds.has(sessionId));
       yield* abortIfRequested(context.signal);
-      const retired = yield* retireLocalRows({
-        dbPath: input.dbPath,
-        harnessKey: adapter.metadata.key,
-        machine: input.machine,
-        retiredAt: input.now(),
-        sourceSessionIds: retirements,
-      }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      const retired = yield* withPerfSpan(
+        `aiUsage.engine.${input.id}.retireLocalRows`,
+        retireLocalRows({
+          dbPath: input.dbPath,
+          harnessKey: adapter.metadata.key,
+          machine: input.machine,
+          retiredAt: input.now(),
+          sourceSessionIds: retirements,
+        }),
+        (result) => ({ declared: retirements.length, retired: result.retired, skipped: result.skipped }),
+      ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       if (retired.retired > 0) {
         yield* reportProgress(context, {
           completed: rows.length,
@@ -509,16 +533,25 @@ export const createSessionSource = (input: {
       const importedObservations =
         collection.observations === undefined
           ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
-          : yield* importSkillObservations({
-              collection: {
-                completeness: preparedObservations.completeness,
-                harnessKey: adapter.metadata.key,
-              },
-              dbPath: input.dbPath,
-              machineId: input.machine.id,
-              minimumExposureObservedAt,
-              observations: preparedObservations.observations,
-            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+          : yield* withPerfSpan(
+              `aiUsage.engine.${input.id}.importSkillObservations`,
+              importSkillObservations({
+                collection: {
+                  completeness: preparedObservations.completeness,
+                  harnessKey: adapter.metadata.key,
+                },
+                dbPath: input.dbPath,
+                machineId: input.machine.id,
+                minimumExposureObservedAt,
+                observations: preparedObservations.observations,
+              }),
+              (result) => ({
+                inserted: result.inserted,
+                observations: preparedObservations.observations.length,
+                unchanged: result.unchanged,
+                updated: result.updated,
+              }),
+            ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       const importedWork = { changed: 0, rejected: 0 };
       const workObservations = collection.workObservations ?? [];
       const observedAt = input.now().toISOString();
@@ -526,15 +559,20 @@ export const createSessionSource = (input: {
       // must also survive: they clear request evidence from an earlier parse of that session.
       for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
         yield* abortIfRequested(context.signal);
-        const batch = yield* importCodexWorkObservations({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          observedAt,
-          observations: workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH),
-          ...(codexCollectionId === null
-            ? {}
-            : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
-        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        const observations = workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH);
+        const batch = yield* withPerfSpan(
+          `aiUsage.engine.${input.id}.importCodexWorkObservations`,
+          importCodexWorkObservations({
+            dbPath: input.dbPath,
+            machineId: input.machine.id,
+            observedAt,
+            observations,
+            ...(codexCollectionId === null
+              ? {}
+              : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
+          }),
+          (result) => ({ changed: result.changed, observations: observations.length, rejected: result.rejected }),
+        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
         importedWork.changed += batch.changed;
         importedWork.rejected += batch.rejected;
       }
@@ -591,11 +629,15 @@ const createRtkSource = (input: {
       if (availability.availability !== 'detected') {
         return sourceUnavailableResult();
       }
-      const stored = yield* queryEnrichableUsageRows({
-        dbPath: input.dbPath,
-        originMachineIds: [input.machine.id],
-        sourceAuthorities: ['local-observed'],
-      }).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
+      const stored = yield* withPerfSpan(
+        'aiUsage.engine.rtk.savings.queryEnrichableUsageRows',
+        queryEnrichableUsageRows({
+          dbPath: input.dbPath,
+          originMachineIds: [input.machine.id],
+          sourceAuthorities: ['local-observed'],
+        }),
+        (result) => ({ rows: result.rows.length }),
+      ).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
       const collectorRows: CollectorRow[] = stored.rows.map(({ row }) => ({
         ...row,
         ...(row.source?.sourcePath ? { projectPath: row.source.sourcePath } : {}),
@@ -614,14 +656,21 @@ const createRtkSource = (input: {
         phase: 'importing',
         total: enriched.rows.length,
       });
-      const imported = yield* upsertRtkSavingsContributions({
-        contributions: enriched.rows.flatMap((row, index) => {
-          const contribution = rtkContributionFromRow(row);
-          const storedRow = stored.rows[index];
-          return contribution && storedRow ? [{ contribution, rowKey: storedRow.rowKey }] : [];
+      const contributions = enriched.rows.flatMap((row, index) => {
+        const contribution = rtkContributionFromRow(row);
+        const storedRow = stored.rows[index];
+        return contribution && storedRow ? [{ contribution, rowKey: storedRow.rowKey }] : [];
+      });
+      const imported = yield* withPerfSpan(
+        'aiUsage.engine.rtk.savings.upsertContributions',
+        upsertRtkSavingsContributions({ contributions, dbPath: input.dbPath }),
+        (result) => ({
+          contributions: contributions.length,
+          inserted: result.inserted,
+          unchanged: result.unchanged,
+          updated: result.updated,
         }),
-        dbPath: input.dbPath,
-      }).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
+      ).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
       return {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: stored.rows.length,

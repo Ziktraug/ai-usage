@@ -142,6 +142,69 @@ describe('live usage engine publication', () => {
     expect(current.rowCount).toBe(0);
   });
 
+  test('reports the publication phases with memory figures when AI_USAGE_PERF is enabled, and nothing otherwise', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan126-engine-perf-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'state', 'usage.sqlite');
+    const storage = createLocalHistoryStorage(path.join(root, 'home'));
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(importLocalRows({ dbPath, machine, rows: [] }));
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine, updatedAt: now }));
+    let publicationTime = now;
+    const publisher = createDurableReportPublisher({
+      configCwd: root,
+      dbPath,
+      machine,
+      now: () => publicationTime,
+      storage,
+    });
+    const previousPerfFlag = process.env.AI_USAGE_PERF;
+    const previousConsoleError = console.error;
+    const lines: string[] = [];
+    console.error = (...values: unknown[]) => {
+      lines.push(values.map(String).join(' '));
+    };
+    try {
+      // The first publication always assembles; the second one renews it without assembling.
+      process.env.AI_USAGE_PERF = '1';
+      const measured = await publisher.publish();
+      const perfLines = lines.splice(0).filter((line) => line.startsWith('[perf] aiUsage.engine.publication.'));
+      delete process.env.AI_USAGE_PERF;
+      publicationTime = new Date('2026-07-30T10:01:00.000Z');
+      const silent = await publisher.publish();
+
+      expect(measured.changed).toBe(true);
+      expect(silent).toMatchObject({ changed: false, revision: measured.revision });
+      expect(lines.filter((line) => line.startsWith('[perf] '))).toEqual([]);
+      expect(perfLines.map((line) => line.split(' ').slice(1, 3).join(' '))).toEqual([
+        'aiUsage.engine.publication.assemble ok',
+        'aiUsage.engine.publication.revision ok',
+        'aiUsage.engine.publication.retainRevisions ok',
+      ]);
+      expect(perfLines[0]).toContain(' rows=0');
+      expect(perfLines[1]).toContain(' changed=true');
+      for (const line of perfLines) {
+        for (const field of [
+          'cpuMs=',
+          'durationMs=',
+          'heapUsedMbAfter=',
+          'heapUsedMbBefore=',
+          'rssMbAfter=',
+          'rssMbBefore=',
+        ]) {
+          expect(line).toContain(` ${field}`);
+        }
+      }
+    } finally {
+      console.error = previousConsoleError;
+      if (previousPerfFlag === undefined) {
+        delete process.env.AI_USAGE_PERF;
+      } else {
+        process.env.AI_USAGE_PERF = previousPerfFlag;
+      }
+    }
+  });
+
   test('keeps a committed revision successful when post-commit retention fails', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-retention-'));
     roots.push(root);

@@ -439,6 +439,63 @@ describe('source control plane', () => {
     await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
   });
 
+  test('wraps each source run and each publication in a perf span when AI_USAGE_PERF is enabled', async () => {
+    const previousPerfFlag = process.env.AI_USAGE_PERF;
+    const previousConsoleError = console.error;
+    const lines: string[] = [];
+    console.error = (...values: unknown[]) => {
+      lines.push(values.map(String).join(' '));
+    };
+    process.env.AI_USAGE_PERF = '1';
+    try {
+      const program = Effect.scoped(
+        Effect.gen(function* () {
+          const events = yield* Ref.make<string[]>([]);
+          const { store } = yield* makePolicyStore();
+          const publication = yield* makePublication(events);
+          const control = yield* createSourceControl({
+            policyStore: store,
+            publication: publication.port,
+            sources: new Map([
+              ['claude.sessions', fakeSource('claude.sessions', () => Effect.succeed(successResult(true)))],
+            ]),
+          });
+
+          yield* waitFor(
+            control,
+            (view) =>
+              view.publication.revision !== undefined && sourceView(view, 'claude.sessions').lastOutcome === 'success',
+          );
+        }),
+      );
+      await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
+    } finally {
+      console.error = previousConsoleError;
+      if (previousPerfFlag === undefined) {
+        delete process.env.AI_USAGE_PERF;
+      } else {
+        process.env.AI_USAGE_PERF = previousPerfFlag;
+      }
+    }
+
+    const source = lines.find((line) => line.startsWith('[perf] aiUsage.engine.source.claude.sessions ok '));
+    const published = lines.find((line) => line.startsWith('[perf] aiUsage.engine.publication ok '));
+    expect(source).toContain(' changed=true inputCount=1 outputCount=1 trigger=');
+    expect(published).toContain(' changed=true');
+    for (const line of [source, published]) {
+      for (const field of [
+        'cpuMs=',
+        'durationMs=',
+        'heapUsedMbAfter=',
+        'heapUsedMbBefore=',
+        'rssMbAfter=',
+        'rssMbBefore=',
+      ]) {
+        expect(line).toContain(` ${field}`);
+      }
+    }
+  });
+
   test('detects disabled sources, runs enabled sources, and publishes bootstrap last', async () => {
     const capture = withCaptureSink();
     const program = Effect.scoped(

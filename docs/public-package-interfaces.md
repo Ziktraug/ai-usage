@@ -131,6 +131,11 @@ restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
 - `./collectors`: per-harness normalized collectors.
 - `./datasets`: collected report datasets.
 - `./rtk-enrichment`: RTK enrichment collection.
+- `./perf`: the `AI_USAGE_PERF` span helpers (duration, CPU, resident set and
+  JS heap around an effect or a promise; off by default, the wrapped work is
+  returned untouched). `usage-engine-runtime` uses them for its source,
+  import and publication spans. `report-data` keeps its own copy because it
+  may depend on neither this package nor `effect-runtime`.
 
 Only `usage-engine-runtime` may compose these production seams. Exact local
 detail, machine config, scheduling, report assembly, and usage-store access do
