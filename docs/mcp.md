@@ -104,30 +104,52 @@ deprecated but still merged into `mcp.servers`. This mode writes only
 
 - Without a path the target is the global configuration directory:
   `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else
-  `~/.config/opencode`. The file is the first of `opencode.json` and
-  `opencode.jsonc` that exists there, else a new `opencode.json`. Only that
-  file is inspected; the directory itself is never created.
+  `~/.config/opencode` (an empty variable counts as unset, as in OpenCode).
+  The file written is the first of `opencode.json` and `opencode.jsonc` that
+  exists there, else a new `opencode.json`. The directory itself is never
+  created.
 - One absolute path named `opencode.json` or `opencode.jsonc` registers into
   that file instead, for example a project configuration.
-- A same-name entry is unmanaged, and answers `refused-unmanaged`, when it
-  differs from the entry above or sits in the deprecated `mcp.<name>` form.
+- OpenCode loads both files of a directory as separate documents, so the one
+  that is not written is read too, in both forms of the command and under the
+  same rules (regular file, 1 MiB, readable JSON or JSONC). It is never
+  written.
+- A same-name entry is unmanaged when it differs from the entry above or sits
+  in the deprecated `mcp.<name>` form. One such entry in either file answers
+  `refused-unmanaged`. Otherwise the managed entry in either file answers
+  `unchanged` and nothing is written.
 - A document that is valid only as JSONC is read but never rewritten: it can
   answer `unchanged` or `refused-unmanaged`, and any needed write is refused
   because it would drop the comments.
+- A write re-serializes the whole document with two-space indentation: every
+  key and value is kept, the original spacing and line layout are not.
 
-When the target cannot be rewritten safely nothing is written, the command
-exits 1, and stderr names the reason and prints the `mcp.servers` entry to
-merge by hand:
+When the configuration cannot be inspected or rewritten safely for one of the
+reasons below, nothing is written, the command exits 1, and stderr names the
+reason (with the system error code behind it, when there is one) and prints
+the `mcp.servers` entry to merge by hand. "A file" is the one to write or the
+other of the two names beside it.
 
 | Reason | Meaning |
 | --- | --- |
+| `unsupported-file-name` | the explicit path is not named `opencode.json` or `opencode.jsonc` |
 | `directory-missing` | the configuration directory does not exist |
+| `directory-not-a-directory` | the directory path, or one of its parents, is not a directory |
+| `directory-not-accessible` | the directory cannot be reached or searched (permission denied) |
 | `directory-unsafe` | the directory is a symlink, or is reached through one |
-| `target-not-regular-file` | the file is a symlink (for example a declaratively managed configuration) or not a regular file |
-| `target-not-writable` | the file or its directory is read-only; a read-only file is not replaced through its writable directory |
-| `target-too-large` | the file is over 1 MiB |
-| `jsonc-not-rewritable` | the file holds comments or trailing commas |
-| `malformed-document` | the file is not a JSON or JSONC object, or `mcp` or `mcp.servers` is not an object |
+| `target-not-regular-file` | a file is a symlink (for example a declaratively managed configuration) or not a regular file |
+| `target-not-readable` | a file cannot be read (permission denied) |
+| `target-too-large` | a file is over 1 MiB |
+| `malformed-document` | a file is not a JSON or JSONC object, or its `mcp` or `mcp.servers` is not an object |
+| `jsonc-not-rewritable` | the file to write holds comments or trailing commas |
+| `target-not-writable` | the file to write or its directory is read-only; a read-only file is not replaced through its writable directory |
+
+Every other failure writes the single fixed line described under
+[Failure and redaction rules](#failure-and-redaction-rules) and prints no
+entry: a wrong argument (a relative path, an extra argument, a relative
+configuration directory), a directory or file that changed between inspection
+and write, a lock that could not be taken, and any other system error such as
+a full disk. The temporary file is removed when a write fails.
 
 ## Failure and redaction rules
 
@@ -147,9 +169,10 @@ merge by hand:
   partial answer.
 - Private paths, bearer tokens and database errors never enter MCP
   diagnostics; a startup or registration failure writes one fixed line to
-  stderr and exits 1. An OpenCode registration refusal adds its reason and the
-  entry to merge by hand, which names the registered command and no other
-  path.
+  stderr and exits 1. An OpenCode registration refusal adds its reason, a
+  system error code when there is one, and the entry to merge by hand, which
+  names the registered command and no other path; the refusal keeps no system
+  error message.
 - The server process calls no remote service. Harness-specific configuration
   cannot change tool names or schemas.
 
