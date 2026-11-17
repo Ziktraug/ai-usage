@@ -50,22 +50,27 @@ Registration is always an explicit operator action:
 
 ```sh
 bun run mcp:register:codex
+bun run mcp:register:opencode
+bun apps/mcp/src/register.ts opencode /absolute/project/opencode.json
 bun apps/mcp/src/register.ts json /absolute/project/.mcp.json
 ```
 
-Both register the stdio command `<bun executable> <checkout>/apps/mcp/src/main.ts`
+All register the stdio command `<bun executable> <checkout>/apps/mcp/src/main.ts`
 under the server name `ai-usage-memory`. The name is kept from the Memory era
 on purpose: it is the identity existing operator configurations already hold,
 and renaming it would leave the old entry behind and register a duplicate
 (ADR 0084). The server itself reports `ai-usage` in its MCP handshake. A
 hand-written registration may use any name;
 [Delegation](delegation.md#2-register-the-mcp-server-in-your-client) shows
-Claude Code, Codex and generic `mcpServers` examples.
+Claude Code, Codex, OpenCode and generic `mcpServers` examples.
 
 - The JSON mode takes one absolute path whose file name is `.mcp.json` or
   `mcp.json` and writes the `mcpServers` shape (the Claude Code project-scope
-  and Cursor convention). There is no OpenCode mode; other stdio clients are
-  pointed at `bun run mcp` by hand.
+  and Cursor convention). Other stdio clients are pointed at `bun run mcp` by
+  hand.
+- The OpenCode mode writes `mcp.servers.ai-usage-memory` as
+  `{ "type": "local", "command": [<bun executable>, <main.ts>] }`, the entry
+  `opencode mcp add` writes; see [OpenCode registration](#opencode-registration).
 - Codex is changed only through its CLI (`codex mcp list --json`, then
   `codex mcp add`, then a second list to verify the result), never by editing
   `config.toml`. The target is `$CODEX_HOME/config.toml`, else
@@ -76,13 +81,53 @@ Claude Code, Codex and generic `mcpServers` examples.
   regular file, checks that the directory and file did not change between
   inspection and write, and refuses existing files or Codex list output over
   1 MiB.
-- The JSON file is replaced atomically: a temporary file in the same directory
-  (mode `0600` for a new file, the existing mode otherwise) is written, synced
-  and renamed over the target. Unrelated keys and servers are preserved.
+- The JSON or OpenCode file is replaced atomically: a temporary file in the
+  same directory (mode `0600` for a new file, the existing mode otherwise) is
+  written, synced and renamed over the target. Unrelated keys and servers are
+  preserved.
 - It is idempotent: an identical entry answers `unchanged`. A same-name entry
   with different content is unmanaged and answers `refused-unmanaged` (exit
   code 2); it is never overwritten.
 - No credential is written to any configuration.
+
+### OpenCode registration
+
+The shape below was read from OpenCode 2.2.6 (its bundled configuration schema
+and its `opencode mcp add` command) and from the published schema at
+<https://opencode.ai/config.json>. OpenCode reads `opencode.json` and
+`opencode.jsonc`, both with comments and trailing commas allowed, from its
+global configuration directory and from the project. Local servers live under
+`mcp.servers.<name>` with `type: "local"`, a `command` array, and optional
+`environment` and `disabled`. The older `mcp.<name>` form (with `enabled`) is
+deprecated but still merged into `mcp.servers`. This mode writes only
+`mcp.servers` and was not checked against OpenCode releases that predate it.
+
+- Without a path the target is the global configuration directory:
+  `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else
+  `~/.config/opencode`. The file is the first of `opencode.json` and
+  `opencode.jsonc` that exists there, else a new `opencode.json`. Only that
+  file is inspected; the directory itself is never created.
+- One absolute path named `opencode.json` or `opencode.jsonc` registers into
+  that file instead, for example a project configuration.
+- A same-name entry is unmanaged, and answers `refused-unmanaged`, when it
+  differs from the entry above or sits in the deprecated `mcp.<name>` form.
+- A document that is valid only as JSONC is read but never rewritten: it can
+  answer `unchanged` or `refused-unmanaged`, and any needed write is refused
+  because it would drop the comments.
+
+When the target cannot be rewritten safely nothing is written, the command
+exits 1, and stderr names the reason and prints the `mcp.servers` entry to
+merge by hand:
+
+| Reason | Meaning |
+| --- | --- |
+| `directory-missing` | the configuration directory does not exist |
+| `directory-unsafe` | the directory is a symlink, or is reached through one |
+| `target-not-regular-file` | the file is a symlink (for example a declaratively managed configuration) or not a regular file |
+| `target-not-writable` | the file or its directory is read-only; a read-only file is not replaced through its writable directory |
+| `target-too-large` | the file is over 1 MiB |
+| `jsonc-not-rewritable` | the file holds comments or trailing commas |
+| `malformed-document` | the file is not a JSON or JSONC object, or `mcp` or `mcp.servers` is not an object |
 
 ## Failure and redaction rules
 
@@ -102,11 +147,14 @@ Claude Code, Codex and generic `mcpServers` examples.
   partial answer.
 - Private paths, bearer tokens and database errors never enter MCP
   diagnostics; a startup or registration failure writes one fixed line to
-  stderr and exits 1.
+  stderr and exits 1. An OpenCode registration refusal adds its reason and the
+  entry to merge by hand, which names the registered command and no other
+  path.
 - The server process calls no remote service. Harness-specific configuration
   cannot change tool names or schemas.
 
 The adapter's protocol tests run through the SDK's in-memory transport
 (`packages/mcp-adapter/src/index.test.ts`, `delegation.test.ts`); registration
-is covered by `registration.test.ts`, and the process composition by
-`apps/mcp/src/main.test.ts` and `delegation.integration.test.ts`.
+is covered by `registration.test.ts` and `apps/mcp/src/register.test.ts`, and
+the process composition by `apps/mcp/src/main.test.ts` and
+`delegation.integration.test.ts`.

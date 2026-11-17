@@ -94,6 +94,26 @@ inside the tool name):
 `-c 'mcp_servers.ai-usage.tools={"delegation.start"={approval_mode="approve"}}'`.
 Qualify, status, list and evaluate need no approval.
 
+**OpenCode** (`~/.config/opencode/opencode.json`, or a project `opencode.json`):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "ai-usage": {
+        "type": "local",
+        "command": ["bun", "--no-env-file", "/path/to/ai-usage/apps/mcp/src/main.ts"]
+      }
+    }
+  }
+}
+```
+
+`bun run mcp:register:opencode` writes that entry for you under the name
+`ai-usage-memory`, and prints it instead when your configuration cannot be
+rewritten safely (comments, a symlinked or read-only file); see
+[Local MCP server](mcp.md#opencode-registration).
+
 **Any stdio MCP client** (generic `mcpServers` JSON):
 
 ```json

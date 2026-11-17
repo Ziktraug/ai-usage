@@ -471,8 +471,9 @@ read-only tool `work.context`, with exactly one of `checkoutPath` (absolute),
 `sinceDays` accepts 1–3650, default 30. Scope is applied before the bounded
 selection, so unrelated projects cannot occupy the requested project's page.
 Adding the tool registers nothing: the server is still
-registered only by your explicit `bun run mcp:register:codex` (or your own
-harness configuration); see [`docs/mcp.md`](docs/mcp.md).
+registered only by your explicit `bun run mcp:register:codex` or
+`bun run mcp:register:opencode` (or your own harness configuration); see
+[`docs/mcp.md`](docs/mcp.md).
 
 The answer (`schemaVersion` 1) has `waiting` (human requests and external
 waits with dated declarations or supported native request evidence),

@@ -106,9 +106,13 @@ over-emphasize it or build ROI/break-even features on top of it.
 
 ## MCP
 
-- MCP registration beyond Codex and `mcpServers` JSON files.
-  Problem: `apps/mcp/src/register.ts` supports `codex` and a `.mcp.json` /
-  `mcp.json` `mcpServers` file; OpenCode has no mode.
-  Impact: OpenCode operators edit configuration by hand.
-  Acceptance: an OpenCode mode with the same lock, identity, and
-  unmanaged-entry refusal rules, or a documented manual snippet.
+- OpenCode registration into configurations it refuses today.
+  Problem: the `opencode` mode of `apps/mcp/src/register.ts` rewrites strict
+  JSON only. It refuses a document with comments or trailing commas, and a
+  symlinked file is refused before it is read.
+  Impact: those operators merge the printed `mcp.servers` entry by hand, and a
+  declaratively managed (symlinked) configuration that already holds the entry
+  is still answered with a refusal instead of `unchanged`.
+  Acceptance: a comment-preserving edit of JSONC documents, and a read-only
+  answer for symlinked targets, under the same lock, identity and
+  unmanaged-entry refusal rules.
