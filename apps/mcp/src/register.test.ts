@@ -66,6 +66,22 @@ describe('ai-usage MCP registration command, OpenCode mode', () => {
     expect(JSON.parse(await readFile(path.join(explicitDirectory, 'opencode.json'), 'utf8'))).toEqual(managedDocument);
   });
 
+  test('treats an empty OPENCODE_CONFIG_DIR as unset, as OpenCode does', async () => {
+    const { homeDirectory, root } = await fixture();
+    const directory = path.join(root, '.config', 'opencode');
+    await mkdir(directory, { recursive: true });
+
+    await expect(
+      runMcpRegistrationCommand({
+        argv: ['opencode'],
+        cwd: root,
+        environment: { OPENCODE_CONFIG_DIR: '' },
+        homeDirectory,
+      }),
+    ).resolves.toMatchObject({ kind: 'created' });
+    expect(await readdir(directory)).toEqual(['opencode.json']);
+  });
+
   test('registers into one explicit absolute configuration file', async () => {
     const { homeDirectory, root } = await fixture();
     const project = path.join(root, 'project');
@@ -116,7 +132,7 @@ describe('ai-usage MCP registration command, OpenCode mode', () => {
     const described = describeMcpRegistrationFailure(failure);
     expect(described).toBe(
       [
-        'ai-usage MCP registration failed (target-not-regular-file): The OpenCode configuration file is a symlink or not a regular file.',
+        'ai-usage MCP registration failed (target-not-regular-file): An OpenCode configuration file is a symlink or not a regular file.',
         'Nothing was written. Merge this into your OpenCode configuration by hand:',
         openCodeMcpManualSnippet(registration),
         '',
@@ -124,6 +140,26 @@ describe('ai-usage MCP registration command, OpenCode mode', () => {
     );
     expect(described).not.toContain(root);
     expect(await readFile(declarative, 'utf8')).toBe('{}\n');
+  });
+
+  test('adds the system error code to a refusal that has one, and refuses an unsupported file name', async () => {
+    const { homeDirectory, root } = await fixture();
+    const run = (argv: readonly string[]) =>
+      runMcpRegistrationCommand({ argv, cwd: root, environment: {}, homeDirectory }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    const [missing] = describeMcpRegistrationFailure(await run(['opencode'])).split('\n');
+    expect(missing).toBe(
+      'ai-usage MCP registration failed (directory-missing, ENOENT): The OpenCode configuration directory does not exist.',
+    );
+    const unsupported = describeMcpRegistrationFailure(await run(['opencode', path.join(root, 'config.json')]));
+    expect(unsupported).toStartWith(
+      'ai-usage MCP registration failed (unsupported-file-name): An OpenCode configuration file is named opencode.json or opencode.jsonc.\n',
+    );
+    expect(unsupported).toContain(openCodeMcpManualSnippet(registration));
+    expect(`${missing}${unsupported}`).not.toContain(root);
   });
 
   test('keeps every other failure to one fixed line', () => {

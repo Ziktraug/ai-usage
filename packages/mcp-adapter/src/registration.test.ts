@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { inspect } from 'node:util';
 import {
   type CodexMcpCommandRunner,
   OpenCodeMcpRegistrationError,
@@ -20,6 +21,21 @@ afterEach(async () => {
   await Promise.all(restoredModes.splice(0).map(({ mode, target }) => chmod(target, mode)));
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
+
+const permissionsOf = async (target: string): Promise<number> => {
+  // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise AND.
+  return (await stat(target)).mode & 0o777;
+};
+
+/** Runs under the common 022 umask, which would narrow a group-writable replacement file. */
+const underDefaultUmask = async <Result>(run: () => Promise<Result>): Promise<Result> => {
+  const previous = process.umask(0o022);
+  try {
+    return await run();
+  } finally {
+    process.umask(previous);
+  }
+};
 
 const fixture = async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-mcp-registration-'));
@@ -58,6 +74,17 @@ describe('ai-usage MCP registration', () => {
       },
       unrelated: true,
     });
+  });
+
+  test('keeps the mode of a replaced JSON file whatever the umask', async () => {
+    const { privateStatePath, registration, root } = await fixture();
+    const configPath = path.join(root, '.mcp.json');
+    await writeFile(configPath, '{}\n');
+    await chmod(configPath, 0o664);
+
+    await underDefaultUmask(() => registerJsonMcp({ configPath, privateStatePath, registration }));
+
+    expect(await permissionsOf(configPath)).toBe(0o664);
   });
 
   test('refuses a same-name unmanaged JSON entry without changing the file', async () => {
@@ -142,11 +169,6 @@ describe('ai-usage MCP registration for OpenCode', () => {
       jsonPath: path.join(directory, 'opencode.json'),
       managedEntry: { command: [base.registration.command, ...base.registration.args], type: 'local' },
     };
-  };
-
-  const permissionsOf = async (target: string): Promise<number> => {
-    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise AND.
-    return (await stat(target)).mode & 0o777;
   };
 
   const makeReadOnly = async (target: string, mode: number): Promise<void> => {
@@ -346,13 +368,15 @@ describe('ai-usage MCP registration for OpenCode', () => {
       mcp: { servers: { [registeredMcpServerName]: managedEntry } },
     });
 
-    await expect(
-      registerOpenCodeMcp({
-        privateStatePath,
-        registration,
-        target: { kind: 'config-file', path: path.join(project, 'config.json') },
-      }),
-    ).rejects.toThrow('unsupported filename');
+    expect(
+      await refusalOf(
+        registerOpenCodeMcp({
+          privateStatePath,
+          registration,
+          target: { kind: 'config-file', path: path.join(project, 'config.json') },
+        }),
+      ),
+    ).toMatchObject(refusal('unsupported-file-name', registration));
     expect(await readdir(project)).toEqual(['opencode.jsonc']);
   });
 
@@ -401,6 +425,215 @@ describe('ai-usage MCP registration for OpenCode', () => {
       ),
     ).toMatchObject(refusal('directory-missing', registration));
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  test('names a configuration directory that is a file, or that lies under one, for what it is', async () => {
+    const { privateStatePath, registration, root } = await openCodeFixture();
+    const notADirectory = path.join(root, 'plain-file');
+    await writeFile(notADirectory, '{}\n');
+    const register = (target: string) =>
+      registerOpenCodeMcp({ privateStatePath, registration, target: { kind: 'config-directory', path: target } });
+
+    const direct = await refusalOf(register(notADirectory));
+    expect(direct).toMatchObject(refusal('directory-not-a-directory', registration));
+    expect(direct.message).toBe(
+      'The OpenCode configuration directory path, or one of its parents, is not a directory.',
+    );
+    expect(await refusalOf(register(path.join(notADirectory, 'opencode')))).toMatchObject({
+      ...refusal('directory-not-a-directory', registration),
+      systemErrorCode: 'ENOTDIR',
+    });
+    expect(await readFile(notADirectory, 'utf8')).toBe('{}\n');
+  });
+
+  test('refuses a configuration directory it cannot reach or search', async () => {
+    const { directory, directoryTarget, privateStatePath, registration, root } = await openCodeFixture();
+    const locked = path.join(root, 'locked');
+    await mkdir(path.join(locked, 'opencode'), { recursive: true });
+    await makeReadOnly(locked, 0o000);
+
+    expect(
+      await refusalOf(
+        registerOpenCodeMcp({
+          privateStatePath,
+          registration,
+          target: { kind: 'config-directory', path: path.join(locked, 'opencode') },
+        }),
+      ),
+    ).toMatchObject({ ...refusal('directory-not-accessible', registration), systemErrorCode: 'EACCES' });
+
+    await makeReadOnly(directory, 0o600);
+    expect(
+      await refusalOf(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })),
+    ).toMatchObject({ ...refusal('directory-not-accessible', registration), systemErrorCode: 'EACCES' });
+  });
+
+  test('refuses a configuration file it cannot read', async () => {
+    const { directory, directoryTarget, jsonPath, privateStatePath, registration } = await openCodeFixture();
+    await writeFile(jsonPath, '{"model":"m"}\n');
+    await makeReadOnly(jsonPath, 0o000);
+
+    expect(
+      await refusalOf(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })),
+    ).toMatchObject({ ...refusal('target-not-readable', registration), systemErrorCode: 'EACCES' });
+    expect(await readdir(directory)).toEqual(['opencode.json']);
+  });
+
+  test('carries the system error code but no path, cause or directory name', async () => {
+    const { directory, directoryTarget, jsonPath, privateStatePath, registration, root } = await openCodeFixture();
+    const absent = await refusalOf(
+      registerOpenCodeMcp({
+        privateStatePath,
+        registration,
+        target: { kind: 'config-directory', path: path.join(root, 'absent') },
+      }),
+    );
+    await writeFile(jsonPath, '{"model":"m"}\n');
+    await makeReadOnly(jsonPath, 0o000);
+    const unreadable = await refusalOf(
+      registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget }),
+    );
+    await chmod(jsonPath, 0o644);
+    await makeReadOnly(directory, 0o555);
+    const readOnly = await refusalOf(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget }));
+
+    expect([absent, unreadable, readOnly].map(({ reason, systemErrorCode }) => [reason, systemErrorCode])).toEqual([
+      ['directory-missing', 'ENOENT'],
+      ['target-not-readable', 'EACCES'],
+      ['target-not-writable', 'EACCES'],
+    ]);
+    for (const failure of [absent, unreadable, readOnly]) {
+      expect(failure.cause).toBeUndefined();
+      expect(inspect(failure, { depth: 8, showHidden: true })).not.toContain(root);
+    }
+  });
+
+  test('keeps the mode of a replaced configuration file whatever the umask', async () => {
+    const { directoryTarget, jsonPath, privateStatePath, registration } = await openCodeFixture();
+    await writeFile(jsonPath, '{}\n');
+    await chmod(jsonPath, 0o664);
+
+    await underDefaultUmask(() => registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget }));
+
+    expect(await permissionsOf(jsonPath)).toBe(0o664);
+  });
+
+  test('removes its temporary file when the replacement cannot be written to disk', async () => {
+    const { directory, directoryTarget, jsonPath, privateStatePath, registration, root } = await openCodeFixture();
+    const original = '{"model":"m"}\n';
+    await writeFile(jsonPath, original);
+    const probe = await open(path.join(root, 'probe'), 'wx');
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as {
+      writeFile: (this: unknown, data: unknown, ...rest: unknown[]) => Promise<void>;
+    };
+    await probe.close();
+    const writeToDisk = fileHandlePrototype.writeFile;
+    // Only the replacement document names the server; the projection lock writes through the same prototype.
+    const failing = spyOn(fileHandlePrototype, 'writeFile').mockImplementation(function (this: unknown, data, ...rest) {
+      return typeof data === 'string' && data.includes(registeredMcpServerName)
+        ? Promise.reject(Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }))
+        : writeToDisk.call(this, data, ...rest);
+    });
+
+    try {
+      await expect(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })).rejects.toThrow(
+        'ENOSPC',
+      );
+    } finally {
+      failing.mockRestore();
+    }
+    expect(await readdir(directory)).toEqual(['opencode.json']);
+    expect(await readFile(jsonPath, 'utf8')).toBe(original);
+  });
+
+  describe('with opencode.json and opencode.jsonc side by side', () => {
+    const other = { command: ['other'], type: 'local' };
+    const sideBySide = async (json: unknown, jsonc: unknown) => {
+      const base = await openCodeFixture();
+      const originals = { json: `${JSON.stringify(json)}\n`, jsonc: `${JSON.stringify(jsonc)}\n` };
+      await writeFile(base.jsonPath, originals.json);
+      await writeFile(base.jsoncPath, originals.jsonc);
+      const contents = async () => ({
+        json: await readFile(base.jsonPath, 'utf8'),
+        jsonc: await readFile(base.jsoncPath, 'utf8'),
+      });
+      return { ...base, contents, originals };
+    };
+
+    test.each([
+      ['a different mcp.servers entry', { mcp: { servers: { [registeredMcpServerName]: other } } }],
+      ['a deprecated mcp.<name> entry', { mcp: { [registeredMcpServerName]: { ...other, enabled: true } } }],
+    ])('refuses %s of the same name in the file it would not write', async (_label, jsonc) => {
+      const { contents, directoryTarget, originals, privateStatePath, registration } = await sideBySide({}, jsonc);
+
+      await expect(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })).resolves.toEqual({
+        kind: 'refused-unmanaged',
+        reason: 'existing-server-differs',
+        serverName: registeredMcpServerName,
+      });
+      expect(await contents()).toEqual(originals);
+    });
+
+    test('refuses an entry in the other file that overrides the managed one', async () => {
+      const { contents, directoryTarget, originals, privateStatePath, registration } = await sideBySide(
+        { mcp: { servers: { [registeredMcpServerName]: { command: managedCommand, type: 'local' } } } },
+        { mcp: { servers: { [registeredMcpServerName]: other } } },
+      );
+
+      await expect(
+        registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget }),
+      ).resolves.toMatchObject({ kind: 'refused-unmanaged' });
+      expect(await contents()).toEqual(originals);
+    });
+
+    test('answers unchanged, and writes nothing, when the other file already holds the managed entry', async () => {
+      const base = await openCodeFixture();
+      const managed = `${JSON.stringify({ mcp: { servers: { [registeredMcpServerName]: base.managedEntry } } })}\n`;
+      await writeFile(base.jsonPath, '{"model":"m"}\n');
+      await writeFile(base.jsoncPath, managed);
+
+      await expect(
+        registerOpenCodeMcp({
+          privateStatePath: base.privateStatePath,
+          registration: base.registration,
+          target: base.directoryTarget,
+        }),
+      ).resolves.toEqual({ kind: 'unchanged', serverName: registeredMcpServerName });
+      expect(await readFile(base.jsonPath, 'utf8')).toBe('{"model":"m"}\n');
+      expect(await readFile(base.jsoncPath, 'utf8')).toBe(managed);
+    });
+
+    test('inspects the other file for an explicit configuration file too', async () => {
+      const { contents, jsoncPath, originals, privateStatePath, registration } = await sideBySide(
+        { mcp: { servers: { [registeredMcpServerName]: other } } },
+        {},
+      );
+
+      await expect(
+        registerOpenCodeMcp({ privateStatePath, registration, target: { kind: 'config-file', path: jsoncPath } }),
+      ).resolves.toMatchObject({ kind: 'refused-unmanaged' });
+      expect(await contents()).toEqual(originals);
+    });
+
+    test('refuses to write beside a file it cannot inspect', async () => {
+      const { directory, directoryTarget, jsoncPath, jsonPath, privateStatePath, registration, root } =
+        await openCodeFixture();
+      await writeFile(jsonPath, '{}\n');
+      await writeFile(jsoncPath, '{ "mcp": ');
+      expect(
+        await refusalOf(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })),
+      ).toMatchObject(refusal('malformed-document', registration));
+
+      await rm(jsoncPath);
+      const declarative = path.join(root, 'declarative.jsonc');
+      await writeFile(declarative, '{}\n');
+      await symlink(declarative, jsoncPath);
+      expect(
+        await refusalOf(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })),
+      ).toMatchObject(refusal('target-not-regular-file', registration));
+      expect(await readFile(jsonPath, 'utf8')).toBe('{}\n');
+      expect((await readdir(directory)).toSorted()).toEqual(['opencode.json', 'opencode.jsonc']);
+    });
   });
 
   test('refuses a read-only configuration file instead of replacing it through its directory', async () => {

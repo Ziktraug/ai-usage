@@ -21,8 +21,9 @@ export interface McpRegistrationCommandOptions {
 }
 
 /**
- * The file OpenCode's own `opencode mcp add --global` edits: `$OPENCODE_CONFIG_DIR`, else `opencode` under
- * `$XDG_CONFIG_HOME` or `~/.config`. One absolute path selects a single configuration file instead.
+ * The directory OpenCode's own `opencode mcp add --global` edits: `$OPENCODE_CONFIG_DIR`, else `opencode` under
+ * `$XDG_CONFIG_HOME` or `~/.config`; OpenCode reads an empty value of either variable as unset. One absolute path
+ * selects a single configuration file instead.
  */
 const openCodeTarget = (
   argv: readonly string[],
@@ -37,7 +38,7 @@ const openCodeTarget = (
     return { kind: 'config-file', path: configPath };
   }
   const directory =
-    environment.OPENCODE_CONFIG_DIR ??
+    environment.OPENCODE_CONFIG_DIR ||
     path.join(environment.XDG_CONFIG_HOME || path.join(homeDirectory, '.config'), 'opencode');
   if (!path.isAbsolute(directory)) {
     throw new Error('OpenCode configuration directory must be an absolute path.');
@@ -101,13 +102,14 @@ export const runMcpRegistrationCommand = async ({
 };
 
 /**
- * What a failed registration writes to stderr. An OpenCode refusal names its reason and gives the entry to add by
- * hand; every other failure stays one fixed line, so no private path or system error reaches the terminal.
+ * What a failed registration writes to stderr. An OpenCode refusal names its reason, the system error code behind it
+ * when there is one, and the entry to add by hand; every other failure stays one fixed line, so no private path or
+ * system error message reaches the terminal.
  */
 export const describeMcpRegistrationFailure = (error: unknown): string =>
   error instanceof OpenCodeMcpRegistrationError
     ? [
-        `ai-usage MCP registration failed (${error.reason}): ${error.message}`,
+        `ai-usage MCP registration failed (${[error.reason, error.systemErrorCode].filter(Boolean).join(', ')}): ${error.message}`,
         'Nothing was written. Merge this into your OpenCode configuration by hand:',
         error.manualSnippet,
         '',
