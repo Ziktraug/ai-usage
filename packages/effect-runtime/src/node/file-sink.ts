@@ -4,7 +4,13 @@ import path from 'node:path';
 import { Effect, Layer, Ref } from 'effect';
 import type { WideEventSnapshot } from '../model';
 import { serializeWideEventSnapshot } from '../sanitize';
-import { makeEmptyWideEventSinkDiagnostics, noopWideEventSink, WideEventSink, type WideEventSinkShape } from '../sink';
+import {
+  makeEmptyWideEventSinkDiagnostics,
+  noopWideEventSink,
+  type WideEventCircuitState,
+  WideEventSink,
+  type WideEventSinkShape,
+} from '../sink';
 import {
   assertSafeRegularFilePath,
   DEFAULT_LOCK_TIMEOUT_MS,
@@ -17,6 +23,8 @@ const FILE_PREFIX = 'wide-events-';
 const FILE_SUFFIX = '.ndjson';
 const FILE_PATTERN = /^wide-events-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.ndjson$/;
 const DEFAULT_APPEND_TIMEOUT_MS = 1000;
+const DEFAULT_CIRCUIT_COOLDOWN_MS = 30_000;
+const DEFAULT_CIRCUIT_MAX_COOLDOWN_MS = 600_000;
 const DEFAULT_QUEUE_CAPACITY = 128;
 const DEFAULT_DRAIN_TIMEOUT_MS = 2000;
 const DEFAULT_MAX_FILES = 30;
@@ -48,6 +56,10 @@ interface OwnedFileAppendOptions {
 export interface FileWideEventSinkOptions {
   readonly appendLine?: AppendLine;
   readonly appendTimeoutMs?: number;
+  /** How long an open circuit drops records before the next one is tried as a probe. */
+  readonly circuitCooldownMs?: number;
+  /** The cool-down doubles after each probe that misses its deadline, up to this bound. */
+  readonly circuitMaxCooldownMs?: number;
   readonly directory: string;
   readonly drainTimeoutMs?: number;
   readonly lockTimeoutMs?: number;
@@ -62,6 +74,7 @@ export interface FileWideEventSinkOptions {
 export type FileWideEventWarningKind =
   | 'append-failure'
   | 'append-timeout'
+  | 'circuit-closed'
   | 'circuit-open'
   | 'lock-timeout'
   | 'queue-full'
@@ -79,7 +92,8 @@ export interface FileWideEventWarning {
 const WARNING_MESSAGES: Readonly<Record<FileWideEventWarningKind, string>> = {
   'append-failure': 'Wide-event file append failed.',
   'append-timeout': 'Wide-event file append exceeded its deadline; the circuit is open.',
-  'circuit-open': 'Wide-event file delivery is disabled because its circuit is open.',
+  'circuit-closed': 'Wide-event file delivery resumed; the circuit is closed.',
+  'circuit-open': 'Wide-event file delivery is suspended while its circuit is open.',
   'lock-timeout': 'Wide-event file lock acquisition timed out.',
   'queue-full': 'Wide-event file queue is full; the record was dropped.',
   'sweep-failure': 'Wide-event file retention sweep failed.',
@@ -309,6 +323,11 @@ export const createFileWideEventSink = (
           appendLineToOwnedFile(filePath, line, signal, { markProgress })
       : (filePath: string, line: string, signal: AbortSignal) => configuredAppendLine(filePath, line, signal);
   const appendTimeoutMs = options.appendTimeoutMs ?? DEFAULT_APPEND_TIMEOUT_MS;
+  const circuitCooldownMs = Math.max(0, options.circuitCooldownMs ?? DEFAULT_CIRCUIT_COOLDOWN_MS);
+  const circuitMaxCooldownMs = Math.max(
+    circuitCooldownMs,
+    options.circuitMaxCooldownMs ?? DEFAULT_CIRCUIT_MAX_COOLDOWN_MS,
+  );
   const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
@@ -320,7 +339,13 @@ export const createFileWideEventSink = (
 
   const diagnostics = Ref.makeUnsafe(makeEmptyWideEventSinkDiagnostics());
   const pending: WideEventSnapshot[] = [];
-  let circuitOpen = false;
+  // A blocked append opens the circuit. It does not stay open for the life of the process: once
+  // the cool-down has passed and the blocked append has let go of the worker, the next record is
+  // tried as a probe (half-open). The first append that succeeds closes the circuit; a probe that
+  // misses its deadline reopens it with a doubled cool-down.
+  let circuit: WideEventCircuitState = 'closed';
+  let circuitRetryAt = 0;
+  let nextCircuitCooldownMs = circuitCooldownMs;
   let outstanding = 0;
   let resolveIdle: (() => void) | undefined;
   let idle = Promise.resolve();
@@ -374,12 +399,22 @@ export const createFileWideEventSink = (
     }
   };
 
-  const openCircuitAtDeadline = (): void => {
-    if (!circuitOpen) {
-      circuitOpen = true;
-      warnKind('append-timeout');
-      dropPending();
+  const openCircuit = (): void => {
+    if (circuit === 'open') {
+      return;
     }
+    nextCircuitCooldownMs =
+      circuit === 'half-open' ? Math.min(nextCircuitCooldownMs * 2, circuitMaxCooldownMs) : circuitCooldownMs;
+    circuit = 'open';
+    circuitRetryAt = now().getTime() + nextCircuitCooldownMs;
+    warnKind('append-timeout');
+    dropPending();
+  };
+
+  const closeCircuit = (): void => {
+    circuit = 'closed';
+    nextCircuitCooldownMs = circuitCooldownMs;
+    warnKind('circuit-closed');
   };
 
   const appendEvent = async (event: WideEventSnapshot): Promise<void> => {
@@ -403,7 +438,7 @@ export const createFileWideEventSink = (
           (abort) => {
             abortActiveAppend = abort;
           },
-          openCircuitAtDeadline,
+          openCircuit,
         );
         if (lastSweptTarget !== target) {
           try {
@@ -423,7 +458,7 @@ export const createFileWideEventSink = (
 
   const drainQueue = async (): Promise<void> => {
     workerRunning = true;
-    while (!(circuitOpen || disposed)) {
+    while (!(circuit === 'open' || disposed)) {
       const event = pending.shift();
       if (!event) {
         break;
@@ -431,9 +466,12 @@ export const createFileWideEventSink = (
       try {
         await appendEvent(event);
         bump('accepted');
+        if (circuit === 'half-open') {
+          closeCircuit();
+        }
       } catch (error) {
         if (error instanceof AppendBlockedError) {
-          circuitOpen = true;
+          openCircuit();
           bump('failed');
         } else if (error instanceof AppendInterruptedError) {
           bump('dropped');
@@ -448,19 +486,26 @@ export const createFileWideEventSink = (
         markSettled();
       }
     }
-    if (circuitOpen) {
+    if (circuit === 'open') {
       dropPending();
     }
     workerRunning = false;
   };
 
   const enqueue = (event: WideEventSnapshot): void => {
-    if (!accepting || circuitOpen) {
+    if (!accepting) {
       bump('dropped');
-      if (circuitOpen) {
-        warnKind('circuit-open');
-      }
       return;
+    }
+    if (circuit === 'open') {
+      // The blocked append may still hold the worker and the lock long after its deadline; a probe
+      // behind it would only wait, so the circuit stays open until both conditions hold.
+      if (workerRunning || now().getTime() < circuitRetryAt) {
+        bump('dropped');
+        warnKind('circuit-open');
+        return;
+      }
+      circuit = 'half-open';
     }
     if (outstanding >= queueCapacity) {
       bump('dropped');
@@ -513,9 +558,11 @@ export const createFileWideEventSink = (
     submit: (event) => Effect.sync(() => enqueue(event)),
     diagnostics: () =>
       Ref.get(diagnostics).pipe(
-        Effect.map((current) =>
-          disposed && outstanding > 0 ? { ...current, dropped: current.dropped + outstanding } : current,
-        ),
+        Effect.map((current) => ({
+          ...current,
+          circuit,
+          dropped: disposed && outstanding > 0 ? current.dropped + outstanding : current.dropped,
+        })),
       ),
     drain,
     dispose,

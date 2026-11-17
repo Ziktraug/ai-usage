@@ -50,6 +50,7 @@ export {
   makeWideEventSinkLayer,
   noopWideEventSink,
   submitWideEventBestEffort,
+  type WideEventCircuitState,
   WideEventSink,
   type WideEventSinkDiagnostics,
   type WideEventSinkShape,
