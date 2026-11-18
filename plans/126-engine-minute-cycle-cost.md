@@ -931,3 +931,280 @@ engine; it is there to exercise the watermark.
   rewritten on every pass with a changed transcript, +13 to +17 MB).
 - Incremental work observations and retirements (see the limits above).
 - The `opencode.sessions` passes that report a change without changing a row.
+
+### 2026-11-18 — Step 4, before and after on real data
+
+Measured on `9b3b73ab` (Steps 0 to 2, 3c with its review fixes, 3b merged)
+against the plan's base. Figures only: no prompt, title, project name or home
+path was copied out of the histories or the stores. Step 5 is not started.
+
+#### Setup
+
+- **Trees.** BEFORE is `037edb83`, the plan's base. It has no perf spans
+  (they came with Step 1), so it gives the sampler totals and, from the engine's
+  wide events on stderr, the publications and the source runs, but no per-phase
+  table. The per-phase BEFORE therefore comes from `edf868af` (Steps 0 to 2:
+  the spans and the sink fix, no Step 3 change), run from a `git archive`
+  export outside the repository with the base tree's dependencies (same
+  lockfile). AFTER is `9b3b73ab`.
+- **Inputs.** Each run had its own base: a `0700` directory outside the
+  repository with a fresh `VACUUM INTO` copy of the live store taken through a
+  read-only connection, the warm harness caches, copies of `machine.json` and
+  `config.json`, and the history symlinks, set up as in Step 0. The two copies
+  of a pair were taken back to back (1 to 5 s apart) and were byte-identical
+  (same SHA-256), with the live store's mtime unchanged by the copies. The
+  harness caches are keyed by the absolute path under `AI_USAGE_HOME`, so a
+  plain copy into a new home is cold (this is why Step 3b's sanity run started
+  cold for Codex); the cache copies had their path keys rebased to the new home
+  (5,531 Codex, 1,240 Claude, 2 OpenCode and 1 Cursor entries; the old prefix
+  appeared nowhere else in them). The histories are live, so a run read them
+  as they were during that run.
+- **Runs.** 13 minutes each, first 2 dropped, ten one-minute windows, one
+  engine at a time. Pair 1 in the order BEFORE then AFTER, pair 2 in the
+  reverse order, then a variant without the Codex index on a copy of pair 2's
+  store (see the floor), then a pair of 9-minute runs with the measurement-only
+  publication-phase entry of Step 1 for the prepare step. Isolation: in every
+  run the file-descriptor sampler saw no descriptor under the live
+  `~/.config/ai-usage`; the only `usage-store.sqlite*` descriptors were the
+  run's copy. Every engine exited (exit code 0, no `serve` process left).
+- **Load** (1-minute load average every 10 s on 20 threads; other agents ran
+  test suites): CPU seconds and RSS are the primary figures, wall-clock is
+  secondary.
+
+| Run | Tree | Load average, median (range) |
+| --- | --- | --- |
+| pair 1, BEFORE | `037edb83` | 4.4 (2.2–9.2) |
+| pair 1, AFTER | `9b3b73ab` | 9.6 (3.3–17.0) |
+| pair 2, AFTER | `9b3b73ab` | 5.2 (2.4–16.6) |
+| pair 2, BEFORE | `edf868af` | 7.0 (2.7–16.7) |
+| no-index variant | `9b3b73ab` without the index line | 3.8 (2.5–12.8) |
+| phases, BEFORE / AFTER | `edf868af` / `9b3b73ab` | 8.7 (3.4–17.9) / 6.6 (2.3–14.4) |
+
+#### Totals in PR #61's terms
+
+Engine process only (reaped children such as `gh` and `git` excluded, as in
+Step 1). Every minute was active.
+
+| Run | CPU per active minute: median (mean, range) | Peak RSS: max (median per minute; `VmHWM`) | Idle RSS floor: median (last window) |
+| --- | --- | --- | --- |
+| PR #61, after (`50fcf631`) | 3.5–4.0 s | 1,330 MB | not recorded |
+| pair 1, BEFORE `037edb83` | 9.66 s (10.15 s, 5.94–15.56) | 1,187 MB (951; 1,200) | 247 MB (257) |
+| pair 2, BEFORE `edf868af` | 12.89 s (12.08 s, 5.36–19.96) | 1,188 MB (1,118; 1,204) | 248 MB (258) |
+| pair 1, AFTER | 6.71 s (7.73 s, 3.52–16.74) | 875 MB (771; 890) | 310 MB (323) |
+| pair 2, AFTER | 7.44 s (8.21 s, 4.93–13.47) | 909 MB (800; 964) | 313 MB (316) |
+| no-index variant | 6.55 s (7.71 s, 5.17–15.22) | 1,096 MB (882; 1,105) | 256 MB (260) |
+
+- CPU per active minute fell by 24 % (pair 1, means) and 32 % (pair 2,
+  means); by 31 % and 42 % on the medians. It is still about twice PR #61's
+  4.0 s: **the CPU target is not met.** The gap by phase is below.
+- Peak RSS fell by 26 % and 23 % and stays well under 1,330 MB: **the peak
+  target is met** (it was already met before Step 3).
+- The two BEFORE runs differ by 1.9 s of mean CPU per minute on equivalent
+  inputs. Their load differed (4.4 against 7.0) and so did the tree (the
+  spans); the measurement cannot separate the two, so each pair is compared
+  within itself.
+- The top-level spans cover 92 to 94 % of the engine's CPU and 100 % of the
+  RSS climb in the instrumented runs.
+
+#### Per phase, pair 2 (same store copy, reverse order)
+
+Medians per run; CPU per minute and shares are of the engine's CPU and of the
+summed RSS increases. Pair 1's AFTER in the last column, for drift.
+
+| Phase | Runs/min | Duration | CPU | ΔRSS | Δheap | Rows | CPU s/min | CPU share | RSS climb share | Pair 1 AFTER, CPU s/min |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **publication** | 2.00 → 1.60 | 2,762 → 2,500 ms | 2,999 → 2,687 ms | +415 → +301 MB | +125 → +120 MB | 10,378 → 10,376 | 6.63 → 4.33 | 54.9 → 52.8 % | 54.1 → 55.4 % | 4.47 |
+| — assemble | | 508 → 467 ms | 583 → 575 ms | +43 → +105 MB | +32 → +54 MB | | 1.24 → 0.92 | | | 0.97 |
+| — store side (`revision`) | | 2,353 → 2,088 ms | 2,646 → 2,365 ms | +439 → +331 MB | +125 → +120 MB | | 5.86 → 3.76 | | | 3.92 |
+| — retain revisions | | 184 → 175 ms | 155 → 148 ms | +4 → 0 MB | 0 | | 0.34 → 0.26 | | | 0.24 |
+| — reconcile work branches | | 212 → 194 ms | 191 → 171 ms | −14 → −12 MB | 0 | | 0.42 → 0.31 | | | 0.30 |
+| **codex.sessions** | 1.00 | 1,271 → 475 ms | 1,356 → 419 ms | +375 → +145 MB | +83 → +3 MB | 5,132 → 5,131 | 1.56 → 0.41 | 12.9 → 5.0 % | 23.5 → 14.5 % | 0.40 |
+| — collect | | 489 → 195 ms | 678 → 235 ms | +213 → +85 MB | +61 → 0 MB | 5,132 → 5,131 | 0.82 → 0.23 | | | 0.23 |
+| — importSkillObservations | | 269 → 21 ms | 244 → 3 ms | +35 → 0 MB | 0 | 95,553 → 0 | 0.25 → 0.00 | | | 0.00 |
+| — importLocalRows | | 168 → 0 ms | 166 → 0 ms | +85 → 0 MB | +22 → 0 MB | 5,132 → 0 | 0.17 → 0.00 | | | 0.00 |
+| — importCodexWorkObservations | | 65 → 67 ms | 46 → 51 ms | +6 → −25 MB | 0 | 5,132 | 0.06 → 0.05 | | | 0.06 |
+| **rtk.savings** | 2.50 → 1.70 | 289 → 59 ms | 311 → 46 ms | +36 → +2 MB | +21 → 0 MB | 7,322 → 7,320 | 0.81 → 0.08 | 6.7 → 1.0 % | 6.7 → 1.5 % | 0.09 |
+| **opencode.sessions** | 1.00 | 151 → 202 ms | 93 → 125 ms | +73 → +51 MB | 0 | 878 | 1.33 → 1.85 | 11.0 → 22.5 % | 5.3 → 11.5 % | 1.51 |
+| **claude.sessions** | 1.00 | 306 → 327 ms | 286 → 297 ms | +151 → +145 MB | +8 → +8 MB | 1,226 → 1,224 | 0.33 → 0.33 | 2.7 → 4.0 % | 9.0 → 15.6 % | 0.32 |
+| — importLocalRows, rows compared | | 79 → 47 ms | 55 → 20 ms | | | 1,226 → 5 | 0.06 → 0.02 | | | 0.02 |
+| github.pull-requests | 0.40 → 0.60 | ~34 s | 651 → 634 ms | ≤ 0 | ≤ 0 | 25 | 0.26 → 0.38 | | | 0.08 |
+| checkouts.status | 0.50 → 0.60 | 872 → 575 ms | 468 → 339 ms | ≤ +5 MB | | 145 | 0.22 → 0.23 | | | 0.15 |
+| claude.desktop-sessions, cursor.sessions, the three usage-limits sources | | | | | | | 0.17 → 0.12 | | | 0.11 |
+| **All top-level spans** | | | | | | | 11.31 → 7.73 | | | 7.13 |
+
+Inside a publication (the phase-entry pair, medians of 12 and 7 full
+publications):
+
+| Step | CPU before → after | ΔRSS | Δheap |
+| --- | ---: | ---: | ---: |
+| assemble the stored capture | 616 → 593 ms | +60 → +126 MB | +33 → +35 MB |
+| **prepare (validate, serialize, fingerprint)** | **575 → 283 ms (−51 %)** | **+195 → +107 MB** | **+47 → +17 MB** |
+| insert the served projection | 795 → 673 ms | +209 → +113 MB | +19 → +25 MB |
+| validate the staged revision | 597 → 544 ms | +17 → +2 MB | +41 → +52 MB |
+| commit | 145 → 139 ms | −2 → −2 MB | 0 |
+| RSS at the highest step boundary, median (max) | 857 (1,140) → 740 (852) MB | | |
+
+The prepare step lost half its CPU, more than the −37 % Step 3c measured on
+a benchmark; the other steps are within run-to-run noise (the insert's −15 %
+was not targeted by any change and comes from a single pair).
+
+What the tables say:
+
+- **Codex** is three times cheaper per pass and raises RSS by 145 MB instead of
+  375 MB; it compares no row and no skill observation when no rollout changed.
+- **`rtk.savings`** runs 1.5 to 1.7 times a minute instead of 2.5 and costs
+  46 ms instead of 311 ms: −90 % per minute.
+- **Publication** costs 10 % less CPU per run (the prepare step) and runs
+  1.6 times a minute instead of 1.8 to 2.0, because Codex no longer wakes it:
+  −35 % of CPU per minute. It is still more than half of the cycle, and alone
+  (4.3 to 4.5 s per minute) above PR #61's whole budget.
+- **`opencode.sessions`** did not change and is now the second phase: 4 to 5
+  full reads per 13-minute run, 4 to 6 s of CPU each, after a failed open that
+  follows the OpenCode usage-limits call (Step 1's mechanism, unchanged in both
+  trees: 4 to 5 failed opens per run). Its share doubled only because the rest
+  shrank. Step 3a was not executed because it fell under the ≥ 20 % rule.
+- **Claude** is unchanged in cost; its import compares 5 rows instead of
+  1,226.
+
+Gap to PR #61's 4.0 s per active minute, by phase (pair 2 AFTER, CPU per
+minute): publication 4.33 s, `opencode.sessions` 1.85 s, `codex.sessions`
+0.41 s, `github.pull-requests` 0.38 s, `claude.sessions` 0.33 s,
+`checkouts.status` 0.23 s, the rest 0.20 s. Publication alone exceeds the
+target. Reaching it needs the publication cap or the schema change recorded
+under Step 3c (both STOPs for the operator), and the OpenCode full reads
+(Step 3a or a fix of the failed open).
+
+#### Publications per minute
+
+From the engine's wide events (all four runs; the same windows as above):
+
+| Run | Publications per minute | Changed | Triggered by `codex.sessions` alone | `codex.sessions` with at most `opencode.sessions` | Rows identical to the previous revision (read-only poller) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| pair 1, BEFORE | 1.8 | 18 of 18 | 3 of 18 (17 %) | 5 of 18 (28 %) | 5 of 20 |
+| pair 2, BEFORE | 2.0 | 20 of 20 | 4 of 20 (20 %) | 5 of 20 (25 %) | 9 of 22 |
+| pair 1, AFTER | 1.6 | 16 of 16 | 0 | 0 | 7 of 18 |
+| pair 2, AFTER | 1.6 | 16 of 16 | 0 | 0 | 6 of 17 |
+
+`codex.sessions` reported a change on 10 of 10 passes before and 0 of 10
+after, in all runs. Content-free publications remain: the AFTER publications
+woken by `opencode.sessions` alone (4 per run) match the AFTER revisions whose
+rows equal the previous one's and whose support differs only in clocks (3 to
+5 per run) or quota windows; that source reports a change without changing a
+row (listed under Step 3b, "Not done"). Gap from a changed source to its
+publication (pair 1 AFTER, perf spans): median 5.5 s, maximum 40 s.
+
+#### STOP (a): the idle RSS floor rises by 25 % — the Codex resident index
+
+| Run | Floor median | Last window | Lowest heap at a phase start |
+| --- | ---: | ---: | ---: |
+| pair 1, BEFORE | 247 MB | 257 MB | – (no spans) |
+| pair 2, BEFORE | 248 MB | 258 MB | 45.5 MB |
+| pair 1, AFTER | 310 MB (+25.5 %) | 323 MB (+25.7 %) | 61.2 MB |
+| pair 2, AFTER | 313 MB (+26.2 %) | 316 MB (+22.5 %) | 55.7 MB |
+| no-index variant | 256 MB (+3.2 %) | 260 MB (+0.8 %) | 48.1 MB |
+
+The pairs are like for like (one store copy per pair, the same rebased
+caches), and the rise is the same in both orders: **the floor rises by 22 to
+26 %, over the 10 % limit, so the STOP condition holds.** The variant is
+`9b3b73ab` with the single line `createIncrementalCollector:
+createCodexIncrementalCollector,` removed from the Codex entry of
+`HARNESS_ADAPTERS` (`packages/local-collectors/src/collectors/index.ts`), run
+from an export outside the repository on a copy of pair 2's store. Without the
+index the floor is back within 1 to 3 % of BEFORE, so the index accounts for
+the whole rise: about +57 MB of RSS floor, of which 8 to 16 MB is live heap
+(the rest is heap capacity and allocator pages kept by the process). This is
+larger than the 31.5 MB (with observations) or 11.7 MB (without) measured for
+the index outside the engine in Step 3b.
+
+What the index buys, from the same variant (CPU per `codex.sessions` pass
+1,185 ms without it against 368 to 419 ms with it; ΔRSS +381 MB against
++145 to +149 MB; CPU per minute 1.24 s against 0.40 s): about 0.8 s of CPU per
+active minute, and a peak 190 to 220 MB lower (1,096 MB without it against
+875 to 909 MB). Without it the import change still holds: the variant
+compared 0 Codex rows per pass, but its collector returns all 95,553 skill
+observations and their import costs 245 ms per pass again.
+
+**Operator's choice, not made here:** keep the index (floor +57 MB, +22 to
+26 %, against 0.8 s of CPU per minute and a lower peak) and accept the floor,
+or remove that one line (floor back within 3 %, CPU and peak as in the
+variant). The index was not removed.
+
+#### STOP (b): content identity — every difference is explained by input changes
+
+The final revisions of the two runs of each pair, compared row by row by row
+id (`step4-compare.ts`, figures only), with
+`datasets.providerStatus.generatedAt` masked. The criterion: a session whose
+rows differ is explained when its latest activity (largest `endDate` over its
+rows in either revision) is after the moment the pair's copies were taken,
+because the two runs then read different inputs for it; any other difference
+would be a defect.
+
+| | Pair 1 | Pair 2 |
+| --- | ---: | ---: |
+| Rows (first run / second run) | 10,375 / 10,376 | 10,377 / 10,379 |
+| Rows equal in every stored column except position and ranks | 10,368 | 10,368 |
+| Of those, rows with a different segment or filter key | 0 | 0 |
+| Sessions whose rows differ | 8 (all Claude Code) | 11 (all Claude Code) |
+| — a moving session (new row id, activity after the copies) | 7 | 9 |
+| — a session that only the later run saw (started after the copies) | 1 | 2 |
+| — unexplained (no activity after the copies) | **0** | **0** |
+| Codex, OpenCode, Cursor rows differing | 0 | 0 |
+
+- The ordinal and the identity ranks of the other rows move with those
+  sessions (a moving session's row id includes its active date), and 33
+  `campaign_total_count` values move with one campaign that holds a moving
+  session; nothing else differs in an unchanged row.
+- Support: `analytics` aggregates (totals, per harness, model and provider),
+  the project groups that hold a differing session (3 of 121 in pair 1, 2 of
+  120 in pair 2; in pair 1 one group exists only in the earlier run, because
+  its only session, active after the copies, belongs to another group in the
+  later run), `projectGroups` order, and the clocks: `generatedAt`,
+  `machineFreshness`, per-provider `generatedAt` and quota `resetsAt` (read
+  live by the usage-limits sources).
+- The Codex collector now emits 5,131 rows where it emitted 5,132 (one row per
+  session id, Step 3b); the served Codex rows are identical, as Step 3b
+  expected.
+
+The identical inputs required by decision 2 cannot be held fixed on live
+histories; with that limit, the real-data comparison shows no content change
+caused by the code. The fixed-input proofs remain the tests of Steps 3b and 3c.
+
+#### Step 5's entry test, from these runs
+
+- Longest burst above half a core (1 Hz samples): 8 to 11 s after (one burst
+  over 10 s in pair 1, none in pair 2), 9 to 11 s before. The first condition
+  is borderline.
+- Heap carried into the next phase: 38 of 86 back-to-back transitions in
+  pair 2's AFTER (16 of 76 in pair 1's) start at least 50 MB above the heap
+  floor, against 40 of 98 before. The second condition still holds.
+
+Step 5 therefore applies, and it needs a publication cap, which is the
+operator's decision (STOP conditions). It was not started.
+
+#### Done criteria, as of this step
+
+| Criterion | State |
+| --- | --- |
+| Step 1's table and Step 4's before/after recorded | Met (this section). |
+| Phases fixed reduced by ≥ 50 % in CPU and RSS climb, floor unchanged ±10 % | Met for `codex.sessions` (CPU −69 %, ΔRSS −61 %) and `rtk.savings` (−85 %, −94 % per run), and for the publication's prepare step (CPU −51 %, ΔRSS −45 %); the publication as a whole −10 % CPU and −27 % ΔRSS per run. **Not met for the floor: +22 to 26 % (STOP a, operator).** |
+| CPU ≤ 4.0 s per active minute and peak ≤ 1,330 MB, or the gap explained by phase | Peak met (875 to 909 MB). CPU not met (6.7 to 8.2 s); the gap is explained by phase above. |
+| Step 5 not needed, done, or stopped for the cap | Stopped for the operator's cap decision (its second condition holds). |
+| Served content byte-identical for fixed inputs | Tests of 3b and 3c; real data: no unexplained difference. |
+| Sink recovers and reports drops | Met (Step 2 tests). |
+| Plan row updated | Met. |
+
+The plan is not done. Open for the operator: the floor (keep or remove the
+Codex index), the publication cap (Step 3c and Step 5), and the
+insert-only-what-changed schema change (its own plan). Not executed and
+outside the operator decisions: Step 3a (OpenCode, now 22 % of the CPU, above
+the ≥ 20 % rule in pair 2 but not in pair 1's 19.5 %) and the `opencode.sessions`
+passes that report a change without changing a row.
+
+Measurement kit (outside the repository, beside Step 1's): new scripts
+`step4-make-base.ts` (base with rebased warm caches), `step4-run.sh` (one run
+with the load log and the revision poller), `step4-events.ts` (publications
+and source runs from the wide events, for the tree without spans),
+`step4-compare.ts` and `step4-groups.ts` (content identity), `step4-bursts.ts`
+and `step4-phases-pair.sh`; `measure.ts`, `analyze.ts`,
+`analyze-publication.ts`, `publication-frequency.ts` and `watch-revisions.ts`
+were used unchanged.
