@@ -265,7 +265,8 @@ test.describe('settings writes', () => {
   });
 
   // Two clients: the test's page (A) and a page in a second browser context (B). The fixture server
-  // is their shared configuration; nothing refetches A's settings behind its back.
+  // is their shared configuration; nothing refetches A's settings behind its back, as long as A does
+  // not navigate (a section change re-reads settings older than their stale time).
   test('a conflict offers to discard or re-apply; re-applying keeps my edit and the one made elsewhere', async ({
     browser,
     page,
@@ -379,6 +380,11 @@ test.describe('settings writes', () => {
     const models = await openModels(page);
     const originalAlias = await aliasOf(models, 0).inputValue();
     await aliasOf(models, 0).fill(`mine-${stamp}`);
+    // A section change is a navigation, and a navigation re-reads settings older than their stale
+    // time. Change it before the other client saves, so nothing re-reads this page's settings
+    // between that save and the Rules save that must be refused.
+    const tabs = page.getByRole('tablist', { name: SECTION_TABS });
+    await tabs.getByRole('tab', { name: 'Rules' }).click();
 
     const other = await browser.newContext();
     try {
@@ -390,8 +396,6 @@ test.describe('settings writes', () => {
       const revisionB = await revisionOf(pageB);
 
       // The Rules form's save is refused; its own notice reloads the page's settings to the latest.
-      const tabs = page.getByRole('tablist', { name: SECTION_TABS });
-      await tabs.getByRole('tab', { name: 'Rules' }).click();
       const rules = page.locator('[data-delegation-form="rules"]');
       await rules.getByRole('button', { name: 'Save rules' }).click();
       const rulesConflict = rules.locator('[data-delegation-conflict]');
