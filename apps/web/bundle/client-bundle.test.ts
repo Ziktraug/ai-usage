@@ -39,8 +39,10 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
 // Navigation-intent prefetch, independent report-region recovery and view transitions join the
-// report closure. A fresh production build measures 312,862 B gzip; see the ADR 0020 amendment.
-const RECORDED_GZIP_CLOSURE_BYTES = 312_862;
+// report closure at 312,862 B gzip; see the ADR 0020 amendment. The tree measured 313,882 B before
+// the Overview compared a period with the previous one; the typed outcomes, their wording and the
+// explanation marker add 1,016 B. A fresh production build measures 314,898 B gzip.
+const RECORDED_GZIP_CLOSURE_BYTES = 314_898;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */

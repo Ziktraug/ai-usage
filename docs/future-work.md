@@ -56,10 +56,17 @@ over-emphasize it or build ROI/break-even features on top of it.
 - "Wrapped"-style shareable report: a celebratory PNG/PDF recap of a period.
   The app's thesis is "if I had to pay API rates, how impossible would it be" —
   frame the recap around that, not ROI optimization.
-- Filter-aware period-over-period comparison: deltas + sparklines derived from the
-  same aggregation over `[t-Δ, t]` in `dashboard-model.ts`, computed against the
-  *current* filter set. Must respect data hierarchy — surface a delta only where it
-  changes a decision; push the full explanation to hover/tooltip.
+- Filter-aware period-over-period comparison exists for the API value and
+  processed tokens: the same aggregation over the previous equal-length window
+  under the *current* filter set (`dashboard-model.ts`), with a typed reason
+  whenever no percentage can be shown. Still open, each needing the Overview
+  contract (the report-core projection and its SQLite twin) rather than a browser
+  workaround: a harness whose history starts after the previous window is not
+  detected until the result carries each harness's first recorded activity, and
+  token metrics cannot carry a partial-counter caveat until the summary counts
+  those sessions. Sparklines were left out: the Activity timeline already shows
+  the trend. Keep surfacing a delta only where it changes a decision, with the
+  full explanation on hover.
 - Universal drill-down: clicking a Rhythm day, a Model-migration band, or a
   Session-shape point applies the corresponding filter and scrolls to the session
   list. The filter bar already supports title/project/model.

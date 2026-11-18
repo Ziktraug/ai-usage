@@ -59,6 +59,8 @@
     letterSpacing: '-0.035em',
     lineHeight: 1.1,
   });
+  /** Balanced lines keep an explanation marker beside its sentence instead of wrapping alone below it. */
+  const balancedLines = css({ textWrap: 'balance' });
   const insight = css({
     borderInlineStart: '3px solid token(colors.lineStrong)',
     color: 'ink',
@@ -94,11 +96,12 @@
     numericDisplay,
     sectionDivider,
   } from '@ai-usage/design-system/report';
-  import { HarnessBadge } from '@ai-usage/design-system/svelte';
+  import { HarnessBadge, provenanceMarkerClass, Tooltip } from '@ai-usage/design-system/svelte';
   import type { ComponentProps } from 'svelte';
-  import { fmtMoney, fmtPct } from '../../../foundation/presentation/format';
+  import { fmtMoney } from '../../../foundation/presentation/format';
   import ActivityExplorer from '../range/activity-explorer.svelte';
   import type { ExecutiveOverviewModel } from './executive-overview-model';
+  import { explanationWithCaveat } from './period-comparison-presentation';
 
   let {
     activity,
@@ -126,15 +129,7 @@
     return fmtMoney(draggedWindowApiValue);
   });
   const previewAttributes = $derived(draggedWindowApiValue === null ? {} : ({ 'aria-busy': 'true' } as const));
-  const comparisonText = $derived.by((): string | null => {
-    const { comparison } = model.primary;
-    if (comparison.delta) {
-      const direction = comparison.delta.pct >= 0 ? 'higher' : 'lower';
-      return `${fmtPct(Math.abs(comparison.delta.pct))} ${direction} than the previous equal-length period.`;
-    }
-    return comparison.explanation;
-  });
-  const comparisonCaveat = $derived(model.primary.comparison.caveat);
+  const primaryComparison = $derived(model.primary.comparison);
   const primaryQualification = $derived.by((): string => {
     const periodSentence = `This estimate covers work ${model.primary.periodScope}.`;
     const provenance = model.primary.provenance?.description;
@@ -148,6 +143,21 @@
     onOpenModels();
   };
 </script>
+
+{#snippet explanationMarker(
+  lines: readonly string[],
+)}
+  {#if lines.length > 0}
+    {@const explanation = lines.join('\n')}
+    <Tooltip content={explanation}>
+      {#snippet trigger(
+        triggerProps,
+      )}
+        <button {...triggerProps} aria-label={explanation} class={provenanceMarkerClass} type="button">i</button>
+      {/snippet}
+    </Tooltip>
+  {/if}
+{/snippet}
 
 {#if model.emptyState}
   <section aria-labelledby="executive-empty-title" class={cx(editorialSection, emptyState)}>
@@ -172,14 +182,16 @@
             >{displayedValue}</strong
           >
           <p class={qualification}>{primaryQualification}</p>
-          {#if comparisonText}
-            <p class={comparison}>
-              {comparisonText}
-              {#if comparisonCaveat}
-                <span class={qualification} data-period-comparison-caveat>{comparisonCaveat}</span>
-              {/if}
-            </p>
-          {/if}
+          <p
+            class={cx(primaryComparison.figure ? comparison : qualification, balancedLines)}
+            data-period-comparison={primaryComparison.outcome.kind}
+          >
+            {primaryComparison.statement}
+            {@render explanationMarker(primaryComparison.explanation)}
+            {#if primaryComparison.caveat}
+              <span class={qualification} data-period-comparison-caveat>{primaryComparison.caveat}</span>
+            {/if}
+          </p>
         </div>
       </section>
       <dl class={supportingMetrics} data-executive-metrics>
@@ -188,6 +200,13 @@
             <dt class={executiveEssentialLabel}>{supportMetric.label}</dt>
             <dd class={metricValue}>{supportMetric.value}</dd>
             <dd class={executiveCaption}>{supportMetric.detail}</dd>
+            {#if supportMetric.comparison?.figure}
+              <dd class={cx(executiveCaption, balancedLines)} data-period-delta>
+                {supportMetric.comparison.figure}
+                vs previous period
+                {@render explanationMarker(explanationWithCaveat(supportMetric.comparison))}
+              </dd>
+            {/if}
             {#if supportMetric.qualification}
               <dd class={executiveCaption}>{supportMetric.qualification}</dd>
             {/if}

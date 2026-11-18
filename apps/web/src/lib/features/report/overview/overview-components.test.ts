@@ -20,6 +20,10 @@ const HERO_VALUE_PATTERN = /<strong class="[^"]*white-space_nowrap[^"]*"[^>]*sty
 /** The share `<span>` and value `<strong>` of one "API value by harness" row. */
 const HARNESS_GROUP_SHARE_PATTERN = />([\d.]+%|—)<\/span> <strong/u;
 const HARNESS_GROUP_VALUE_PATTERN = /<strong[^>]*>([^<]+)<\/strong>/u;
+const PROCESSED_TOKENS_DELTA_PATTERN = /<dt[^>]*>Processed tokens<\/dt>[\s\S]*?<dd[^>]*data-period-delta[\s\S]*?<\/dd>/;
+const SIGNED_DELTA_PATTERN = />\s*[+−][\d.]+%\s+vs previous period\s*</;
+/** The marker names the previous window and its value, and says that it shares the filters. */
+const DELTA_MARKER_LABEL_PATTERN = /aria-label="Previous period, same filters: [^"]+ · [^"]+ processed tokens\n/;
 const SINGLE_SESSION_FIRST_PATTERN = / — 1 session · /;
 const SESSION_FIRST_PATTERN = / — [\d,]+ sessions? · /;
 
@@ -121,6 +125,29 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(todayBody).toContain('data-period-comparison-caveat');
     expect(todayBody).toContain('This period is still in progress, so the comparison is provisional.');
     expect(completeBody).not.toContain('data-period-comparison-caveat');
+  });
+
+  test('shows a processed-token delta beside its on-demand explanation only when a percentage exists', () => {
+    const today = focusedOverview({
+      from: '2026-06-11T00:00:00.000Z',
+      to: '2026-06-11T23:59:59.999Z',
+    });
+    const todayBody = render(fixture, { props: { range: { mode: 'today' }, result: today } }).body;
+    const thirtyDayBody = render(fixture, { props: { result: focusedOverview() } }).body;
+    const delta = PROCESSED_TOKENS_DELTA_PATTERN.exec(todayBody)?.[0] ?? '';
+
+    expect(todayBody).toContain('data-period-comparison="change"');
+    expect(delta).toMatch(SIGNED_DELTA_PATTERN);
+    expect(delta).toMatch(DELTA_MARKER_LABEL_PATTERN);
+    expect(delta).toContain('\nThis period is still in progress, so the comparison is provisional."');
+    expect(todayBody.match(/data-period-delta/g)).toHaveLength(1);
+
+    // The demonstration history starts inside the window that precedes the default 30 days.
+    expect(thirtyDayBody).toContain('data-period-comparison="history-shorter-than-window"');
+    expect(thirtyDayBody).toContain('No percentage: the previous period is only partly recorded.');
+    expect(thirtyDayBody).toContain('aria-label="Recorded history starts ');
+    expect(thirtyDayBody).not.toContain('data-period-delta');
+    expect(thirtyDayBody).not.toContain('than the previous equal-length period.');
   });
 
   test('renders the executive answer before evidence and investigation during SSR', () => {

@@ -77,14 +77,18 @@
     totalSessionCount,
   }: Props = $props();
 
+  const generatedAt = $derived(new Date(result.metadata.generatedAt));
   const executiveModel = $derived(
     buildExecutiveOverviewModel({
-      comparisonBoundary: {
-        rangeFrom: rangeBounds(range, new Date(result.metadata.generatedAt)).from,
-        recordedFirst: result.dateDomain?.first ?? null,
+      // The bounds the report query was built from, so the previous window matches the one the
+      // result's previous summary was aggregated over.
+      comparisonPeriod: {
+        bounds: rangeBounds(range, generatedAt),
+        generatedAt,
+        recordedFirst: result.dateDomain === null ? null : new Date(result.dateDomain.first),
       },
       executive: result.view.executive,
-      periodInProgress: reportPeriodInProgress(range, new Date(result.metadata.generatedAt)),
+      periodInProgress: reportPeriodInProgress(range, generatedAt),
       previousSummary: result.view.previousSummary,
       rangeMode: range.mode,
       summary: result.summary,
