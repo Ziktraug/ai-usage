@@ -59,14 +59,21 @@ over-emphasize it or build ROI/break-even features on top of it.
 - Filter-aware period-over-period comparison exists for the API value and
   processed tokens: the same aggregation over the previous equal-length window
   under the *current* filter set (`dashboard-model.ts`), with a typed reason
-  whenever no percentage can be shown. Still open, each needing the Overview
-  contract (the report-core projection and its SQLite twin) rather than a browser
-  workaround: a harness whose history starts after the previous window is not
-  detected until the result carries each harness's first recorded activity, and
-  token metrics cannot carry a partial-counter caveat until the summary counts
-  those sessions. Sparklines were left out: the Activity timeline already shows
-  the trend. Keep surfacing a delta only where it changes a decision, with the
-  full explanation on hover.
+  whenever no percentage can be shown. Whether the previous window was recorded
+  is judged from the revision's unfiltered history (the bootstrap support's date
+  domain), or from the filtered harness's own history under a harness filter
+  alone; the first match of any other filter never reads as unrecorded history.
+  Still open, each needing the Overview contract (the report-core projection and
+  its SQLite twin) rather than a browser workaround: a harness whose history
+  starts after the previous window is not detected until the result carries each
+  harness's first recorded activity (the typed `harness-not-covering-window`
+  outcome exists but is never produced, and a harness filter combined with
+  another filter falls back to the history of every harness), and token metrics
+  cannot carry a partial-counter caveat until the summary counts those sessions
+  (`processedTokensReading` is always complete). A machine whose history starts
+  late has the same blind spot as a harness. Sparklines were left out: the
+  Activity timeline already shows the trend. Keep surfacing a delta only where it
+  changes a decision, with the full explanation on hover.
 - Universal drill-down: clicking a Rhythm day, a Model-migration band, or a
   Session-shape point applies the corresponding filter and scrolls to the session
   list. The filter bar already supports title/project/model.
