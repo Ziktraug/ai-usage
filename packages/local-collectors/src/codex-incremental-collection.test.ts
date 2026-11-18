@@ -352,6 +352,57 @@ describe('incremental Codex collection', () => {
     expect(observationKeys(readable)).toEqual(['one:exposed:alpha']);
   });
 
+  test('matches a full collection while the archived directory cannot be walked and once it can again', async () => {
+    // An archived rollout and an active one share a session id and expose one skill: one
+    // observation identity, two copies. In session order the archived copy wins it.
+    const archivedDirectory = path.join(home, '.codex', 'archived_sessions');
+    mkdirSync(archivedDirectory, { recursive: true });
+    const archivedPath = path.join(archivedDirectory, 'rollout-a-archived.jsonl');
+    writeFileSync(archivedPath, rollout({ id: 'shared', minute: 1, skill: 'alpha', total: 900 }));
+    stamp += 10;
+    utimesSync(archivedPath, stamp, stamp);
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'alpha', total: 100 }));
+    const collect = createCodexIncrementalCollector();
+    const before = await run(collect({ complete: true }), storage);
+    expect(before.observations.map((observation) => observation.observedAt)).toEqual(['2026-01-01T00:01:01.000Z']);
+
+    const unwalkable: LocalHistoryStorageService = {
+      ...storage,
+      readDir: (dirPath) =>
+        dirPath === archivedDirectory
+          ? Effect.fail(new LocalHistoryError({ cause: new Error('fixture'), operation: 'readDir', path: dirPath }))
+          : storage.readDir(dirPath),
+    };
+    const whileUnlisted = await run(collect({ complete: false }), unwalkable);
+    const fullWhileUnlisted = await run(collectCodexResult, unwalkable);
+    expect(whileUnlisted.warnings.map((warning) => warning.operation)).toEqual(['unlistedHistoryDirectory']);
+    expect(whileUnlisted.observations).toEqual(fullWhileUnlisted.observations);
+    expect(comparable(whileUnlisted)).toEqual(comparable(fullWhileUnlisted));
+
+    // The resumed thread re-emits the observation later while the archive is still unlisted.
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 6, skill: 'alpha', total: 120 }));
+    const changedWhileUnlisted = await run(collect({ complete: false }), unwalkable);
+    const fullAfterChange = await run(collectCodexResult, unwalkable);
+    expect(fullAfterChange.observations.map((observation) => observation.observedAt)).toEqual([
+      '2026-01-01T00:06:01.000Z',
+    ]);
+    expect(changedWhileUnlisted.observations).toEqual(fullAfterChange.observations);
+    expect(comparable(changedWhileUnlisted)).toEqual(comparable(fullAfterChange));
+
+    // The archive lists again, unchanged: its copy wins the identity back, as in a full pass.
+    const recovered = await run(collect({ complete: false }), storage);
+    const full = await fullCollection();
+    expect(full.observations.map((observation) => observation.observedAt)).toEqual(['2026-01-01T00:01:01.000Z']);
+    expect(recovered.observations).toEqual(full.observations);
+    expect(comparable(recovered)).toEqual(comparable(full));
+
+    // With every directory walked again, the next pass answers from the index once more.
+    const unchanged = await run(collect({ complete: false }), storage);
+    expect(unchanged.observationScope).toBe('changed');
+    expect(unchanged.observations).toEqual([]);
+    expect(comparable(unchanged)).toEqual(comparable(full));
+  });
+
   test('falls back to a complete pass when the cache no longer holds a sibling it needs', async () => {
     writeRollout('rollout-a-first.jsonl', rollout({ id: 'shared', minute: 1, skill: 'alpha', total: 900 }));
     writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'beta', total: 100 }));

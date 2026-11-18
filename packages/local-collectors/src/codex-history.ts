@@ -734,8 +734,13 @@ const readCodexSessions = (
         index.home = storage.home;
         index.rollouts = null;
       }
+      const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
       // An incremental pass reads the index instead of the cache; a complete one refills it.
-      const resident = incremental?.complete === false ? (index?.rollouts ?? null) : null;
+      // A pass that could not walk the archived directory is complete, and so is the one after
+      // it: the copies of the unlisted rollouts drop out of their sessions and come back on
+      // recovery, which only a complete pass returns as a full collection does.
+      const resident =
+        incremental?.complete === false && archivedWalkFailure === null ? (index?.rollouts ?? null) : null;
       if (index && !resident) {
         // Refilled below only when this pass can vouch for every entry.
         index.rollouts = null;
@@ -762,7 +767,6 @@ const readCodexSessions = (
       let incrementalRefused = false;
       const readFailures: LocalHistoryError[] = [];
       const unreadablePaths = new Set<string>();
-      const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
       if (archivedWalkFailure) {
         // The archived rollouts are missing from this pass, so like an
         // unreadable file each skill tier weakens by one source.
@@ -914,7 +918,9 @@ const readCodexSessions = (
               if (index) {
                 // More observations than one import carries: the engine truncates the full list
                 // by recency, which a pass that returns only changed rollouts cannot reproduce.
-                index.rollouts = observationCount > index.maximumObservations ? null : nextRollouts;
+                // Nor can an index without the archived rollouts answer for the pass that lists them again.
+                index.rollouts =
+                  archivedWalkFailure !== null || observationCount > index.maximumObservations ? null : nextRollouts;
               }
             }
             if (!resident) {
@@ -922,16 +928,12 @@ const readCodexSessions = (
             }
 
             // The index follows the same retention as the cache: an unreadable rollout loses its
-            // entry, and so does one that is no longer listed, unless its directory was not walked.
+            // entry, and so does one that is no longer listed. Every directory was walked, since a
+            // pass with an unwalked one never reads the index.
             const listed = new Set(files);
-            const unlistedPrefix = unlistedDirectory === null ? null : `${unlistedDirectory}${path.sep}`;
             let removed = false;
             for (const [filePath, rollout] of resident) {
-              const unseen = !(
-                listed.has(filePath) ||
-                (unlistedPrefix !== null && filePath.startsWith(unlistedPrefix))
-              );
-              if (unseen || unreadablePaths.has(filePath)) {
+              if (!listed.has(filePath) || unreadablePaths.has(filePath)) {
                 resident.delete(filePath);
                 removed = true;
                 if (rollout.session.id) {

@@ -1208,3 +1208,63 @@ and source runs from the wide events, for the tree without spans),
 and `step4-phases-pair.sh`; `measure.ts`, `analyze.ts`,
 `analyze-publication.ts`, `publication-frequency.ts` and `watch-revisions.ts`
 were used unchanged.
+
+### 2026-11-18 — Operator decisions: plan closed with deferrals
+
+The operator resolved the three open STOPs of Step 4 on 2026-11-18. The pull
+request merges Steps 0 to 4; nothing else of this plan is executed.
+
+| STOP | Operator decision |
+| --- | --- |
+| (a) The idle RSS floor rises by 22 to 26 % (about +57 MB), over decision 3's 10 % budget, all of it the Codex resident index | **Keep the index and accept the floor.** The 0.8 s of CPU per active minute and the 190 to 220 MB lower peak it buys are worth the higher floor. This decision, not a measurement, lifts the 10 % budget for this index only; any other floor rise still meets the STOP condition. |
+| (b) A publication frequency cap (Steps 3c and 5) | **Deferred to a separate future plan.** Not executed here; Step 5, which needs the cap, is therefore not started either. |
+| (c) Inserting only the rows that changed, which needs a per-revision shared-rows schema change | **Deferred to a separate future plan**, with (b). |
+
+Consequences for the done criteria: the floor criterion is met by the
+operator's decision (a), not by measurement. The CPU target (≤ 4.0 s per active
+minute) stays unmet (6.7 to 8.2 s), with the gap explained by phase in Step 4;
+closing it is the future plan's subject (the cap, the schema change or both).
+Step 3a (OpenCode) and the `opencode.sessions` passes that report a change
+without changing a row are not executed and are left to that plan as well.
+
+The reviewer's note on the fingerprint short-circuit is already recorded under
+Step 3c ("Two related facts"): `datasets.providerStatus.generatedAt` is the
+wall clock of the read, so the store's fingerprint-unchanged check after the
+assembly can never match while a provider status exists. It is restated in the
+pull request body and left to the future plan, because changing it changes
+served content.
+
+### 2026-11-18 — Review follow-up: an unwalkable archive left the index out of step
+
+A review of the pull request found (and a trace confirmed) a case where the
+incremental Codex pass and a full collection disagreed. While
+`archived_sessions` could not be walked, the resident index kept the entries
+of its rollouts, as the cache does, but their session ids were never marked
+as moved; once the walk recovered, an archived rollout was a plain index hit.
+Scenario: session S has an archived rollout A and an active rollout B that
+carry one observation identity with different content (a resumed thread
+re-emitting `catalogue:<name>` later). The walk fails, B changes, the walk
+recovers. A full collection returns A's copy again (first in session order);
+the incremental pass returned nothing, so the store kept B's copy until the
+next complete pass, which only a restart, a failed pass or a store refusal
+requests (the hourly full import does not ask the collector for one). The
+first failing pass already diverged the same way in the other direction: a
+full pass returns B's copy, the incremental pass returned nothing.
+
+Fix (`packages/local-collectors/src/codex-history.ts`): a pass whose archived
+walk failed never reads the index and never fills it. It is a complete pass,
+answered from the on-disk cache (which still keeps the unlisted entries), and
+so is the first pass after the walk recovers, because the index is empty by
+then. Incremental and full collection are therefore equal by construction
+around a walk failure; the retention of unlisted entries in the index is gone,
+since no pass that reads the index has an unwalked directory. Cost: while the
+archive stays unwalkable (a warned, abnormal state), each minute pass reads
+the whole cache again, as before Step 3b.
+
+Test: `matches a full collection while the archived directory cannot be walked
+and once it can again` in
+`packages/local-collectors/src/codex-incremental-collection.test.ts`. It
+failed before the fix at the first failing pass and, with those assertions
+removed, at the recovery pass (expected A's copy, received no observation);
+it passes after, and checks that the pass after recovery answers from the
+index again.
