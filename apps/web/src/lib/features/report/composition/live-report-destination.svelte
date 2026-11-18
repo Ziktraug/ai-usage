@@ -103,6 +103,7 @@
   import ReportFreshness from '../core/report-freshness.svelte';
   import { installReportIntentResolver } from '../core/report-intent';
   import ReportWarnings from '../core/report-warnings.svelte';
+  import { overviewResultScope } from '../overview/overview-result-scope';
   import type { TimelineGranularityPreference } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
@@ -886,8 +887,15 @@
         onSelectTimeCell: selectTimeCell,
         presentSessionItem,
         providers,
-        range: search.range,
         result: commit.overview,
+        // The destination Query keeps the last committed result while another one loads or after
+        // its refresh failed: the result is described by the query it answers, not by the URL.
+        resultScope: overviewResultScope({
+          answered: commit.destination.query,
+          queryGeneratedAt: bootstrapResult.bootstrap.support.generatedAt,
+          requested: { range: focusedDestination.query.range, selection: search.range },
+          revisionDateDomain: commit.descriptor.bootstrap.dateDomain,
+        }),
         totalSessionCount: totalSessions,
       }
     : null}

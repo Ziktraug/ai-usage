@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
-import { projectSessionPage } from '@ai-usage/report-core/session-query';
+import { projectSessionPage, type SessionQueryFilters } from '@ai-usage/report-core/session-query';
 import {
   buildCampaignTableItems,
   buildCampaignTableRows,
@@ -21,6 +21,8 @@ import {
   machineFilterOptionsForRows,
   type PeriodBaseline,
   type PeriodBaselineInput,
+  type PeriodRecordedHistory,
+  periodRecordedHistory,
   previousPeriodWindow,
   processedTokensReading,
   resolvePeriodBaseline,
@@ -704,13 +706,14 @@ describe('period-over-period comparison', () => {
     row({ activeDate, date: activeDate, name, sessionLabel: name, ...overrides });
   const summaryOf = (...rows: ReturnType<typeof row>[]): ReportSummary =>
     buildVisibleSummary(rows, { from: null, to: null });
+  const everyHarness = (first: Date): PeriodRecordedHistory => ({ first, limitedToHarnesses: [] });
   const baselineFor = (overrides: Partial<PeriodBaselineInput<ReportSummary>> = {}): PeriodBaseline<ReportSummary> =>
     resolvePeriodBaseline({
       bounds: week,
       generatedAt,
+      harnessCoverage: null,
       previousSummary: summaryOf(datedRow('previous', '2026-06-01T12:00:00.000Z')),
-      recordedFirst: new Date('2026-01-01T00:00:00.000Z'),
-      sourceCoverage: null,
+      recordedHistory: everyHarness(new Date('2026-01-01T00:00:00.000Z')),
       ...overrides,
     });
 
@@ -801,7 +804,7 @@ describe('period-over-period comparison', () => {
     });
 
     test('is covered by history that starts exactly with the previous window', () => {
-      expect(baselineFor({ recordedFirst: weekBefore.from }).kind).toBe('available');
+      expect(baselineFor({ recordedHistory: everyHarness(weekBefore.from) }).kind).toBe('available');
     });
 
     test('does not exist for a full-range selection, whatever summary is supplied', () => {
@@ -812,26 +815,35 @@ describe('period-over-period comparison', () => {
     });
 
     test('is unrecorded when history starts inside the selected period', () => {
-      const recordedFirst = new Date('2026-06-05T08:00:00.000Z');
+      const history = everyHarness(new Date('2026-06-05T08:00:00.000Z'));
 
-      expect(baselineFor({ previousSummary: null, recordedFirst })).toEqual({
+      expect(baselineFor({ previousSummary: null, recordedHistory: history })).toEqual({
+        history,
         kind: 'history-shorter-than-window',
         previousPeriod: 'unrecorded',
-        recordedFirst,
         window: weekBefore,
       });
-      expect(baselineFor({ previousSummary: null, recordedFirst: week.from }).kind).toBe('history-shorter-than-window');
+      expect(
+        baselineFor({ previousSummary: null, recordedHistory: everyHarness(new Date('2026-06-04T00:00:00.000Z')) })
+          .kind,
+      ).toBe('history-shorter-than-window');
     });
 
     test('is only partly recorded when history starts inside the previous window', () => {
-      const recordedFirst = new Date('2026-06-01T12:00:00.000Z');
+      const history = everyHarness(new Date('2026-06-01T12:00:00.000Z'));
 
-      expect(baselineFor({ recordedFirst })).toEqual({
+      expect(baselineFor({ recordedHistory: history })).toEqual({
+        history,
         kind: 'history-shorter-than-window',
         previousPeriod: 'partly-recorded',
-        recordedFirst,
         window: weekBefore,
       });
+    });
+
+    test('keeps the harnesses the deciding history is limited to', () => {
+      const history = { first: new Date('2026-06-01T12:00:00.000Z'), limitedToHarnesses: ['Codex'] };
+
+      expect(baselineFor({ recordedHistory: history })).toMatchObject({ history, previousPeriod: 'partly-recorded' });
     });
 
     test('names every harness whose history starts after the previous window', () => {
@@ -839,29 +851,85 @@ describe('period-over-period comparison', () => {
       const late = { label: 'Claude Code', recordedFirst: new Date('2026-06-02T09:00:00.000Z') };
       const later = { label: 'Cursor', recordedFirst: new Date('2026-06-08T09:00:00.000Z') };
 
-      expect(baselineFor({ sourceCoverage: [covered, late, later] })).toEqual({
-        kind: 'source-not-covering-window',
-        sources: [late, later],
+      expect(baselineFor({ harnessCoverage: [covered, late, later] })).toEqual({
+        harnesses: [late, later],
+        kind: 'harness-not-covering-window',
         window: weekBefore,
       });
-      expect(baselineFor({ sourceCoverage: [covered] }).kind).toBe('available');
-      expect(baselineFor({ sourceCoverage: [] }).kind).toBe('available');
+      expect(baselineFor({ harnessCoverage: [covered] }).kind).toBe('available');
+      expect(baselineFor({ harnessCoverage: [] }).kind).toBe('available');
     });
 
     test('reports short history before a late harness, because it explains every harness at once', () => {
       const recordedFirst = new Date('2026-06-01T12:00:00.000Z');
 
-      expect(baselineFor({ recordedFirst, sourceCoverage: [{ label: 'Codex', recordedFirst }] }).kind).toBe(
-        'history-shorter-than-window',
-      );
+      expect(
+        baselineFor({
+          harnessCoverage: [{ label: 'Codex', recordedFirst }],
+          recordedHistory: everyHarness(recordedFirst),
+        }).kind,
+      ).toBe('history-shorter-than-window');
     });
 
     test('has no sessions when history covers the previous window but nothing matched in it', () => {
       expect(baselineFor({ previousSummary: null })).toEqual({ kind: 'no-previous-sessions', window: weekBefore });
-      expect(baselineFor({ previousSummary: null, recordedFirst: null })).toEqual({
+      expect(baselineFor({ previousSummary: null, recordedHistory: null })).toEqual({
         kind: 'no-previous-sessions',
         window: weekBefore,
       });
+    });
+  });
+
+  describe('deciding history', () => {
+    const noFilter: SessionQueryFilters = { fields: {}, harness: [], machine: [], origin: [], query: '' };
+    const unfilteredFirst = '2026-04-12T10:05:00.000Z';
+    const filteredFirst = '2026-05-24T14:18:00.000Z';
+    const historyFor = (filters: Partial<SessionQueryFilters>) =>
+      periodRecordedHistory({ filteredFirst, filters: { ...noFilter, ...filters }, unfilteredFirst });
+
+    test('is the history of every harness when nothing is filtered', () => {
+      expect(historyFor({})).toEqual({ first: new Date(unfilteredFirst), limitedToHarnesses: [] });
+    });
+
+    test('is the history of the selected harnesses under a harness filter alone', () => {
+      expect(historyFor({ harness: ['OpenCode'] })).toEqual({
+        first: new Date(filteredFirst),
+        limitedToHarnesses: ['OpenCode'],
+      });
+    });
+
+    const beyondHarness: readonly { readonly filters: Partial<SessionQueryFilters>; readonly label: string }[] = [
+      { filters: { query: 'OpenCode' }, label: 'a text query' },
+      { filters: { fields: { model: 'qwen3-coder' } }, label: 'a model' },
+      { filters: { fields: { project: 'ai-usage' } }, label: 'a project' },
+      { filters: { machine: ['machine-a'] }, label: 'a machine' },
+      { filters: { origin: ['classifier'] }, label: 'an origin' },
+      { filters: { localTimeCell: { hour: 9, weekday: 1 } }, label: 'a local time cell' },
+      { filters: { harness: ['OpenCode'], query: 'Tune' }, label: 'a harness with another filter' },
+    ];
+
+    test.each(beyondHarness)(
+      'is the unfiltered history under $label, where a late first match is no unrecorded period',
+      ({ filters }) => {
+        expect(historyFor(filters)).toEqual({ first: new Date(unfilteredFirst), limitedToHarnesses: [] });
+      },
+    );
+
+    test('does not exist when the history that decides holds no dated activity', () => {
+      expect(periodRecordedHistory({ filteredFirst, filters: noFilter, unfilteredFirst: null })).toBeNull();
+      expect(
+        periodRecordedHistory({
+          filteredFirst: null,
+          filters: { ...noFilter, harness: ['Codex'] },
+          unfilteredFirst,
+        }),
+      ).toBeNull();
+    });
+
+    test('lets an empty previous window under a model filter read as no previous sessions', () => {
+      const history = historyFor({ fields: { model: 'qwen3-coder' } });
+
+      expect(baselineFor({ previousSummary: null, recordedHistory: history }).kind).toBe('no-previous-sessions');
     });
   });
 
@@ -956,9 +1024,9 @@ describe('period-over-period comparison', () => {
 
     test.each([
       baselineFor({ bounds: { from: null, to: null } }),
-      baselineFor({ previousSummary: null, recordedFirst: new Date('2026-06-05T08:00:00.000Z') }),
-      baselineFor({ recordedFirst: new Date('2026-06-01T12:00:00.000Z') }),
-      baselineFor({ sourceCoverage: [{ label: 'Cursor', recordedFirst: new Date('2026-06-02T09:00:00.000Z') }] }),
+      baselineFor({ previousSummary: null, recordedHistory: everyHarness(new Date('2026-06-05T08:00:00.000Z')) }),
+      baselineFor({ recordedHistory: everyHarness(new Date('2026-06-01T12:00:00.000Z')) }),
+      baselineFor({ harnessCoverage: [{ label: 'Cursor', recordedFirst: new Date('2026-06-02T09:00:00.000Z') }] }),
       baselineFor({ previousSummary: null }),
     ])('carries the missing baseline through unchanged: $kind', (baseline) => {
       expect<unknown>(comparePeriodMetric(baseline, current, processedTokensReading, false)).toBe(baseline);
@@ -977,9 +1045,9 @@ describe('period-over-period comparison', () => {
         resolvePeriodBaseline({
           bounds: week,
           generatedAt,
+          harnessCoverage: null,
           previousSummary: buildPreviousPeriodSummary(filtered, week, generatedAt),
-          recordedFirst: new Date('2026-01-01T00:00:00.000Z'),
-          sourceCoverage: null,
+          recordedHistory: everyHarness(new Date('2026-01-01T00:00:00.000Z')),
         }),
         buildVisibleSummary(filtered, week),
         processedTokensReading,

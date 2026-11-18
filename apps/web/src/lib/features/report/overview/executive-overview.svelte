@@ -61,6 +61,15 @@
   });
   /** Balanced lines keep an explanation marker beside its sentence instead of wrapping alone below it. */
   const balancedLines = css({ textWrap: 'balance' });
+  /**
+   * One explanation line in the shared tooltip, which keeps text on one line: a line wraps instead
+   * at a readable measure, and within a 320 px viewport less the tooltip padding and edge offset.
+   */
+  const explanationLine = css({
+    display: 'block',
+    maxW: 'min(60ch, calc(100vw - 48px))',
+    whiteSpace: 'normal',
+  });
   const insight = css({
     borderInlineStart: '3px solid token(colors.lineStrong)',
     color: 'ink',
@@ -149,7 +158,12 @@
 )}
   {#if lines.length > 0}
     {@const explanation = lines.join('\n')}
-    <Tooltip content={explanation}>
+    {#snippet explanationLines()}
+      {#each lines as line, index (index)}
+        <span class={explanationLine} data-explanation-line>{line}</span>
+      {/each}
+    {/snippet}
+    <Tooltip content={explanationLines}>
       {#snippet trigger(
         triggerProps,
       )}

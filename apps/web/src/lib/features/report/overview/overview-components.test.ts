@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { toDateInputValue } from '../../../../date-range';
 import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
+import { overviewResultScope } from './overview-result-scope';
 
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -148,6 +149,32 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(thirtyDayBody).toContain('aria-label="Recorded history starts ');
     expect(thirtyDayBody).not.toContain('data-period-delta');
     expect(thirtyDayBody).not.toContain('than the previous equal-length period.');
+  });
+
+  test('judges the result on screen, not the period the URL requests while that period loads', () => {
+    // The URL already asks for Today, whose comparison would show a percentage, while the result of
+    // the earlier selection is still the one on screen.
+    const earlierRange = { from: '2026-05-12T00:00:00.000Z', to: '2026-06-11T23:59:59.999Z' };
+    const earlier = focusedOverview(earlierRange);
+    const requestedToday = { from: '2026-06-11T00:00:00.000Z', to: '2026-06-11T23:59:59.999Z' };
+    const body = render(fixture, {
+      props: {
+        range: { mode: 'today' },
+        result: earlier,
+        resultScope: overviewResultScope({
+          answered: { filters: { fields: {}, harness: [], machine: [], origin: [], query: '' }, range: earlierRange },
+          queryGeneratedAt: earlier.metadata.generatedAt,
+          requested: { range: requestedToday, selection: { mode: 'today' } },
+          revisionDateDomain: earlier.dateDomain,
+        }),
+      },
+    }).body;
+
+    expect(body).toContain('data-period-comparison="history-shorter-than-window"');
+    expect(body).not.toContain('data-period-delta');
+    expect(body).not.toContain('data-period-comparison-caveat');
+    expect(body).toContain('This estimate covers work in the selected custom period.');
+    expect(body).toContain('Previous period, same filters: Apr 1');
   });
 
   test('renders the executive answer before evidence and investigation during SSR', () => {

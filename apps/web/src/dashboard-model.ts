@@ -5,6 +5,7 @@ import {
   buildSortedSessionPresentationRows,
   type SessionCampaignTotals,
   type SessionOrigin,
+  type SessionQueryFilters,
   sessionCampaignIdentityForRow,
   sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
@@ -418,12 +419,56 @@ export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBou
   return summary.sessionCount > 0 ? summary : null;
 };
 
-/** The earliest recorded activity of one harness under the current filters. */
-export interface PeriodSourceCoverage {
+/** Where the recorded history of one harness starts, whatever the other filters select. */
+export interface PeriodHarnessCoverage {
   /** The harness as reports label it. */
   readonly label: string;
   readonly recordedFirst: Date;
 }
+
+/** The recorded history that decides whether a window was recorded at all. */
+export interface PeriodRecordedHistory {
+  /** Earliest recorded activity of this history. */
+  readonly first: Date;
+  /** The harnesses this history is limited to, as the harness filter names them; empty for every harness. */
+  readonly limitedToHarnesses: readonly string[];
+}
+
+export interface PeriodRecordedHistoryInput {
+  /** Earliest activity under every one of those filters except the period (the Overview's date domain). */
+  readonly filteredFirst: string | null;
+  /** The filters the summaries were queried under. */
+  readonly filters: SessionQueryFilters;
+  /** Earliest activity of the whole report revision under no filter (the bootstrap support's date domain). */
+  readonly unfilteredFirst: string | null;
+}
+
+const filtersBeyondHarness = ({ fields, localTimeCell, machine, origin, query }: SessionQueryFilters): boolean =>
+  query.trim() !== '' ||
+  Object.values(fields).some((value) => value !== undefined && value.trim() !== '') ||
+  machine.length > 0 ||
+  (origin?.length ?? 0) > 0 ||
+  localTimeCell !== undefined;
+
+/**
+ * Chooses the history that tells an unrecorded window from one where nothing matched. Recording is
+ * per harness, so the first session of one harness is where its history starts. Any other filter
+ * only selects among recorded sessions: its first match says nothing about what was recorded, so the
+ * history of every harness decides. Under a harness filter combined with another filter, the start
+ * of the harness history alone is not observable, and the history of every harness decides too.
+ */
+export const periodRecordedHistory = ({
+  filteredFirst,
+  filters,
+  unfilteredFirst,
+}: PeriodRecordedHistoryInput): PeriodRecordedHistory | null => {
+  const harnessHistory = filters.harness.length > 0 && !filtersBeyondHarness(filters);
+  const first = harnessHistory ? filteredFirst : unfilteredFirst;
+  if (first === null) {
+    return null;
+  }
+  return { first: new Date(first), limitedToHarnesses: harnessHistory ? filters.harness : [] };
+};
 
 /**
  * Why the previous window cannot serve as a baseline. Each reason is its own outcome so that no
@@ -433,20 +478,20 @@ export type PeriodBaselineAbsence =
   /** The selection has no start, so no window of equal length precedes it. */
   | { readonly kind: 'full-range' }
   /**
-   * Recorded history under the current filters starts after the previous window does. The window is
+   * The deciding recorded history starts after the previous window does. The window is
    * `unrecorded` when history starts inside the selected period, `partly-recorded` when it starts
    * inside the previous window: what it holds then covers only part of the window.
    */
   | {
+      readonly history: PeriodRecordedHistory;
       readonly kind: 'history-shorter-than-window';
       readonly previousPeriod: 'partly-recorded' | 'unrecorded';
-      readonly recordedFirst: Date;
       readonly window: PeriodWindow;
     }
   /** History as a whole covers the previous window, but these harnesses start after it does. */
   | {
-      readonly kind: 'source-not-covering-window';
-      readonly sources: readonly PeriodSourceCoverage[];
+      readonly harnesses: readonly PeriodHarnessCoverage[];
+      readonly kind: 'harness-not-covering-window';
       readonly window: PeriodWindow;
     }
   /** History covers the previous window and no session matched the current filters in it. */
@@ -460,12 +505,12 @@ export interface PeriodBaselineInput<Summary> {
   /** The selected period, exactly as the summaries were queried. */
   readonly bounds: DateBounds;
   readonly generatedAt: Date;
+  /** Where the history of each selected harness starts; null when the caller cannot observe it. */
+  readonly harnessCoverage: readonly PeriodHarnessCoverage[] | null;
   /** The same aggregation over the previous window under the same filters; null when it holds no session. */
   readonly previousSummary: Summary | null;
-  /** Earliest recorded activity under the current filters; null when nothing is recorded. */
-  readonly recordedFirst: Date | null;
-  /** Per-harness earliest activity under the current filters; null when the caller cannot observe it. */
-  readonly sourceCoverage: readonly PeriodSourceCoverage[] | null;
+  /** The history that decides what was recorded (`periodRecordedHistory`); null when nothing is recorded. */
+  readonly recordedHistory: PeriodRecordedHistory | null;
 }
 
 /**
@@ -476,26 +521,26 @@ export interface PeriodBaselineInput<Summary> {
 export const resolvePeriodBaseline = <Summary>({
   bounds,
   generatedAt,
+  harnessCoverage,
   previousSummary,
-  recordedFirst,
-  sourceCoverage,
+  recordedHistory,
 }: PeriodBaselineInput<Summary>): PeriodBaseline<Summary> => {
   const window = previousPeriodWindow(bounds, generatedAt);
   if (window === null || bounds.from === null) {
     return { kind: 'full-range' };
   }
   const startsAfterWindow = (first: Date): boolean => first.getTime() > window.from.getTime();
-  if (recordedFirst !== null && startsAfterWindow(recordedFirst)) {
+  if (recordedHistory !== null && startsAfterWindow(recordedHistory.first)) {
     return {
+      history: recordedHistory,
       kind: 'history-shorter-than-window',
-      previousPeriod: recordedFirst.getTime() >= bounds.from.getTime() ? 'unrecorded' : 'partly-recorded',
-      recordedFirst,
+      previousPeriod: recordedHistory.first.getTime() >= bounds.from.getTime() ? 'unrecorded' : 'partly-recorded',
       window,
     };
   }
-  const sources = (sourceCoverage ?? []).filter((source) => startsAfterWindow(source.recordedFirst));
-  if (sources.length > 0) {
-    return { kind: 'source-not-covering-window', sources, window };
+  const harnesses = (harnessCoverage ?? []).filter((harness) => startsAfterWindow(harness.recordedFirst));
+  if (harnesses.length > 0) {
+    return { harnesses, kind: 'harness-not-covering-window', window };
   }
   return previousSummary === null
     ? { kind: 'no-previous-sessions', window }

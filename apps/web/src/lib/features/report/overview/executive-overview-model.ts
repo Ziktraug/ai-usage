@@ -7,6 +7,7 @@ import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import {
   comparePeriodMetric,
   type MetricPeriodComparison,
+  type PeriodRecordedHistory,
   processedTokensReading,
   resolvePeriodBaseline,
   totalApiValueReading,
@@ -33,12 +34,12 @@ export interface ExecutiveInsightItem {
   readonly kind: 'campaign' | 'session';
 }
 
-/** The selected period as both summaries were queried, with the start of recorded history. */
+/** The selected period as both summaries were queried, with the history that decides what was recorded. */
 export interface ExecutiveComparisonPeriod {
   readonly bounds: DateBounds;
   readonly generatedAt: Date;
-  /** Earliest recorded activity under the current filters; null when nothing is recorded. */
-  readonly recordedFirst: Date | null;
+  /** The deciding history (`periodRecordedHistory`); null when nothing is recorded. */
+  readonly recordedHistory: PeriodRecordedHistory | null;
 }
 
 export interface ExecutiveOverviewModelInput {
@@ -229,11 +230,11 @@ const leadingItemsNoun = (items: readonly [ExecutiveInsightItem, ExecutiveInsigh
 };
 
 const periodInsight = (
-  { outcome: apiValueComparison, statement }: PeriodComparisonPresentation,
+  { outcome: apiValueComparison, relation }: PeriodComparisonPresentation,
   topItems: readonly ExecutiveInsightItem[],
 ): ExecutivePeriodInsight | null => {
   // The insight restates the headline percentage, so it exists only where the headline has one.
-  if (apiValueComparison.kind !== 'change' || apiValueComparison.current <= 0) {
+  if (apiValueComparison.kind !== 'change' || relation === null || apiValueComparison.current <= 0) {
     return null;
   }
   const pricedItems = topItems.filter(({ costKnown }) => costKnown);
@@ -252,9 +253,7 @@ const periodInsight = (
   }
   const items = [first, second] as const;
   const sentences = [
-    `API-equivalent value is ${
-      apiValueComparison.provisional ? `${statement.slice(0, -1)} (this period is still in progress).` : statement
-    }`,
+    `API-equivalent value is ${relation}${apiValueComparison.provisional ? ' (this period is still in progress)' : ''}.`,
     `The two leading ${leadingItemsNoun(items)} represent ${fmtPct(concentrationPercent)} of this period's measured value.`,
   ] as const;
   return { sentences, text: sentences.join(' ') };
@@ -295,7 +294,7 @@ export const buildExecutiveOverviewModel = ({
   // One baseline for every metric: the Overview result's previous summary is the same aggregation
   // over the previous window under the same filters. The contract carries no per-harness start of
   // history, so harness coverage cannot be judged here.
-  const baseline = resolvePeriodBaseline({ ...comparisonPeriod, previousSummary, sourceCoverage: null });
+  const baseline = resolvePeriodBaseline({ ...comparisonPeriod, harnessCoverage: null, previousSummary });
   const apiValueComparison = presentPeriodComparison(
     comparePeriodMetric(baseline, summary, totalApiValueReading, periodInProgress),
     API_VALUE_COMPARISON_COPY,

@@ -33,22 +33,50 @@ describe('period comparison presentation', () => {
       explanation: [`${previousPeriod} · $100.00 API-equivalent value`],
       figure: '+50%',
       outcome: change(),
+      relation: '50% higher than the previous equal-length period',
       statement: '50% higher than the previous equal-length period.',
     });
   });
 
-  test('words a decrease, and an unchanged value as the headline always did', () => {
+  test('words a decrease with one decimal below ten percent', () => {
     const lower = presentPeriodComparison(
       change({ current: 91_500, percent: -8.5, previous: 100_000 }),
       processedTokens,
     );
-    const unchanged = presentPeriodComparison(change({ current: 100, percent: 0 }), processedTokens);
 
     expect(lower.figure).toBe('−8.5%');
     expect(lower.statement).toBe('8.5% lower than the previous equal-length period.');
     expect(lower.explanation).toEqual([`${previousPeriod} · 100k processed tokens`]);
-    expect(unchanged.figure).toBe('+0%');
-    expect(unchanged.statement).toBe('0% higher than the previous equal-length period.');
+  });
+
+  test('groups the digits of a large change and drops the decimal from ten percent up', () => {
+    const large = presentPeriodComparison(change({ current: 3.2, percent: 1782.35, previous: 0.17 }), apiValue);
+    const roundsToTen = presentPeriodComparison(change({ percent: -9.96 }), apiValue);
+
+    expect(large.figure).toBe('+1,782%');
+    expect(large.statement).toBe('1,782% higher than the previous equal-length period.');
+    expect(roundsToTen.figure).toBe('−10%');
+    expect(roundsToTen.statement).toBe('10% lower than the previous equal-length period.');
+  });
+
+  test('reads an unchanged value, and a change below the shown precision, as no change in either direction', () => {
+    const unchanged = presentPeriodComparison(change({ current: 100, percent: 0 }), processedTokens);
+    const tinyIncrease = presentPeriodComparison(change({ percent: 0.04 }), processedTokens);
+    const tinyDecrease = presentPeriodComparison(change({ percent: -0.049 }), processedTokens);
+
+    expect(unchanged).toMatchObject({
+      figure: '0%',
+      relation: 'unchanged from the previous equal-length period',
+      statement: 'Unchanged from the previous equal-length period.',
+    });
+    for (const tiny of [tinyIncrease, tinyDecrease]) {
+      expect(tiny).toMatchObject({
+        figure: '≈0%',
+        relation: 'about the same as the previous equal-length period',
+        statement: 'About the same as the previous equal-length period.',
+      });
+    }
+    expect(presentPeriodComparison(change({ percent: -0.05 }), processedTokens).figure).toBe('−0.1%');
   });
 
   test('names a one-day previous period by its single date', () => {
@@ -118,37 +146,56 @@ describe('period comparison presentation', () => {
   });
 
   test('tells history that starts in the selected period from history that starts in the previous one', () => {
-    const recordedFirst = new Date(2026, 5, 1, 12);
-    const historyStart = `Recorded history starts ${fmtDateOnly(recordedFirst)} under the current filters.`;
+    const history = { first: new Date(2026, 5, 1, 12), limitedToHarnesses: [] };
+    const historyStart = `Recorded history starts ${fmtDateOnly(history.first)}.`;
     const unrecorded = presentPeriodComparison(
-      { kind: 'history-shorter-than-window', previousPeriod: 'unrecorded', recordedFirst, window },
+      { history, kind: 'history-shorter-than-window', previousPeriod: 'unrecorded', window },
       apiValue,
     );
     const partlyRecorded = presentPeriodComparison(
-      { kind: 'history-shorter-than-window', previousPeriod: 'partly-recorded', recordedFirst, window },
+      { history, kind: 'history-shorter-than-window', previousPeriod: 'partly-recorded', window },
       apiValue,
     );
 
     expect(unrecorded.statement).toBe('No previous period exists before the full recorded range.');
     expect(unrecorded.explanation).toEqual([historyStart]);
-    expect(partlyRecorded.figure).toBeNull();
+    expect(partlyRecorded).toMatchObject({ figure: null, relation: null });
     expect(partlyRecorded.statement).toBe('No percentage: the previous period is only partly recorded.');
     expect(partlyRecorded.explanation).toEqual([historyStart, previousPeriod]);
+  });
+
+  test('names the harnesses whose history decides, never the other filters', () => {
+    const first = new Date(2026, 5, 1, 12);
+    const historyOf = (limitedToHarnesses: readonly string[]) =>
+      presentPeriodComparison(
+        {
+          history: { first, limitedToHarnesses },
+          kind: 'history-shorter-than-window',
+          previousPeriod: 'partly-recorded',
+          window,
+        },
+        apiValue,
+      ).explanation[0];
+
+    expect(historyOf(['OpenCode'])).toBe(`Recorded OpenCode history starts ${fmtDateOnly(first)}.`);
+    expect(historyOf(['Codex', 'Claude', 'Cursor'])).toBe(
+      `Recorded history of Codex, Claude, and Cursor starts ${fmtDateOnly(first)}.`,
+    );
   });
 
   test('names each harness that does not cover the previous period', () => {
     const claude = { label: 'Claude Code', recordedFirst: new Date(2026, 5, 2, 9) };
     const cursor = { label: 'Cursor', recordedFirst: new Date(2026, 5, 8, 9) };
     const presentation = presentPeriodComparison(
-      { kind: 'source-not-covering-window', sources: [claude, cursor], window },
+      { harnesses: [claude, cursor], kind: 'harness-not-covering-window', window },
       apiValue,
     );
 
     expect(presentation.figure).toBeNull();
     expect(presentation.statement).toBe('No percentage: the previous period is only partly recorded.');
     expect(presentation.explanation).toEqual([
-      `Claude Code history starts ${fmtDateOnly(claude.recordedFirst)} under the current filters.`,
-      `Cursor history starts ${fmtDateOnly(cursor.recordedFirst)} under the current filters.`,
+      `Recorded Claude Code history starts ${fmtDateOnly(claude.recordedFirst)}.`,
+      `Recorded Cursor history starts ${fmtDateOnly(cursor.recordedFirst)}.`,
       previousPeriod,
     ]);
   });

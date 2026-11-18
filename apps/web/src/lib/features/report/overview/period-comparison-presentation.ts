@@ -1,5 +1,5 @@
-import type { MetricPeriodComparison, PeriodWindow } from '../../../../dashboard-model';
-import { fmtDateOnly, fmtPct } from '../../../foundation/presentation/format';
+import type { MetricPeriodComparison, PeriodRecordedHistory, PeriodWindow } from '../../../../dashboard-model';
+import { fmtDateOnly } from '../../../foundation/presentation/format';
 
 /** How one metric is worded when it is compared with the previous period. */
 export interface PeriodComparisonMetricCopy {
@@ -18,6 +18,11 @@ export interface PeriodComparisonPresentation {
   /** The signed change, such as "+12%" or "−8.5%"; null whenever no percentage exists. */
   readonly figure: string | null;
   readonly outcome: MetricPeriodComparison;
+  /**
+   * The change as a clause that continues "… is", such as "12% higher than the previous
+   * equal-length period"; null whenever no percentage exists.
+   */
+  readonly relation: string | null;
   /** One sentence that stands on its own. */
   readonly statement: string;
 }
@@ -25,6 +30,37 @@ export interface PeriodComparisonPresentation {
 const IN_PROGRESS_CAVEAT = 'This period is still in progress, so the comparison is provisional.';
 const NO_PREVIOUS_PERIOD = 'No previous period exists before the full recorded range.';
 const PARTLY_RECORDED = 'No percentage: the previous period is only partly recorded.';
+const PREVIOUS_EQUAL_PERIOD = 'the previous equal-length period';
+
+// One decimal below ten percent, where it carries information, and grouped whole numbers from ten
+// percent up, where it does not: "8.5%", "12%", "1,782%".
+const tenthsPercent = new Intl.NumberFormat('en', {
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 1,
+  useGrouping: false,
+});
+const wholePercent = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+const harnessList = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' });
+
+/**
+ * The figure and the relation clause of a measured change. A change that is not zero but rounds to
+ * zero at the precision shown reads as no meaningful change in either direction.
+ */
+const changeWording = (percent: number): { readonly figure: string; readonly relation: string } => {
+  const magnitude = Math.abs(percent);
+  const tenths = tenthsPercent.format(magnitude);
+  if (percent === 0) {
+    return { figure: '0%', relation: `unchanged from ${PREVIOUS_EQUAL_PERIOD}` };
+  }
+  if (tenths === '0.0') {
+    return { figure: '≈0%', relation: `about the same as ${PREVIOUS_EQUAL_PERIOD}` };
+  }
+  // A value that rounds up to ten percent follows the whole-number rule as well.
+  const label = `${Number(tenths) < 10 ? tenths : wholePercent.format(magnitude)}%`;
+  return percent < 0
+    ? { figure: `−${label}`, relation: `${label} lower than ${PREVIOUS_EQUAL_PERIOD}` }
+    : { figure: `+${label}`, relation: `${label} higher than ${PREVIOUS_EQUAL_PERIOD}` };
+};
 
 /** The previous window and, when it was measured, its value: the same filters and the same measure. */
 const previousPeriod = (window: PeriodWindow, value?: string): string => {
@@ -34,29 +70,37 @@ const previousPeriod = (window: PeriodWindow, value?: string): string => {
   return `Previous period, same filters: ${value === undefined ? dates : `${dates} · ${value}`}`;
 };
 
-const historyStart = (recordedFirst: Date, subject = 'Recorded history'): string =>
-  `${subject} starts ${fmtDateOnly(recordedFirst)} under the current filters.`;
+/** Where the deciding history starts, naming the harnesses it is limited to and no other filter. */
+const historyStart = ({ first, limitedToHarnesses }: PeriodRecordedHistory): string => {
+  const date = fmtDateOnly(first);
+  if (limitedToHarnesses.length === 0) {
+    return `Recorded history starts ${date}.`;
+  }
+  return limitedToHarnesses.length === 1
+    ? `Recorded ${limitedToHarnesses[0]} history starts ${date}.`
+    : `Recorded history of ${harnessList.format(limitedToHarnesses)} starts ${date}.`;
+};
 
-type Explanation = Pick<PeriodComparisonPresentation, 'caveat' | 'explanation' | 'figure' | 'statement'>;
+type Explanation = Pick<PeriodComparisonPresentation, 'caveat' | 'explanation' | 'figure' | 'relation' | 'statement'>;
 
 const withoutPercentage = (statement: string, explanation: readonly string[]): Explanation => ({
   caveat: null,
   explanation,
   figure: null,
+  relation: null,
   statement,
 });
 
 const explain = (outcome: MetricPeriodComparison, copy: PeriodComparisonMetricCopy): Explanation => {
   switch (outcome.kind) {
     case 'change': {
-      // An unchanged value keeps the wording the headline always had: "0% higher".
-      const lower = outcome.percent < 0;
-      const label = fmtPct(Math.abs(outcome.percent));
+      const { figure, relation } = changeWording(outcome.percent);
       return {
         caveat: outcome.provisional ? IN_PROGRESS_CAVEAT : null,
         explanation: [previousPeriod(outcome.window, `${copy.format(outcome.previous)} ${copy.noun}`)],
-        figure: `${lower ? '−' : '+'}${label}`,
-        statement: `${label} ${lower ? 'lower' : 'higher'} than the previous equal-length period.`,
+        figure,
+        relation,
+        statement: `${relation.charAt(0).toUpperCase()}${relation.slice(1)}.`,
       };
     }
     case 'zero-baseline':
@@ -74,11 +118,13 @@ const explain = (outcome: MetricPeriodComparison, copy: PeriodComparisonMetricCo
       return withoutPercentage(NO_PREVIOUS_PERIOD, []);
     case 'history-shorter-than-window':
       return outcome.previousPeriod === 'unrecorded'
-        ? withoutPercentage(NO_PREVIOUS_PERIOD, [historyStart(outcome.recordedFirst)])
-        : withoutPercentage(PARTLY_RECORDED, [historyStart(outcome.recordedFirst), previousPeriod(outcome.window)]);
-    case 'source-not-covering-window':
+        ? withoutPercentage(NO_PREVIOUS_PERIOD, [historyStart(outcome.history)])
+        : withoutPercentage(PARTLY_RECORDED, [historyStart(outcome.history), previousPeriod(outcome.window)]);
+    case 'harness-not-covering-window':
       return withoutPercentage(PARTLY_RECORDED, [
-        ...outcome.sources.map(({ label, recordedFirst }) => historyStart(recordedFirst, `${label} history`)),
+        ...outcome.harnesses.map(({ label, recordedFirst }) =>
+          historyStart({ first: recordedFirst, limitedToHarnesses: [label] }),
+        ),
         previousPeriod(outcome.window),
       ]);
     case 'no-previous-sessions':

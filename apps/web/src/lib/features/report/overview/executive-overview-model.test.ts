@@ -72,7 +72,7 @@ const executive: FocusedExecutiveOverview = {
 const thirtyDays: ExecutiveComparisonPeriod = {
   bounds: { from: new Date('2026-05-12T00:00:00.000Z'), to: null },
   generatedAt: new Date('2026-06-11T12:00:00.000Z'),
-  recordedFirst: new Date('2026-01-05T09:00:00.000Z'),
+  recordedHistory: { first: new Date('2026-01-05T09:00:00.000Z'), limitedToHarnesses: [] },
 };
 const fullRange: ExecutiveComparisonPeriod = { ...thirtyDays, bounds: { from: null, to: null } };
 
@@ -113,8 +113,8 @@ describe('executive Overview model', () => {
     expect(model.supportMetrics).toEqual([
       {
         comparison: expect.objectContaining({
-          figure: '+0%',
-          statement: '0% higher than the previous equal-length period.',
+          figure: '0%',
+          statement: 'Unchanged from the previous equal-length period.',
         }),
         detail: '110 processed tokens',
         key: 'processed-tokens',
@@ -250,6 +250,7 @@ describe('executive Overview model', () => {
       explanation: [],
       figure: null,
       outcome: { kind: 'full-range' },
+      relation: null,
       statement: 'No previous period exists before the full recorded range.',
     });
     expect(model.supportMetrics.find(({ key }) => key === 'processed-tokens')?.comparison?.figure).toBeNull();
@@ -286,13 +287,13 @@ describe('executive Overview model', () => {
   });
 
   test('chooses no-prior copy from the recorded boundary rather than the range mode', () => {
-    const recordedFirst = new Date('2026-04-12T09:20:00.000Z');
+    const recordedHistory = { first: new Date('2026-04-12T09:20:00.000Z'), limitedToHarnesses: [] };
     const beforeRecordedRange = buildExecutiveOverviewModel(
       modelInput({
         comparisonPeriod: {
           ...thirtyDays,
           bounds: { from: new Date('2026-03-13T00:00:00.000Z'), to: null },
-          recordedFirst,
+          recordedHistory,
         },
         previousSummary: null,
         rangeMode: '90d',
@@ -306,7 +307,7 @@ describe('executive Overview model', () => {
         comparisonPeriod: {
           ...thirtyDays,
           bounds: { from: new Date('2026-04-12T00:00:00.000Z'), to: new Date('2026-05-11T23:59:59.999Z') },
-          recordedFirst,
+          recordedHistory,
         },
         previousSummary: null,
         rangeMode: 'custom',
@@ -330,7 +331,10 @@ describe('executive Overview model', () => {
   test('shows no percentage or insight when recorded history starts inside the previous period', () => {
     const model = buildExecutiveOverviewModel(
       modelInput({
-        comparisonPeriod: { ...thirtyDays, recordedFirst: new Date('2026-04-12T09:20:00.000Z') },
+        comparisonPeriod: {
+          ...thirtyDays,
+          recordedHistory: { first: new Date('2026-04-12T09:20:00.000Z'), limitedToHarnesses: [] },
+        },
       }),
     );
     const processedTokens = model.supportMetrics.find(({ key }) => key === 'processed-tokens');

@@ -27,13 +27,12 @@
   import type { FocusedOverviewResult, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import type { LocalTimeCell } from '@ai-usage/report-core/session-query';
   import type { ComponentProps } from 'svelte';
-  import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import type ActivityExplorer from '../range/activity-explorer.svelte';
-  import { rangeBounds, reportPeriodInProgress } from '../range/report-range-model';
   import ActivityHeatmap from './activity-heatmap.svelte';
   import ExecutiveOverview from './executive-overview.svelte';
   import { buildExecutiveOverviewModel } from './executive-overview-model';
+  import { executivePeriodFor, type OverviewResultScope } from './overview-result-scope';
   import ProviderStatus from './provider-status.svelte';
   import Punchcard from './punchcard.svelte';
   import Records from './records.svelte';
@@ -53,8 +52,9 @@
     onSelectTimeCell?: (cell: LocalTimeCell) => void;
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
     providers?: readonly ProviderStatusView[];
-    range: DashboardDateRangeSearch;
     result: FocusedOverviewResult;
+    /** What `result` answers, which differs from the URL while another period or filter set loads. */
+    resultScope: OverviewResultScope;
     totalSessionCount: number;
   }
 
@@ -72,25 +72,19 @@
     onSelectTimeCell = () => undefined,
     presentSessionItem = unchangedSessionItem,
     providers = [],
-    range,
     result,
+    resultScope,
     totalSessionCount,
   }: Props = $props();
 
-  const generatedAt = $derived(new Date(result.metadata.generatedAt));
   const executiveModel = $derived(
     buildExecutiveOverviewModel({
-      // The bounds the report query was built from, so the previous window matches the one the
-      // result's previous summary was aggregated over.
-      comparisonPeriod: {
-        bounds: rangeBounds(range, generatedAt),
-        generatedAt,
-        recordedFirst: result.dateDomain === null ? null : new Date(result.dateDomain.first),
-      },
+      // The period and filters the result on screen answers, never the URL's: while another period
+      // loads, or after its refresh failed, the last committed result stays here and is judged on
+      // the query its previous summary was aggregated for.
+      ...executivePeriodFor(resultScope, result),
       executive: result.view.executive,
-      periodInProgress: reportPeriodInProgress(range, generatedAt),
       previousSummary: result.view.previousSummary,
-      rangeMode: range.mode,
       summary: result.summary,
       topItems: result.view.topSessions,
       totalSessionCount,
