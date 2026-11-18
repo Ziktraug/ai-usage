@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openCodeMcpManualSnippet, registeredMcpServerName } from '@ai-usage/mcp-adapter/registration';
+import {
+  openCodeMcpManualSnippet,
+  registeredMcpServerName,
+  TemporaryFileNotRemovedError,
+} from '@ai-usage/mcp-adapter/registration';
 import { describeMcpRegistrationFailure, runMcpRegistrationCommand } from './register';
 
 const roots: string[] = [];
@@ -156,7 +160,7 @@ describe('ai-usage MCP registration command, OpenCode mode', () => {
     );
     const unsupported = describeMcpRegistrationFailure(await run(['opencode', path.join(root, 'config.json')]));
     expect(unsupported).toStartWith(
-      'ai-usage MCP registration failed (unsupported-file-name): An OpenCode configuration file is named opencode.json or opencode.jsonc.\n',
+      'ai-usage MCP registration failed (unsupported-file-name): An OpenCode configuration file must be named opencode.json or opencode.jsonc.\n',
     );
     expect(unsupported).toContain(openCodeMcpManualSnippet(registration));
     expect(`${missing}${unsupported}`).not.toContain(root);
@@ -166,5 +170,16 @@ describe('ai-usage MCP registration command, OpenCode mode', () => {
     expect(describeMcpRegistrationFailure(new Error(`cannot open ${tmpdir()}/private`))).toBe(
       'ai-usage MCP registration failed.\n',
     );
+  });
+
+  test('says a temporary file was left behind instead of claiming nothing was written', () => {
+    const pathError = (code: string) => Object.assign(new Error(`${code}: ${tmpdir()}/private`), { code });
+    const described = describeMcpRegistrationFailure(
+      new TemporaryFileNotRemovedError(pathError('ENOSPC'), pathError('EACCES')),
+    );
+    expect(described).toBe(
+      'ai-usage MCP registration failed and could not remove its temporary file beside the target.\n',
+    );
+    expect(described).not.toContain(tmpdir());
   });
 });

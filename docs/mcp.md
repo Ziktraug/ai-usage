@@ -121,8 +121,13 @@ deprecated but still merged into `mcp.servers`. This mode writes only
 - A document that is valid only as JSONC is read but never rewritten: it can
   answer `unchanged` or `refused-unmanaged`, and any needed write is refused
   because it would drop the comments.
-- A write re-serializes the whole document with two-space indentation: every
-  key and value is kept, the original spacing and line layout are not.
+- A write parses and re-serializes the whole document with two-space
+  indentation; the original spacing and line layout are not kept. Strings,
+  booleans, `null`, objects and arrays keep their values, except that a
+  repeated key keeps only its last value. Every number is read as a
+  JavaScript number: an integer beyond 2^53 is rounded, a number out of range
+  (for example `1e400`) becomes `null`, and the rest are written in their
+  shortest form (`1.50` becomes `1.5`, `-0` becomes `0`).
 
 When the configuration cannot be inspected or rewritten safely for one of the
 reasons below, nothing is written, the command exits 1, and stderr names the
@@ -149,7 +154,10 @@ Every other failure writes the single fixed line described under
 entry: a wrong argument (a relative path, an extra argument, a relative
 configuration directory), a directory or file that changed between inspection
 and write, a lock that could not be taken, and any other system error such as
-a full disk. The temporary file is removed when a write fails.
+a full disk. The temporary file is removed when a write fails. When it cannot
+be removed, the command does not claim that nothing was written: its single
+stderr line says the temporary file was left beside the target, so the
+operator can delete the hidden `.<file name>.<id>.tmp` file by hand.
 
 ## Failure and redaction rules
 

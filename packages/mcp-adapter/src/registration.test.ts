@@ -12,6 +12,7 @@ import {
   registeredMcpServerName,
   registerJsonMcp,
   registerOpenCodeMcp,
+  TemporaryFileNotRemovedError,
 } from './registration';
 
 const roots: string[] = [];
@@ -427,6 +428,18 @@ describe('ai-usage MCP registration for OpenCode', () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
+  test('refuses a dangling symlink as a configuration directory as unsafe, not missing', async () => {
+    const { privateStatePath, registration, root } = await openCodeFixture();
+    const dangling = path.join(root, 'dangling-opencode');
+    await symlink(path.join(root, 'absent'), dangling);
+
+    expect(
+      await refusalOf(
+        registerOpenCodeMcp({ privateStatePath, registration, target: { kind: 'config-directory', path: dangling } }),
+      ),
+    ).toMatchObject(refusal('directory-unsafe', registration));
+  });
+
   test('names a configuration directory that is a file, or that lies under one, for what it is', async () => {
     const { privateStatePath, registration, root } = await openCodeFixture();
     const notADirectory = path.join(root, 'plain-file');
@@ -518,31 +531,77 @@ describe('ai-usage MCP registration for OpenCode', () => {
     expect(await permissionsOf(jsonPath)).toBe(0o664);
   });
 
-  test('removes its temporary file when the replacement cannot be written to disk', async () => {
-    const { directory, directoryTarget, jsonPath, privateStatePath, registration, root } = await openCodeFixture();
-    const original = '{"model":"m"}\n';
-    await writeFile(jsonPath, original);
+  /**
+   * Runs `registering` with the write of the replacement document taken over by `replace`, which receives the real
+   * write. Only the replacement document names the server; the projection lock writes through the same prototype.
+   */
+  const whileReplacementIsWritten = async <Result>(
+    root: string,
+    replace: (write: () => Promise<void>) => Promise<void>,
+    registering: () => Promise<Result>,
+  ): Promise<Result> => {
     const probe = await open(path.join(root, 'probe'), 'wx');
     const fileHandlePrototype = Object.getPrototypeOf(probe) as {
       writeFile: (this: unknown, data: unknown, ...rest: unknown[]) => Promise<void>;
     };
     await probe.close();
     const writeToDisk = fileHandlePrototype.writeFile;
-    // Only the replacement document names the server; the projection lock writes through the same prototype.
-    const failing = spyOn(fileHandlePrototype, 'writeFile').mockImplementation(function (this: unknown, data, ...rest) {
+    const spy = spyOn(fileHandlePrototype, 'writeFile').mockImplementation(function (this: unknown, data, ...rest) {
       return typeof data === 'string' && data.includes(registeredMcpServerName)
-        ? Promise.reject(Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }))
+        ? replace(() => writeToDisk.call(this, data, ...rest))
         : writeToDisk.call(this, data, ...rest);
     });
-
     try {
-      await expect(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })).rejects.toThrow(
-        'ENOSPC',
-      );
+      return await registering();
     } finally {
-      failing.mockRestore();
+      spy.mockRestore();
     }
+  };
+
+  const diskFull = () => Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+
+  test('removes its temporary file when the replacement cannot be written to disk', async () => {
+    const { directory, directoryTarget, jsonPath, privateStatePath, registration, root } = await openCodeFixture();
+    const original = '{"model":"m"}\n';
+    await writeFile(jsonPath, original);
+
+    await whileReplacementIsWritten(
+      root,
+      () => Promise.reject(diskFull()),
+      async () => {
+        await expect(registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget })).rejects.toThrow(
+          'ENOSPC',
+        );
+      },
+    );
     expect(await readdir(directory)).toEqual(['opencode.json']);
+    expect(await readFile(jsonPath, 'utf8')).toBe(original);
+  });
+
+  test('keeps the write failure and says so when its temporary file cannot be removed', async () => {
+    const { directory, directoryTarget, jsonPath, privateStatePath, registration, root } = await openCodeFixture();
+    const original = '{"model":"m"}\n';
+    await writeFile(jsonPath, original);
+
+    const failure = await whileReplacementIsWritten(
+      root,
+      async () => {
+        await makeReadOnly(directory, 0o555);
+        throw diskFull();
+      },
+      () =>
+        registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget }).then(
+          () => null,
+          (error: unknown) => error,
+        ),
+    );
+
+    expect(failure).toBeInstanceOf(TemporaryFileNotRemovedError);
+    expect(failure).toMatchObject({ cause: { code: 'ENOSPC' }, cleanupError: { code: 'EACCES' } });
+    expect((failure as Error).message).not.toContain(root);
+    const left = await readdir(directory);
+    expect(left).toHaveLength(2);
+    expect(left).toContain('opencode.json');
     expect(await readFile(jsonPath, 'utf8')).toBe(original);
   });
 
@@ -613,6 +672,35 @@ describe('ai-usage MCP registration for OpenCode', () => {
         registerOpenCodeMcp({ privateStatePath, registration, target: { kind: 'config-file', path: jsoncPath } }),
       ).resolves.toMatchObject({ kind: 'refused-unmanaged' });
       expect(await contents()).toEqual(originals);
+    });
+
+    test.each([
+      ['appears', null],
+      ['changes', '{"model":"m"}\n'],
+    ])('refuses to write when the other file %s while the replacement is written', async (_label, before) => {
+      const { directory, directoryTarget, jsoncPath, jsonPath, privateStatePath, registration, root } =
+        await openCodeFixture();
+      await writeFile(jsonPath, '{}\n');
+      if (before !== null) {
+        await writeFile(jsoncPath, before);
+      }
+      const overriding = `${JSON.stringify({ mcp: { servers: { [registeredMcpServerName]: other } } })}\n`;
+
+      await whileReplacementIsWritten(
+        root,
+        async (write) => {
+          await write();
+          await writeFile(jsoncPath, overriding);
+        },
+        async () => {
+          await expect(
+            registerOpenCodeMcp({ privateStatePath, registration, target: directoryTarget }),
+          ).rejects.toThrow('changed after inspection');
+        },
+      );
+      expect(await readFile(jsonPath, 'utf8')).toBe('{}\n');
+      expect(await readFile(jsoncPath, 'utf8')).toBe(overriding);
+      expect((await readdir(directory)).toSorted()).toEqual(['opencode.json', 'opencode.jsonc']);
     });
 
     test('refuses to write beside a file it cannot inspect', async () => {

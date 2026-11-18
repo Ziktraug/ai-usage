@@ -10,6 +10,7 @@ import {
   registerCodexMcp,
   registerJsonMcp,
   registerOpenCodeMcp,
+  TemporaryFileNotRemovedError,
 } from '@ai-usage/mcp-adapter/registration';
 import { resolveUsageRuntimePaths } from '@ai-usage/usage-engine-control/node';
 
@@ -103,18 +104,21 @@ export const runMcpRegistrationCommand = async ({
 
 /**
  * What a failed registration writes to stderr. An OpenCode refusal names its reason, the system error code behind it
- * when there is one, and the entry to add by hand; every other failure stays one fixed line, so no private path or
- * system error message reaches the terminal.
+ * when there is one, and the entry to add by hand. A write that left its temporary file behind says so in its own fixed
+ * line; every other failure stays one fixed line, so no private path or system error message reaches the terminal.
  */
-export const describeMcpRegistrationFailure = (error: unknown): string =>
-  error instanceof OpenCodeMcpRegistrationError
-    ? [
-        `ai-usage MCP registration failed (${[error.reason, error.systemErrorCode].filter(Boolean).join(', ')}): ${error.message}`,
-        'Nothing was written. Merge this into your OpenCode configuration by hand:',
-        error.manualSnippet,
-        '',
-      ].join('\n')
-    : 'ai-usage MCP registration failed.\n';
+export const describeMcpRegistrationFailure = (error: unknown): string => {
+  if (error instanceof OpenCodeMcpRegistrationError) {
+    return [
+      `ai-usage MCP registration failed (${[error.reason, error.systemErrorCode].filter(Boolean).join(', ')}): ${error.message}`,
+      'Nothing was written. Merge this into your OpenCode configuration by hand:',
+      error.manualSnippet,
+      '',
+    ].join('\n');
+  }
+  // Its message is fixed and path-free; the system errors it carries are not printed.
+  return error instanceof TemporaryFileNotRemovedError ? `${error.message}\n` : 'ai-usage MCP registration failed.\n';
+};
 
 if (import.meta.main) {
   try {

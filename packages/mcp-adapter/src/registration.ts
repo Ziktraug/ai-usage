@@ -77,6 +77,22 @@ class UnsafeTargetFileError extends Error {
   }
 }
 
+/**
+ * A replacement that failed and left its temporary file beside the target: `cause` is the failure of the write and
+ * `cleanupError` that of the removal. Its message is fixed and path-free.
+ */
+export class TemporaryFileNotRemovedError extends Error {
+  readonly cleanupError: unknown;
+  override readonly name = 'TemporaryFileNotRemovedError';
+
+  constructor(failure: unknown, cleanupError: unknown) {
+    super('ai-usage MCP registration failed and could not remove its temporary file beside the target.', {
+      cause: failure,
+    });
+    this.cleanupError = cleanupError;
+  }
+}
+
 const observeFile = async (filePath: string): Promise<FileIdentity | null> => {
   try {
     const stats = await lstat(filePath);
@@ -136,8 +152,18 @@ const assertParentIdentity = async (directory: string, canonical: string, observ
   }
 };
 
-/** Writes the document beside the target and renames it over it, unless the directory or target changed since inspection. */
+interface ObservedFile {
+  readonly filePath: string;
+  readonly observed: FileIdentity | null;
+}
+
+/**
+ * Writes the document beside the target and renames it over it, unless the directory, the target or a file read beside
+ * it changed since inspection. The checks run once the temporary file is synced, right before the rename.
+ */
 const replaceObservedDocument = async (input: {
+  /** Files the outcome depends on that are not written, for example the other OpenCode configuration file. */
+  readonly beside: readonly ObservedFile[];
   readonly canonicalDirectory: string;
   readonly configPath: string;
   readonly directory: string;
@@ -159,10 +185,14 @@ const replaceObservedDocument = async (input: {
     }
     await assertParentIdentity(input.directory, input.canonicalDirectory, input.parentIdentity);
     await assertUnchanged(input.configPath, input.observed);
+    await Promise.all(input.beside.map(({ filePath, observed }) => assertUnchanged(filePath, observed)));
     await rename(temporaryPath, input.configPath);
   } catch (error) {
-    await rm(temporaryPath, { force: true });
-    throw error;
+    const cleanupError = await rm(temporaryPath, { force: true }).then(
+      () => null,
+      (failure: unknown) => ({ failure }),
+    );
+    throw cleanupError === null ? error : new TemporaryFileNotRemovedError(error, cleanupError.failure);
   }
 };
 
@@ -223,6 +253,7 @@ export const registerJsonMcp = async (input: {
       mcpServers: { ...servers, [registeredMcpServerName]: input.registration },
     };
     await replaceObservedDocument({
+      beside: [],
       canonicalDirectory,
       configPath,
       directory,
@@ -261,7 +292,7 @@ const openCodeFailureMessages: Record<OpenCodeMcpRegistrationFailureReason, stri
   'target-not-regular-file': 'An OpenCode configuration file is a symlink or not a regular file.',
   'target-not-writable': 'The OpenCode configuration file or its directory is read-only.',
   'target-too-large': 'An OpenCode configuration file exceeds the 1 MiB registration limit.',
-  'unsupported-file-name': 'An OpenCode configuration file is named opencode.json or opencode.jsonc.',
+  'unsupported-file-name': 'An OpenCode configuration file must be named opencode.json or opencode.jsonc.',
 };
 
 const openCodeEntry = (registration: McpStdioRegistration) => ({
@@ -433,17 +464,18 @@ const inspectOpenCodeDirectory = async (
   directory: string,
   refusals: OpenCodeRefusals,
 ): Promise<{ readonly canonicalDirectory: string; readonly parentIdentity: FileIdentity }> => {
-  const [canonicalDirectory, parentStats] = await Promise.all([realpath(directory), lstat(directory)]).catch(
-    (error: unknown) => {
-      throw refusals.translate(error, directoryFailureReasons);
-    },
-  );
+  const refuseSystemError = (error: unknown): never => {
+    throw refusals.translate(error, directoryFailureReasons);
+  };
+  // The link itself first: resolving a dangling symlink would report a missing directory instead of an unsafe one.
+  const parentStats = await lstat(directory).catch(refuseSystemError);
   if (parentStats.isSymbolicLink()) {
     throw refusals.refuse('directory-unsafe');
   }
   if (!parentStats.isDirectory()) {
     throw refusals.refuse('directory-not-a-directory');
   }
+  const canonicalDirectory = await realpath(directory).catch(refuseSystemError);
   if (canonicalDirectory !== directory) {
     throw refusals.refuse('directory-unsafe');
   }
@@ -530,6 +562,7 @@ export const registerOpenCodeMcp = async (input: {
       );
       await Promise.all(beside.map(({ filePath, observed }) => assertUnchanged(filePath, observed)));
       await replaceObservedDocument({
+        beside,
         canonicalDirectory,
         configPath,
         directory,
