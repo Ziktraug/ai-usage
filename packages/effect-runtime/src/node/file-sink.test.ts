@@ -593,17 +593,10 @@ describe('node wide-event sinks', () => {
     await sink.dispose();
   });
 
-  test('a probe that misses its deadline reopens the circuit with a doubled cool-down up to the cap', async () => {
+  test('a probe that misses its deadline doubles the cool-down, and the cap bounds the doubling', async () => {
     const directory = makeTempDir();
-    const start = Date.parse('2026-07-21T12:00:00.000Z');
-    let current = new Date(start);
+    let monotonicMs = 0;
     let appendCount = 0;
-    let timeouts = 0;
-    let signalTimeout: (() => void) | undefined;
-    const nextTimeout = () =>
-      new Promise<void>((resolve) => {
-        signalTimeout = resolve;
-      });
     const sink = createFileWideEventSink({
       appendLine: async (_filePath, _line, signal) => {
         appendCount += 1;
@@ -615,47 +608,40 @@ describe('node wide-event sinks', () => {
       circuitCooldownMs: 1000,
       circuitMaxCooldownMs: 3000,
       directory,
-      monotonicNowMs: () => current.getTime(),
-      now: () => current,
-      warn: ({ kind }) => {
-        if (kind === 'append-timeout') {
-          timeouts += 1;
-          signalTimeout?.();
-        }
-      },
+      drainTimeoutMs: 10_000,
+      monotonicNowMs: () => monotonicMs,
     });
-    // Each step moves the clock far enough for its own warning to pass the rate limit.
-    const submitAt = async (offsetMs: number, id: string, expectProbe: boolean) => {
-      current = new Date(start + offsetMs);
-      const timedOut = expectProbe ? nextTimeout() : Promise.resolve();
+    // A probe is an append attempt: it shows in the append count and, once it has missed its
+    // deadline, in the failed counter. A record inside the cool-down only adds to the dropped
+    // counter. The `append-timeout` warning is rate-limited, so it cannot tell the two apart here.
+    const submitAt = async (atMs: number, id: string) => {
+      monotonicMs = atMs;
       await Effect.runPromise(sink.submit(sampleEvent(id)));
-      await timedOut;
       await sink.drain();
+      const { dropped, failed } = await Effect.runPromise(sink.diagnostics());
+      return { appends: appendCount, dropped, failed };
     };
 
-    await submitAt(0, 'opens', true);
-    expect(appendCount).toBe(1);
-    // Cool-down 1 s: the first probe at +1 s fails, so the next cool-down is 2 s.
-    await submitAt(40_000, 'probe-1', true);
-    expect(appendCount).toBe(2);
-    await submitAt(41_999, 'inside-doubled-cool-down', false);
-    expect(appendCount).toBe(2);
-    await submitAt(80_000, 'probe-2', true);
-    expect(appendCount).toBe(3);
-    // 4 s would exceed the cap: the third cool-down is the 3 s cap.
-    await submitAt(82_999, 'inside-capped-cool-down', false);
-    expect(appendCount).toBe(3);
-    await submitAt(120_000, 'probe-3', true);
-    expect(appendCount).toBe(4);
-    await submitAt(122_999, 'still-capped', false);
-    expect(appendCount).toBe(4);
+    expect(await submitAt(0, 'opens')).toEqual({ appends: 1, dropped: 0, failed: 1 });
+    // First cool-down, 1 s: it ends at 1,000.
+    expect(await submitAt(999, 'inside-first-cool-down')).toEqual({ appends: 1, dropped: 1, failed: 1 });
+    expect(await submitAt(1000, 'probe-1')).toEqual({ appends: 2, dropped: 1, failed: 2 });
+    // Doubled to 2 s: it ends at 3,000.
+    expect(await submitAt(2999, 'inside-doubled-cool-down')).toEqual({ appends: 2, dropped: 2, failed: 2 });
+    expect(await submitAt(3000, 'probe-2')).toEqual({ appends: 3, dropped: 2, failed: 3 });
+    // Doubling again would give 4 s and end at 7,000. The cap makes it 3 s: it ends at 6,000, and
+    // the record submitted then is a probe.
+    expect(await submitAt(5999, 'inside-capped-cool-down')).toEqual({ appends: 3, dropped: 3, failed: 3 });
+    expect(await submitAt(6000, 'probe-3')).toEqual({ appends: 4, dropped: 3, failed: 4 });
+    // It stays at the cap: the next cool-down is 3 s again and ends at 9,000.
+    expect(await submitAt(8999, 'inside-second-capped-cool-down')).toEqual({ appends: 4, dropped: 4, failed: 4 });
+    expect(await submitAt(9000, 'probe-4')).toEqual({ appends: 5, dropped: 4, failed: 5 });
 
-    expect(timeouts).toBe(4);
     expect(await Effect.runPromise(sink.diagnostics())).toEqual({
       accepted: 0,
       circuit: 'open',
-      dropped: 3,
-      failed: 4,
+      dropped: 4,
+      failed: 5,
     });
     await sink.dispose();
   });
