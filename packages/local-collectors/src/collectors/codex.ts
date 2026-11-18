@@ -25,6 +25,7 @@ import {
   skillObservationValidationWarning,
   unlistedHistoryDirectoryWarning,
   unreadableHistoryFileWarning,
+  unreadableThreadMetadataWarning,
 } from '../metric-validation';
 
 export interface CodexCollectionResult {
@@ -83,6 +84,9 @@ const collectCodexResultWith = (
       ? unlistedHistoryDirectoryWarning('codex', result.archivedWalkFailure, 'the Codex archived sessions directory')
       : null;
     const deferredWarning = deferredUsageOwnershipWarning('codex', result.ownershipDeferredSessions);
+    const metadataWarning = result.threadMetadataFailure
+      ? unreadableThreadMetadataWarning('codex', result.threadMetadataFailure)
+      : null;
     return {
       workObservations: result.workObservations,
       observationCompleteness: result.observationCompleteness,
@@ -99,6 +103,7 @@ const collectCodexResultWith = (
         unreadableWarning,
         unlistedWarning,
         deferredWarning,
+        metadataWarning,
       ].filter((value) => value !== null),
     };
   });
@@ -112,8 +117,9 @@ export const collectCodexResult = collectCodexResultWith(readCodexUsageSessionsR
  * complete when `complete` is asked and otherwise limited to the rollouts read this pass. Each call
  * of this factory owns its own index.
  */
-export const createCodexIncrementalCollector = () => {
-  const index = createCodexResidentIndex();
+export const createCodexIncrementalCollector = (options: { readonly maximumObservations?: number } = {}) => {
+  // The bound is the engine's import bound; only tests pass another one, to reach it with a fixture.
+  const index = createCodexResidentIndex(options.maximumObservations);
   return (request: { readonly complete: boolean }) =>
     collectCodexResultWith(readCodexUsageSessionsIncrementally({ complete: request.complete, index }));
 };

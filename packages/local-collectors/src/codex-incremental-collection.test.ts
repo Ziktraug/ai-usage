@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
@@ -274,5 +274,231 @@ describe('incremental Codex collection', () => {
     // The project comes from the state database: a pass that gave up would have left it empty.
     expect(result.rows[0]?.project).toBe('from-state');
     expect(result.rows[0]?.origin).toBe('human');
+    expect(result.warnings).toEqual([]);
+  });
+
+  /** A storage whose reads of the named rollouts fail, as a truncated archive does. */
+  const withUnreadable = (unreadable: Set<string>): LocalHistoryStorageService => ({
+    ...storage,
+    readLines: (filePath, visit, limits) =>
+      unreadable.has(path.basename(filePath))
+        ? Effect.fail(
+            new LocalHistoryError({ cause: new Error('fixture'), operation: 'readLines.decompress', path: filePath }),
+          )
+        : storage.readLines(filePath, visit, limits),
+  });
+
+  test('returns the remaining copy of an observation when the rollout sharing its session id is deleted', async () => {
+    // Both rollouts expose the same skill under one session id: one observation identity, two
+    // dates. The earlier rollout wins it; once that rollout is gone, the other one's copy is the
+    // observation, although its own file never changed.
+    const earlier = writeRollout(
+      'rollout-a-first.jsonl',
+      rollout({ id: 'shared', minute: 1, skill: 'alpha', total: 900 }),
+    );
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'alpha', total: 100 }));
+    const collect = createCodexIncrementalCollector();
+    const before = await run(collect({ complete: true }), storage);
+    expect(before.observations.map((observation) => observation.observedAt)).toEqual(['2026-01-01T00:01:01.000Z']);
+
+    rmSync(earlier);
+    const afterDelete = await run(collect({ complete: false }), storage);
+    const full = await fullCollection();
+
+    expect(full.observations.map((observation) => observation.observedAt)).toEqual(['2026-01-01T00:05:01.000Z']);
+    expect(afterDelete.observations).toEqual(full.observations);
+    expect(comparable(afterDelete)).toEqual(comparable(full));
+  });
+
+  test('returns the remaining copy of an observation when the rollout sharing its session id becomes unreadable', async () => {
+    const earlier = writeRollout(
+      'rollout-a-first.jsonl',
+      rollout({ id: 'shared', minute: 1, skill: 'alpha', total: 900 }),
+    );
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'alpha', total: 100 }));
+    const collect = createCodexIncrementalCollector();
+    await run(collect({ complete: true }), storage);
+
+    stamp += 10;
+    utimesSync(earlier, stamp, stamp);
+    const broken = withUnreadable(new Set(['rollout-a-first.jsonl']));
+    const incremental = await run(collect({ complete: false }), broken);
+    const full = await run(collectCodexResult, broken);
+
+    expect(full.observations.map((observation) => observation.observedAt)).toEqual(['2026-01-01T00:05:01.000Z']);
+    expect(incremental.observations).toEqual(full.observations);
+    expect(comparable(incremental)).toEqual(comparable(full));
+  });
+
+  test('keeps the index equal to a full collection while a rollout is unreadable and after it reads again', async () => {
+    const onePath = writeRollout('rollout-one.jsonl', rollout({ id: 'one', minute: 1, skill: 'alpha', total: 100 }));
+    writeRollout('rollout-two.jsonl', rollout({ id: 'two', minute: 2, skill: 'beta', total: 200 }));
+    const collect = createCodexIncrementalCollector();
+    await run(collect({ complete: true }), storage);
+
+    stamp += 10;
+    utimesSync(onePath, stamp, stamp);
+    const broken = withUnreadable(new Set(['rollout-one.jsonl']));
+    const whileBroken = await run(collect({ complete: false }), broken);
+    const fullWhileBroken = await run(collectCodexResult, broken);
+    expect(whileBroken.rows.map((row) => row.source?.sourceSessionId)).toEqual(['two']);
+    expect(whileBroken.warnings.map((warning) => warning.operation)).toContain('unreadableHistoryFile');
+    expect(comparable(whileBroken)).toEqual(comparable(fullWhileBroken));
+    // Still unreadable on the next pass: it is tried again, not served from an older parse.
+    expect(comparable(await run(collect({ complete: false }), broken))).toEqual(comparable(fullWhileBroken));
+
+    const readable = await run(collect({ complete: false }), storage);
+    expect(comparable(readable)).toEqual(comparable(await fullCollection()));
+    expect(observationKeys(readable)).toEqual(['one:exposed:alpha']);
+  });
+
+  test('falls back to a complete pass when the cache no longer holds a sibling it needs', async () => {
+    writeRollout('rollout-a-first.jsonl', rollout({ id: 'shared', minute: 1, skill: 'alpha', total: 900 }));
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'beta', total: 100 }));
+    writeRollout('rollout-c-other.jsonl', rollout({ id: 'other', minute: 3, skill: 'delta', total: 50 }));
+    const collect = createCodexIncrementalCollector();
+    await run(collect({ complete: true }), storage);
+    const cache = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+    cache.query("DELETE FROM codex_session_cache WHERE file_path LIKE '%rollout-a-first.jsonl'").run();
+    cache.close();
+
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'gamma', total: 120 }));
+    const changed = await run(collect({ complete: false }), storage);
+
+    // Every observation, as a complete pass returns them: nothing was guessed for the sibling.
+    expect(changed.observationScope).toBeUndefined();
+    expect(changed).toEqual(await fullCollection());
+  });
+
+  test('does not read a sibling back from a cache entry older than the index', async () => {
+    const cachePath = path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite');
+    writeRollout('rollout-a-first.jsonl', rollout({ id: 'shared', minute: 1, skill: 'alpha', total: 900 }));
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'beta', total: 100 }));
+    const collect = createCodexIncrementalCollector();
+    await run(collect({ complete: true }), storage);
+
+    // The cache cannot be written while the first rollout is re-read: the index moves on, the
+    // cache entry keeps the older parse.
+    chmodSync(cachePath, 0o444);
+    writeRollout('rollout-a-first.jsonl', rollout({ id: 'shared', minute: 1, skill: 'gamma', total: 950 }));
+    const firstChange = await run(collect({ complete: false }), storage);
+    chmodSync(cachePath, 0o644);
+    expect(observationKeys(firstChange)).toEqual(['shared:exposed:beta', 'shared:exposed:gamma']);
+
+    writeRollout('rollout-b-resumed.jsonl', rollout({ id: 'shared', minute: 5, skill: 'delta', total: 120 }));
+    const secondChange = await run(collect({ complete: false }), storage);
+    const full = await fullCollection();
+
+    expect(observationKeys(full)).toEqual(['shared:exposed:delta', 'shared:exposed:gamma']);
+    expect(observationKeys(secondChange)).toEqual(observationKeys(full));
+    expect(comparable(secondChange)).toEqual(comparable(full));
+  });
+
+  test('uses the index up to the observation bound of one import and not one observation above it', async () => {
+    writeRollout('rollout-one.jsonl', rollout({ id: 'one', minute: 1, skill: 'alpha', total: 100 }));
+    writeRollout('rollout-two.jsonl', rollout({ id: 'two', minute: 2, skill: 'beta', total: 200 }));
+
+    // Two observations against a bound of two: the index answers.
+    const atBound = createCodexIncrementalCollector({ maximumObservations: 2 });
+    await run(atBound({ complete: true }), storage);
+    const unchanged = await run(atBound({ complete: false }), storage);
+    expect(unchanged.observationScope).toBe('changed');
+    expect(unchanged.observations).toEqual([]);
+
+    // Against a bound of one, every pass returns every observation, as a one-shot collection does.
+    const aboveBound = createCodexIncrementalCollector({ maximumObservations: 1 });
+    await run(aboveBound({ complete: true }), storage);
+    const everyPass = await run(aboveBound({ complete: false }), storage);
+    expect(everyPass.observationScope).toBeUndefined();
+    expect(everyPass).toEqual(await fullCollection());
+
+    // A new rollout takes the first collector one above its bound: that pass and the following
+    // ones return everything.
+    writeRollout('rollout-three.jsonl', rollout({ id: 'three', minute: 3, skill: 'gamma', total: 300 }));
+    const crossing = await run(atBound({ complete: false }), storage);
+    expect(crossing.observationScope).toBeUndefined();
+    expect(crossing).toEqual(await fullCollection());
+    const afterCrossing = await run(atBound({ complete: false }), storage);
+    expect(afterCrossing.observationScope).toBeUndefined();
+    expect(observationKeys(afterCrossing)).toEqual(['one:exposed:alpha', 'three:exposed:gamma', 'two:exposed:beta']);
+  });
+
+  const writeStateDatabase = () => {
+    const state = new Database(path.join(home, '.codex', 'state_5.sqlite'));
+    state.exec(`
+      CREATE TABLE threads (
+        id TEXT PRIMARY KEY, cwd TEXT, title TEXT, first_user_message TEXT, source TEXT,
+        thread_source TEXT, model TEXT, created_at INTEGER, updated_at INTEGER
+      );
+      CREATE TABLE thread_spawn_edges (parent_thread_id TEXT, child_thread_id TEXT);
+      INSERT INTO threads (id, cwd, thread_source, model) VALUES ('meta-thread', '/work/from-state', 'user', 'gpt-5.2');
+    `);
+    state.close();
+  };
+
+  test('reports a state database that stayed unreadable after its retries instead of dropping its metadata silently', async () => {
+    writeRollout(
+      'rollout-meta.jsonl',
+      jsonl(
+        { timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'meta-thread' } },
+        tokenCount('2026-01-01T00:01:00.000Z', 100),
+      ),
+    );
+    writeStateDatabase();
+    let opens = 0;
+    const moving: LocalHistoryStorageService = {
+      ...storage,
+      openDatabase: (dbPath) => {
+        opens++;
+        return Effect.fail(
+          new LocalHistoryError({
+            cause: new Error('SQLite history identity changed while opening.'),
+            operation: 'sqlite.identityChanged',
+            path: `${dbPath}-wal`,
+          }),
+        );
+      },
+    };
+
+    const result = await run(collectCodexResult, moving);
+
+    expect(opens).toBe(3);
+    // The session is still collected, without what the database would have added.
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.project).not.toBe('from-state');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({ harness: 'codex', operation: 'codex.threadMetadata' });
+    expect(result.warnings[0]?.message).toContain('identity changed');
+  });
+
+  test('reports a state database it cannot query, without retrying', async () => {
+    writeRollout(
+      'rollout-meta.jsonl',
+      jsonl(
+        { timestamp: '2026-01-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'meta-thread' } },
+        tokenCount('2026-01-01T00:01:00.000Z', 100),
+      ),
+    );
+    // A database without the tables the collector reads, as after a Codex schema change.
+    const state = new Database(path.join(home, '.codex', 'state_5.sqlite'));
+    state.exec('CREATE TABLE unrelated (id TEXT)');
+    state.close();
+    let opens = 0;
+    const counting: LocalHistoryStorageService = {
+      ...storage,
+      openDatabase: (dbPath) => {
+        opens++;
+        return storage.openDatabase(dbPath);
+      },
+    };
+
+    const result = await run(collectCodexResult, counting);
+    const incremental = await run(createCodexIncrementalCollector()({ complete: true }), counting);
+
+    expect(opens).toBe(2);
+    expect(result.rows).toHaveLength(1);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({ harness: 'codex', operation: 'codex.threadMetadata' });
+    expect(incremental.warnings).toEqual(result.warnings);
   });
 });

@@ -152,11 +152,21 @@ interface ResidentCodexRollout extends CodexSessionFileStat {
  */
 export interface CodexResidentIndex {
   home: string | null;
+  /**
+   * The most skill observations the rollouts may hold in total for the index to answer. It is the
+   * bound of one engine import: above it the engine truncates the full list by recency, which a
+   * pass that returns the observations of changed rollouts only cannot reproduce.
+   */
+  readonly maximumObservations: number;
   /** Null until a complete pass has filled it, and again whenever it can no longer be trusted. */
   rollouts: Map<string, ResidentCodexRollout> | null;
 }
 
-export const createCodexResidentIndex = (): CodexResidentIndex => ({ home: null, rollouts: null });
+export const createCodexResidentIndex = (maximumObservations = MAX_SKILL_OBSERVATION_BATCH): CodexResidentIndex => ({
+  home: null,
+  maximumObservations,
+  rollouts: null,
+});
 
 export interface CodexIncrementalRead {
   /**
@@ -231,69 +241,75 @@ from thread_spawn_edges
 const CODEX_METADATA_READ_ATTEMPTS = 3;
 const CODEX_METADATA_RETRY_DELAY_MS = 100;
 
-const readCodexThreadMetadata: Effect.Effect<
-  Map<string, CodexThreadMetadata>,
-  LocalHistoryError,
-  LocalHistoryStorageService
-> = withPerfSpan(
-  'aiUsage.collect.codex.threadMetadata',
-  Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));
-    if (!dbPath) {
-      return new Map<string, CodexThreadMetadata>();
-    }
+interface CodexThreadMetadataRead {
+  /**
+   * Why the state database gave no metadata although it exists. The sessions of the pass are then
+   * built from their rollouts alone; the caller reports it rather than let the rows change quietly.
+   */
+  failure: LocalHistoryError | null;
+  metadata: Map<string, CodexThreadMetadata>;
+}
 
-    const read = Effect.acquireUseRelease(
-      // Suspended so each attempt opens the database again.
-      withPerfSpan(
-        'aiUsage.collect.codex.threadMetadata.open',
-        Effect.suspend(() => storage.openDatabase(dbPath)),
-      ),
-      (db) =>
-        Effect.gen(function* () {
-          const rows = yield* withPerfSpan(
-            'aiUsage.collect.codex.threadMetadata.threads',
-            db.all<CodexThreadMetadataRow>(THREAD_METADATA_SQL),
-            (value) => ({ rows: value.length }),
-          );
-          const edges = yield* withPerfSpan(
-            'aiUsage.collect.codex.threadMetadata.edges',
-            db.all<CodexThreadSpawnEdgeRow>(THREAD_SPAWN_EDGES_SQL),
-            (value) => ({ rows: value.length }),
-          );
-
-          const parents = codexParentsFromEdges(edges);
-
-          const metadata = new Map<string, CodexThreadMetadata>();
-          for (const row of rows) {
-            const id = nonEmpty(row.id);
-            if (!id) {
-              continue;
-            }
-            const threadMetadata = codexThreadMetadataFromRow(row, parents.get(id) ?? null);
-            if (threadMetadata) {
-              metadata.set(id, threadMetadata);
-            }
-          }
-
-          return metadata;
-        }),
-      (db) => db.close,
-    );
-    for (let attempt = 1; ; attempt++) {
-      const result = yield* Effect.result(read);
-      if (Result.isSuccess(result)) {
-        return result.success;
+const readCodexThreadMetadata: Effect.Effect<CodexThreadMetadataRead, LocalHistoryError, LocalHistoryStorageService> =
+  withPerfSpan(
+    'aiUsage.collect.codex.threadMetadata',
+    Effect.gen(function* () {
+      const storage = yield* LocalHistoryStorage;
+      const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));
+      if (!dbPath) {
+        return { failure: null, metadata: new Map<string, CodexThreadMetadata>() };
       }
-      if (attempt >= CODEX_METADATA_READ_ATTEMPTS || result.failure.operation !== 'sqlite.identityChanged') {
-        return new Map<string, CodexThreadMetadata>();
+
+      const read = Effect.acquireUseRelease(
+        // Suspended so each attempt opens the database again.
+        withPerfSpan(
+          'aiUsage.collect.codex.threadMetadata.open',
+          Effect.suspend(() => storage.openDatabase(dbPath)),
+        ),
+        (db) =>
+          Effect.gen(function* () {
+            const rows = yield* withPerfSpan(
+              'aiUsage.collect.codex.threadMetadata.threads',
+              db.all<CodexThreadMetadataRow>(THREAD_METADATA_SQL),
+              (value) => ({ rows: value.length }),
+            );
+            const edges = yield* withPerfSpan(
+              'aiUsage.collect.codex.threadMetadata.edges',
+              db.all<CodexThreadSpawnEdgeRow>(THREAD_SPAWN_EDGES_SQL),
+              (value) => ({ rows: value.length }),
+            );
+
+            const parents = codexParentsFromEdges(edges);
+
+            const metadata = new Map<string, CodexThreadMetadata>();
+            for (const row of rows) {
+              const id = nonEmpty(row.id);
+              if (!id) {
+                continue;
+              }
+              const threadMetadata = codexThreadMetadataFromRow(row, parents.get(id) ?? null);
+              if (threadMetadata) {
+                metadata.set(id, threadMetadata);
+              }
+            }
+
+            return metadata;
+          }),
+        (db) => db.close,
+      );
+      for (let attempt = 1; ; attempt++) {
+        const result = yield* Effect.result(read);
+        if (Result.isSuccess(result)) {
+          return { failure: null, metadata: result.success };
+        }
+        if (attempt >= CODEX_METADATA_READ_ATTEMPTS || result.failure.operation !== 'sqlite.identityChanged') {
+          return { failure: result.failure, metadata: new Map<string, CodexThreadMetadata>() };
+        }
+        yield* Effect.sleep(CODEX_METADATA_RETRY_DELAY_MS);
       }
-      yield* Effect.sleep(CODEX_METADATA_RETRY_DELAY_MS);
-    }
-  }),
-  (metadata) => ({ rows: metadata.size }),
-);
+    }),
+    (read) => ({ failed: read.failure !== null, rows: read.metadata.size }),
+  );
 
 const cloneCodexSession = (session: CodexSession): CodexSession => ({
   ...session,
@@ -609,18 +625,23 @@ const loadCodexSessionCache = async (storage: LocalHistoryStorageService) => {
 
 /**
  * The skill observations the cache holds for rollouts the index kept without them. Null when any
- * of them has no usable cache entry, so the caller falls back to a complete pass instead of
- * returning a session with part of its observations.
+ * of them has no cache entry for the very parse the index holds (same size and mtime), so the
+ * caller falls back to a complete pass instead of returning a session with part of its
+ * observations, or with those of an older parse.
  */
 const readCachedCodexSkillObservations = (
   db: SqliteDatabase,
-  filePaths: readonly string[],
+  rollouts: readonly { filePath: string; stat: CodexSessionFileStat }[],
 ): Map<string, SkillObservation[]> | null => {
-  const select = db.query('SELECT session_json FROM codex_session_cache WHERE file_path = ? AND version = ?');
+  const select = db.query(
+    'SELECT size, mtime_ms, session_json FROM codex_session_cache WHERE file_path = ? AND version = ?',
+  );
   const observations = new Map<string, SkillObservation[]>();
-  for (const filePath of filePaths) {
-    const row = select.get(filePath, CODEX_SESSION_CACHE_VERSION) as { session_json: string } | null;
-    const session = row ? reviveCachedSession(row.session_json) : null;
+  for (const { filePath, stat } of rollouts) {
+    const row = select.get(filePath, CODEX_SESSION_CACHE_VERSION) as Omit<CodexSessionCacheRow, 'file_path'> | null;
+    // The entry must be the parse the index holds: a cache write that failed leaves an older one.
+    const session =
+      row && row.size === stat.size && row.mtime_ms === stat.mtimeMs ? reviveCachedSession(row.session_json) : null;
     if (!session) {
       return null;
     }
@@ -750,8 +771,9 @@ const readCodexSessions = (
       }
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
       const nextRollouts = new Map<string, ResidentCodexRollout>();
-      const residentHits: { filePath: string; session: CodexSession }[] = [];
-      const parsedSessionIds = new Set<string>();
+      const residentHits: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
+      // Session ids whose set of rollouts moved this pass: read again, unreadable, or gone.
+      const movedSessionIds = new Set<string>();
       const unlistedDirectory = archivedWalkFailure ? codexArchivedSessionsDir(storage) : null;
       const mergeObservationCompleteness = (value: SkillObservationCollectionCompleteness): void => {
         observationCompleteness.exposure.rejected += value.exposure.rejected;
@@ -792,7 +814,7 @@ const readCodexSessions = (
                 if (resident) {
                   session = residentCodexSessionCopy(cached.session);
                   observationCount += resident.get(filePath)?.observationCount ?? 0;
-                  residentHits.push({ filePath, session });
+                  residentHits.push({ filePath, session, stat });
                 } else {
                   session = cloneCodexSession(cached.session);
                   observationCount += session.skillObservations.length;
@@ -806,6 +828,12 @@ const readCodexSessions = (
               }
 
               cacheMisses++;
+              // The id the index held for this file counts even if the file now reads as another
+              // session or not at all: its other rollouts lose a competitor either way.
+              const previousSessionId = resident?.get(filePath)?.session.id;
+              if (previousSessionId) {
+                movedSessionIds.add(previousSessionId);
+              }
               const readStartedAt = Date.now();
               // Codex may compress or archive the rollout after it was listed;
               // the read follows it to its next form with a fresh parser.
@@ -859,7 +887,7 @@ const readCodexSessions = (
                 }
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
                 if (session.id) {
-                  parsedSessionIds.add(session.id);
+                  movedSessionIds.add(session.id);
                 }
                 if (session.id || session.start) {
                   sessions.push(session);
@@ -886,7 +914,7 @@ const readCodexSessions = (
               if (index) {
                 // More observations than one import carries: the engine truncates the full list
                 // by recency, which a pass that returns only changed rollouts cannot reproduce.
-                index.rollouts = observationCount > MAX_SKILL_OBSERVATION_BATCH ? null : nextRollouts;
+                index.rollouts = observationCount > index.maximumObservations ? null : nextRollouts;
               }
             }
             if (!resident) {
@@ -898,7 +926,7 @@ const readCodexSessions = (
             const listed = new Set(files);
             const unlistedPrefix = unlistedDirectory === null ? null : `${unlistedDirectory}${path.sep}`;
             let removed = false;
-            for (const filePath of resident.keys()) {
+            for (const [filePath, rollout] of resident) {
               const unseen = !(
                 listed.has(filePath) ||
                 (unlistedPrefix !== null && filePath.startsWith(unlistedPrefix))
@@ -906,6 +934,9 @@ const readCodexSessions = (
               if (unseen || unreadablePaths.has(filePath)) {
                 resident.delete(filePath);
                 removed = true;
+                if (rollout.session.id) {
+                  movedSessionIds.add(rollout.session.id);
+                }
               }
             }
             for (const [filePath, rollout] of nextRollouts) {
@@ -914,10 +945,11 @@ const readCodexSessions = (
             // Two rollouts can carry one session id, and their observations are deduplicated
             // across both in session order. When one of them changed, the other's observations
             // are needed too, or the changed copy could win an identity it loses in a full pass.
+            // When one of them left the scan, the other's copy is the observation from now on.
             const siblings = residentHits.filter(
-              ({ session }) => session.id !== null && parsedSessionIds.has(session.id),
+              ({ session }) => session.id !== null && movedSessionIds.has(session.id),
             );
-            if (observationCount > MAX_SKILL_OBSERVATION_BATCH) {
+            if (index && observationCount > index.maximumObservations) {
               incrementalRefused = true;
               return;
             }
@@ -929,11 +961,13 @@ const readCodexSessions = (
               try: async () => {
                 const db = await openCodexSessionCache(storage);
                 try {
-                  writeCodexSessionCache(db, retainedFiles, parsedForCache, unlistedDirectory);
-                  return readCachedCodexSkillObservations(
-                    db,
-                    siblings.map(({ filePath }) => filePath),
-                  );
+                  try {
+                    writeCodexSessionCache(db, retainedFiles, parsedForCache, unlistedDirectory);
+                  } catch {
+                    // The cache is for the next cold start. An entry left behind by a failed write
+                    // is older than the index, which the stat check of the read below refuses.
+                  }
+                  return readCachedCodexSkillObservations(db, siblings);
                 } finally {
                   db.close();
                 }
@@ -1063,6 +1097,12 @@ export interface CodexUsageSessionsResult {
    */
   retiredSourceSessionIds: string[];
   sessions: CodexCollectedSession[];
+  /**
+   * Why the thread-metadata database could not be read although it exists (still being written
+   * after the retries, or a query that failed). The sessions carry what their rollouts record
+   * only; the collector surfaces it as a `codex` warning.
+   */
+  threadMetadataFailure: LocalHistoryError | null;
   /** Local-only auxiliary attention evidence from the same parser pass. */
   workObservations: CodexWorkObservation[];
 }
@@ -1073,7 +1113,7 @@ const readCodexUsageSessionsResultWith = (
   withPerfSpan(
     'aiUsage.collect.codex.usageSessions',
     Effect.gen(function* () {
-      const metadata = yield* readCodexThreadMetadata;
+      const { failure: threadMetadataFailure, metadata } = yield* readCodexThreadMetadata;
       const {
         archivedWalkFailure,
         malformedLines,
@@ -1249,6 +1289,7 @@ const readCodexUsageSessionsResultWith = (
         rejectedSkillObservationRecords,
         retiredSourceSessionIds,
         sessions: emittedSessions,
+        threadMetadataFailure,
       };
     }),
     (result) => ({
