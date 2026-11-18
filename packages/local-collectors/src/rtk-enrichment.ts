@@ -70,30 +70,34 @@ const normalizeProjectPath = (projectPath: string | null | undefined) =>
 const isSameOrNestedPath = (left: string, right: string) =>
   left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
 
-const rowActiveEnd = (row: UsageRow) => row.endDate ?? row.date;
+const rowActiveEnd = (row: Pick<UsageRow, 'date' | 'endDate'>) => row.endDate ?? row.date;
 
-const candidatesForRows = (rows: CollectorRow[]): RtkCandidate[] =>
-  rows.flatMap((row, index) => {
-    const projectPath = normalizeProjectPath(row.projectPath);
-    const start = row.date;
-    const end = rowActiveEnd(row);
-    if (!(projectPath && start && end)) {
-      return [];
-    }
-    const startMs = start.getTime();
-    const endMs = end.getTime();
-    if (!(Number.isFinite(startMs) && Number.isFinite(endMs))) {
-      return [];
-    }
-    return [
-      {
-        index,
-        projectPath,
-        startMs: Math.min(startMs, endMs) - MATCH_PADDING_MS,
-        endMs: Math.max(startMs, endMs) + MATCH_PADDING_MS,
-      },
-    ];
-  });
+/** The part of a row the RTK match reads: where the session ran and when, padded on both sides. */
+export interface RtkRowWindow {
+  readonly endMs: number;
+  readonly projectPath: string;
+  readonly startMs: number;
+}
+
+/** Null when the row has no project path or no usable dates: no RTK command can be matched to it. */
+export const rtkRowWindow = (row: Pick<CollectorRow, 'date' | 'endDate' | 'projectPath'>): RtkRowWindow | null => {
+  const projectPath = normalizeProjectPath(row.projectPath);
+  const start = row.date;
+  const end = rowActiveEnd(row);
+  if (!(projectPath && start && end)) {
+    return null;
+  }
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (!(Number.isFinite(startMs) && Number.isFinite(endMs))) {
+    return null;
+  }
+  return {
+    projectPath,
+    startMs: Math.min(startMs, endMs) - MATCH_PADDING_MS,
+    endMs: Math.max(startMs, endMs) + MATCH_PADDING_MS,
+  };
+};
 
 const commandTime = (timestamp: string) => {
   const time = new Date(timestamp).getTime();
@@ -114,6 +118,105 @@ const bestCandidateForCommand = (command: RtkCommandRow, candidates: RtkCandidat
   return matches.sort((a, b) => a.endMs - a.startMs - (b.endMs - b.startMs))[0] ?? null;
 };
 
+export interface RtkSavingsTotals {
+  commands: number;
+  input: number;
+  output: number;
+  saved: number;
+}
+
+export interface RtkSavingsMatch {
+  /** Totals by index into the windows given; an index without a matched command is absent. */
+  totals: Map<number, RtkSavingsTotals>;
+  warnings: LocalHistoryWarning[];
+}
+
+const rtkReadFailureWarning = (error: LocalHistoryError): LocalHistoryWarning =>
+  localHistoryWarningFromError(error, { harness: 'rtk', message: 'Failed to read RTK enrichment history' });
+
+/**
+ * Assigns every RTK command to the narrowest window that contains it. The windows' order breaks
+ * ties, so callers must pass them in the order of the rows they stand for. This is the whole
+ * match: `enrichCollectorRowsWithRtkSavingsResult` only adds the totals back onto rows.
+ */
+export const matchRtkSavingsWindows = (
+  windows: readonly (RtkRowWindow | null)[],
+): Effect.Effect<RtkSavingsMatch, never, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const totals = new Map<number, RtkSavingsTotals>();
+    const candidates: RtkCandidate[] = windows.flatMap((window, index) => (window ? [{ ...window, index }] : []));
+    if (!candidates.length) {
+      return { totals, warnings: [] };
+    }
+    const storage = yield* LocalHistoryStorage;
+    const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).rtk.historyDb);
+    if (!dbPath) {
+      return { totals, warnings: [] };
+    }
+
+    let rejectedMetricRecords = 0;
+    const readResult = yield* Effect.acquireUseRelease(
+      storage.openDatabase(dbPath),
+      (db) =>
+        Effect.gen(function* () {
+          for (const command of yield* db.all<RtkCommandRow>(RTK_COMMANDS_SQL)) {
+            const saved = parseNonNegativeSafeInteger(command.saved_tokens);
+            const input = parseNonNegativeSafeInteger(command.input_tokens);
+            const output = parseNonNegativeSafeInteger(command.output_tokens);
+            if (!(saved.ok && input.ok && output.ok)) {
+              rejectedMetricRecords++;
+              continue;
+            }
+            const candidate = bestCandidateForCommand(command, candidates);
+            if (!candidate) {
+              continue;
+            }
+            const current = totals.get(candidate.index) ?? { saved: 0, input: 0, output: 0, commands: 0 };
+            const nextSaved = addNonNegativeSafeIntegers(current.saved, saved.value);
+            const nextInput = addNonNegativeSafeIntegers(current.input, input.value);
+            const nextOutput = addNonNegativeSafeIntegers(current.output, output.value);
+            const nextCommands = addNonNegativeSafeIntegers(current.commands, 1);
+            if (!(nextSaved.ok && nextInput.ok && nextOutput.ok && nextCommands.ok)) {
+              rejectedMetricRecords++;
+              continue;
+            }
+            current.saved = nextSaved.value;
+            current.input = nextInput.value;
+            current.output = nextOutput.value;
+            current.commands = nextCommands.value;
+            totals.set(candidate.index, current);
+          }
+        }),
+      (db) => db.close,
+    ).pipe(
+      Effect.match({
+        onFailure: (error: LocalHistoryError) => ({ _tag: 'failure' as const, error }),
+        onSuccess: () => ({ _tag: 'success' as const }),
+      }),
+    );
+
+    if (readResult._tag === 'failure') {
+      // A failed read reports nothing matched, as before: partial totals are never applied.
+      return { totals: new Map<number, RtkSavingsTotals>(), warnings: [rtkReadFailureWarning(readResult.error)] };
+    }
+    return {
+      totals,
+      warnings: rejectedMetricRecords
+        ? [
+            {
+              harness: 'rtk',
+              operation: 'metricValidation',
+              message: `Rejected ${rejectedMetricRecords} malformed RTK metric record(s).`,
+            },
+          ]
+        : [],
+    };
+  }).pipe(
+    Effect.catch((error: LocalHistoryError) =>
+      Effect.succeed({ totals: new Map<number, RtkSavingsTotals>(), warnings: [rtkReadFailureWarning(error)] }),
+    ),
+  );
+
 export const enrichCollectorRowsWithRtkSavingsResult = (
   rows: CollectorRow[],
 ): Effect.Effect<CollectorRowsWithWarnings, never, LocalHistoryStorageService> =>
@@ -123,82 +226,9 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
       if (!rows.length) {
         return { rows, warnings: [] };
       }
-      const storage = yield* LocalHistoryStorage;
-      const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).rtk.historyDb);
-      if (!dbPath) {
-        return { rows, warnings: [] };
-      }
-
-      const candidates = candidatesForRows(rows);
-      if (!candidates.length) {
-        return { rows, warnings: [] };
-      }
-
-      const totals = new Map<number, { saved: number; input: number; output: number; commands: number }>();
-      let rejectedMetricRecords = 0;
-      const readResult = yield* Effect.acquireUseRelease(
-        storage.openDatabase(dbPath),
-        (db) =>
-          Effect.gen(function* () {
-            for (const command of yield* db.all<RtkCommandRow>(RTK_COMMANDS_SQL)) {
-              const saved = parseNonNegativeSafeInteger(command.saved_tokens);
-              const input = parseNonNegativeSafeInteger(command.input_tokens);
-              const output = parseNonNegativeSafeInteger(command.output_tokens);
-              if (!(saved.ok && input.ok && output.ok)) {
-                rejectedMetricRecords++;
-                continue;
-              }
-              const candidate = bestCandidateForCommand(command, candidates);
-              if (!candidate) {
-                continue;
-              }
-              const current = totals.get(candidate.index) ?? { saved: 0, input: 0, output: 0, commands: 0 };
-              const nextSaved = addNonNegativeSafeIntegers(current.saved, saved.value);
-              const nextInput = addNonNegativeSafeIntegers(current.input, input.value);
-              const nextOutput = addNonNegativeSafeIntegers(current.output, output.value);
-              const nextCommands = addNonNegativeSafeIntegers(current.commands, 1);
-              if (!(nextSaved.ok && nextInput.ok && nextOutput.ok && nextCommands.ok)) {
-                rejectedMetricRecords++;
-                continue;
-              }
-              current.saved = nextSaved.value;
-              current.input = nextInput.value;
-              current.output = nextOutput.value;
-              current.commands = nextCommands.value;
-              totals.set(candidate.index, current);
-            }
-          }),
-        (db) => db.close,
-      ).pipe(
-        Effect.match({
-          onFailure: (error: LocalHistoryError) => ({ _tag: 'failure' as const, error }),
-          onSuccess: () => ({ _tag: 'success' as const }),
-        }),
-      );
-
-      if (readResult._tag === 'failure') {
-        return {
-          rows,
-          warnings: [
-            localHistoryWarningFromError(readResult.error, {
-              harness: 'rtk',
-              message: 'Failed to read RTK enrichment history',
-            }),
-          ],
-        };
-      }
-
-      const metricWarnings = rejectedMetricRecords
-        ? [
-            {
-              harness: 'rtk',
-              operation: 'metricValidation',
-              message: `Rejected ${rejectedMetricRecords} malformed RTK metric record(s).`,
-            },
-          ]
-        : [];
+      const { totals, warnings } = yield* matchRtkSavingsWindows(rows.map(rtkRowWindow));
       if (!totals.size) {
-        return { rows, warnings: metricWarnings };
+        return { rows, warnings };
       }
       return {
         rows: rows.map((row, index) => {
@@ -214,21 +244,9 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
             rtkCommandCount: total.commands,
           };
         }),
-        warnings: metricWarnings,
+        warnings,
       };
-    }).pipe(
-      Effect.catch((error: LocalHistoryError) =>
-        Effect.succeed({
-          rows,
-          warnings: [
-            localHistoryWarningFromError(error, {
-              harness: 'rtk',
-              message: 'Failed to read RTK enrichment history',
-            }),
-          ],
-        }),
-      ),
-    ),
+    }),
     (result) => ({
       matchedRows: result.rows.filter((row) => row.rtkSavedTokens).length,
       rows: result.rows.length,
