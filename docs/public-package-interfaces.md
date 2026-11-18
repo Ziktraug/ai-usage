@@ -183,8 +183,10 @@ There is deliberately no root export.
 
 - `.`: exact tool names, schemas, annotations, the `work.context` tool, the
   delegation tools behind their ports, and MCP server construction.
-- `./registration`: identity-checked/idempotent JSON and Codex stdio
-  registration helpers and the registered server name.
+- `./registration`: identity-checked/idempotent JSON, Codex and OpenCode stdio
+  registration helpers, the registered server name, the OpenCode manual entry
+  snippet, and the typed failures `OpenCodeMcpRegistrationError` and
+  `TemporaryFileNotRemovedError`.
 - `./stdio`: stdio transport connection only.
 - `./testing`: in-memory transport helpers for protocol tests.
 
