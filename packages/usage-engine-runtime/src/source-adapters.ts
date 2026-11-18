@@ -582,6 +582,13 @@ export const createSessionSource = (input: {
             memory.imported.set(identity, fingerprint);
           }
         }
+        // The store now holds the last of the rows that shared an identity, not the row this source
+        // remembered for it: the next single row under that identity must be imported.
+        for (const [identity, count] of identityCounts) {
+          if (count > 1) {
+            memory.imported.delete(identity);
+          }
+        }
         // Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
         // collector positively declared, never what it stopped emitting. A session both emitted and
         // declared retired in one pass is a collector defect; the emitted row wins (it was observed as
@@ -717,7 +724,11 @@ export const createSessionSource = (input: {
           harnessKey,
           machineId: input.machine.id,
         }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        memory.settled = true;
+        // The store adds the observations it refused to the completeness it records. A pass that
+        // delivers changed inputs only reports the same figure as a full one as long as nothing
+        // delivered before was refused; once the store refuses one, passes are complete until it
+        // accepts everything again.
+        memory.settled = importedObservations.rejected === 0;
         return {
           changed:
             imported.inserted > 0 ||
