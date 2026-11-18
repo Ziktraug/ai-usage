@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { annotateWideEventIfAvailable } from '@ai-usage/effect-runtime';
@@ -8,6 +8,7 @@ import { collectClaudeDesktopSessions } from '@ai-usage/local-collectors/claude-
 import {
   collectClaudeRetentionWarnings,
   type HarnessAdapter,
+  type IncrementalHarnessCollector,
   selectedHarnessAdapters,
 } from '@ai-usage/local-collectors/collectors';
 import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
@@ -22,7 +23,9 @@ import { JIRA_NOT_INSTALLED_MESSAGE, observeJiraIssues } from '@ai-usage/local-c
 import { withPerfSpan } from '@ai-usage/local-collectors/perf';
 import {
   type CollectorRow,
-  enrichCollectorRowsWithRtkSavingsResult,
+  matchRtkSavingsWindows,
+  type RtkRowWindow,
+  rtkRowWindow,
   stripProjectPath,
 } from '@ai-usage/local-collectors/rtk-enrichment';
 import type { BoundedProcessRunner } from '@ai-usage/local-machine/bounded-process';
@@ -55,6 +58,7 @@ import {
   getCollectionSourceDefinition,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
+import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import type { PullRequestObservation } from '@ai-usage/report-core/work-attention';
 import { explicitJiraKeys, jiraKeysInBranch } from '@ai-usage/report-core/work-attention-facts';
 import {
@@ -74,24 +78,26 @@ import {
   importLocalRows,
   importPullRequestObservations,
   importSkillObservations,
+  type LocalRowsWatermark,
   MAX_CLAUDE_DESKTOP_SESSION_READ,
   MAX_CODEX_WORK_BATCH,
   MAX_WORK_FACT_QUERY_LIMIT,
   queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
   queryCurrentServedLocalProjectSources,
-  queryEnrichableUsageRows,
+  queryEnrichableUsageRowChanges,
   queryLatestPullRequestObservations,
+  queryLocalRowsWatermark,
   queryServedSessionPullRequestLinks,
   queryUsageStoreGeneration,
   queryWorkThreadWaitCandidates,
-  type RtkSavingsContribution,
   recordJiraIntake,
   recordJiraSyncState,
   recordWorkFactRun,
   retireLocalRows,
   type ServedLocalProjectSource,
   seedWorkThreads,
+  USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   type UsageStoreError,
   upsertRtkSavingsContributions,
   usageStorePath,
@@ -214,18 +220,54 @@ const stripRtkContribution = (row: CollectorRow): CollectorRow => {
   return base;
 };
 
-const rtkContributionFromRow = (row: CollectorRow): RtkSavingsContribution | undefined => {
-  const { rtkCommandCount, rtkInputTokens, rtkOutputTokens, rtkSavedTokens } = row;
-  if (
-    rtkCommandCount === undefined ||
-    rtkInputTokens === undefined ||
-    rtkOutputTokens === undefined ||
-    rtkSavedTokens === undefined
-  ) {
-    return;
-  }
-  return { rtkCommandCount, rtkInputTokens, rtkOutputTokens, rtkSavedTokens };
-};
+/**
+ * What a session source remembers between two passes of one engine, so a pass imports only the
+ * rows that changed while the store keeps the rest (plan 126, step 3b). It never decides what the
+ * store holds: a row is left out of an import only when importing it would have been a no-op.
+ */
+interface SessionSourceMemory {
+  /** The incremental collector of the harness, created on first use; null when it has none. */
+  collector: IncrementalHarnessCollector | null | undefined;
+  /** The clock-hour bucket of the last pass that imported every row. */
+  completeImportBucket: number | null;
+  /** Row identity to the fingerprint of the row this source last imported under it. */
+  imported: Map<string, string>;
+  /**
+   * False from the start of a pass until it has recorded everything it collected. A pass that
+   * fails or is interrupted leaves it false, and the next pass then collects and imports in full.
+   */
+  settled: boolean;
+  /** The store's rows of this harness as the last pass left them. */
+  watermark: LocalRowsWatermark | null;
+}
+
+const createSessionSourceMemory = (): SessionSourceMemory => ({
+  collector: undefined,
+  completeImportBucket: null,
+  imported: new Map(),
+  settled: false,
+  watermark: null,
+});
+
+/** Null for a row the store keys on its content: such a row is always imported. */
+const sessionRowIdentity = (harnessKey: string | undefined, sourceSessionId: string | null | undefined) =>
+  harnessKey && sourceSessionId ? JSON.stringify([harnessKey, sourceSessionId]) : null;
+
+const sessionRowFingerprint = (row: UsageRowWithOptionalSource): string =>
+  createHash('sha256').update(JSON.stringify(row)).digest('base64');
+
+const sameWatermark = (left: LocalRowsWatermark | null, right: LocalRowsWatermark | null): boolean =>
+  left !== null && right !== null && left.rows === right.rows && left.lastUpdatedAt === right.lastUpdatedAt;
+
+const emptyLocalImport = () => ({
+  deleted: 0,
+  fleetChanged: false,
+  inserted: 0,
+  superseded: 0,
+  unchanged: 0,
+  updated: 0,
+  warnings: 0,
+});
 
 const resolveConfigPath = (configCwd: string | undefined, value: string): string =>
   configCwd && !path.isAbsolute(value) ? path.resolve(configCwd, value) : value;
@@ -305,6 +347,8 @@ const collectHarness = (
     // (Cursor) omits this rather than reporting an empty list, which would be
     // indistinguishable from having observed nothing (ADR 0022).
     observationCompleteness?: SkillObservationCollectionCompleteness;
+    /** Set by an incremental collector whose pass returned the observations of changed inputs only. */
+    observationScope?: 'changed';
     observations?: readonly SkillObservation[];
     /** Collector-declared retirements (ADR 0089); absent or empty when the pass retires nothing. */
     retiredSourceSessionIds?: readonly string[];
@@ -410,275 +454,422 @@ export const createSessionSource = (input: {
   machine: UsageMachine;
   now: () => Date;
   storage: LocalHistoryStorageService;
-}): ScheduledSource => ({
-  cadence: Duration.millis(getCollectionSourceDefinition(input.id).cadenceMs),
-  detect: input.detect,
-  id: input.id,
-  run: (context) =>
-    Effect.gen(function* () {
-      const codexCollectionId = input.id === 'codex.sessions' ? randomUUID() : null;
-      if (codexCollectionId !== null) {
-        yield* importCodexWorkObservations({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          observedAt: input.now().toISOString(),
-          observations: [],
-          collection: { id: codexCollectionId, phase: 'start' },
-        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      }
-      yield* reportProgress(context, { phase: 'reading' });
-      const availability = yield* input.detect;
-      if (availability.availability !== 'detected') {
-        return sourceUnavailableResult();
-      }
-      const adapter = yield* input.adapter();
-      const collection = yield* withPerfSpan(
-        `aiUsage.engine.${input.id}.collect`,
-        collectHarness(adapter),
-        (result) => ({
-          observations: result.observations?.length ?? 0,
-          retiredSourceSessionIds: result.retiredSourceSessionIds?.length ?? 0,
-          rows: result.rows.length,
-          workObservations: result.workObservations?.length ?? 0,
-        }),
-      ).pipe(
-        Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.mapError((cause) => sourceFailure(input.id, cause)),
-      );
-      yield* abortIfRequested(context.signal);
-      const retentionWarnings =
-        input.id === 'claude.sessions'
-          ? yield* collectClaudeRetentionWarnings.pipe(Effect.provideService(LocalHistoryStorage, input.storage))
-          : [];
-      yield* reportProgress(context, {
-        completed: collection.rows.length,
-        phase: 'normalizing',
-        total: collection.rows.length,
-      });
-      const rows = collection.rows.map(stripRtkContribution).map(stripProjectPath);
-      yield* reportProgress(context, {
-        completed: 0,
-        phase: 'importing',
-        total: rows.length,
-      });
-      yield* abortIfRequested(context.signal);
-      const imported = yield* withPerfSpan(
-        `aiUsage.engine.${input.id}.importLocalRows`,
-        importLocalRows({
-          dbPath: input.dbPath,
-          importedAt: input.now(),
-          machine: input.machine,
-          rows,
-        }),
-        (result) => ({
-          fleetChanged: result.fleetChanged,
-          inserted: result.inserted,
-          rows: rows.length,
-          unchanged: result.unchanged,
-          updated: result.updated,
-        }),
-      ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      // Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
-      // collector positively declared, never what it stopped emitting. A session both emitted and
-      // declared retired in one pass is a collector defect; the emitted row wins (it was observed as
-      // usage) and the conflict is reported as a warning instead of being dropped silently.
-      const emittedSessionIds = new Set(
-        rows.flatMap((row) => (row.source?.sourceSessionId == null ? [] : [row.source.sourceSessionId])),
-      );
-      const declaredRetirements = collection.retiredSourceSessionIds ?? [];
-      const conflictingRetirements = declaredRetirements.filter((sessionId) => emittedSessionIds.has(sessionId));
-      const retirements = declaredRetirements.filter((sessionId) => !emittedSessionIds.has(sessionId));
-      yield* abortIfRequested(context.signal);
-      const retired = yield* withPerfSpan(
-        `aiUsage.engine.${input.id}.retireLocalRows`,
-        retireLocalRows({
-          dbPath: input.dbPath,
-          harnessKey: adapter.metadata.key,
-          machine: input.machine,
-          retiredAt: input.now(),
-          sourceSessionIds: retirements,
-        }),
-        (result) => ({ declared: retirements.length, retired: result.retired, skipped: result.skipped }),
-      ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      if (retired.retired > 0) {
+}): ScheduledSource => {
+  const memory = createSessionSourceMemory();
+  return {
+    cadence: Duration.millis(getCollectionSourceDefinition(input.id).cadenceMs),
+    detect: input.detect,
+    id: input.id,
+    run: (context) =>
+      Effect.gen(function* () {
+        // Nothing an earlier pass returned may be taken as recorded unless that pass ended cleanly.
+        const complete = !memory.settled;
+        memory.settled = false;
+        const codexCollectionId = input.id === 'codex.sessions' ? randomUUID() : null;
+        if (codexCollectionId !== null) {
+          yield* importCodexWorkObservations({
+            dbPath: input.dbPath,
+            machineId: input.machine.id,
+            observedAt: input.now().toISOString(),
+            observations: [],
+            collection: { id: codexCollectionId, phase: 'start' },
+          }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        }
+        yield* reportProgress(context, { phase: 'reading' });
+        const availability = yield* input.detect;
+        if (availability.availability !== 'detected') {
+          return sourceUnavailableResult();
+        }
+        const adapter = yield* input.adapter();
+        if (memory.collector === undefined) {
+          memory.collector = adapter.createIncrementalCollector?.() ?? null;
+        }
+        const collection = yield* withPerfSpan(
+          `aiUsage.engine.${input.id}.collect`,
+          memory.collector === null ? collectHarness(adapter) : memory.collector({ complete }),
+          (result) => ({
+            complete,
+            observations: result.observations?.length ?? 0,
+            retiredSourceSessionIds: result.retiredSourceSessionIds?.length ?? 0,
+            rows: result.rows.length,
+            workObservations: result.workObservations?.length ?? 0,
+          }),
+        ).pipe(
+          Effect.provideService(LocalHistoryStorage, input.storage),
+          Effect.mapError((cause) => sourceFailure(input.id, cause)),
+        );
+        yield* abortIfRequested(context.signal);
+        const retentionWarnings =
+          input.id === 'claude.sessions'
+            ? yield* collectClaudeRetentionWarnings.pipe(Effect.provideService(LocalHistoryStorage, input.storage))
+            : [];
         yield* reportProgress(context, {
-          completed: rows.length,
-          message: `Retired ${retired.retired} ${retired.retired === 1 ? 'session' : 'sessions'} the collector no longer counts as ${input.label}.`,
+          completed: collection.rows.length,
+          phase: 'normalizing',
+          total: collection.rows.length,
+        });
+        const rows = collection.rows.map(stripRtkContribution).map(stripProjectPath);
+        yield* reportProgress(context, {
+          completed: 0,
           phase: 'importing',
           total: rows.length,
         });
-      }
-      const retirementWarnings: SanitizableSourceWarning[] = [
-        ...(conflictingRetirements.length > 0
-          ? [{ operation: 'rowRetirement.emittedAndRetired', rejectedRecords: conflictingRetirements.length }]
-          : []),
-        ...(retired.skipped > 0 ? [{ operation: 'rowRetirement.storeRefused', rejectedRecords: retired.skipped }] : []),
-      ];
-      // Skill observations are an auxiliary fact family with their own table,
-      // written on the same engine-owned pass as the rows they were parsed
-      // beside. The engine is the only writer (ADR 0009), so this is the one
-      // place they can reach the store.
-      const minimumExposureObservedAt = new Date(
-        input.now().getTime() - SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
-      ).toISOString();
-      const preparedObservations = prepareSkillObservationImport({
-        completeness: collection.observationCompleteness ?? {
-          exposure: { rejected: 0, truncated: true },
-          invocation: { rejected: 0, truncated: true },
-        },
-        minimumExposureObservedAt,
-        observations: collection.observations ?? [],
-      });
-      yield* abortIfRequested(context.signal);
-      const importedObservations =
-        collection.observations === undefined
-          ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
-          : yield* withPerfSpan(
-              `aiUsage.engine.${input.id}.importSkillObservations`,
-              importSkillObservations({
-                collection: {
-                  completeness: preparedObservations.completeness,
-                  harnessKey: adapter.metadata.key,
-                },
-                dbPath: input.dbPath,
-                machineId: input.machine.id,
-                minimumExposureObservedAt,
-                observations: preparedObservations.observations,
-              }),
-              (result) => ({
-                inserted: result.inserted,
-                observations: preparedObservations.observations.length,
-                unchanged: result.unchanged,
-                updated: result.updated,
-              }),
-            ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      const importedWork = { changed: 0, rejected: 0 };
-      const workObservations = collection.workObservations ?? [];
-      const observedAt = input.now().toISOString();
-      // The store bound applies to each transaction, not to the user's history. Empty snapshots
-      // must also survive: they clear request evidence from an earlier parse of that session.
-      for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
         yield* abortIfRequested(context.signal);
-        const observations = workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH);
-        const batch = yield* withPerfSpan(
-          `aiUsage.engine.${input.id}.importCodexWorkObservations`,
-          importCodexWorkObservations({
+        const harnessKey = adapter.metadata.key;
+        const importedAt = input.now();
+        const importBucket = Math.floor(importedAt.getTime() / USAGE_ROW_FRESHNESS_HEARTBEAT_MS);
+        // A row is left out only when the store would classify it unchanged and write nothing: this
+        // source imported the same row before, no one rewrote this harness's rows since (the
+        // watermark), and its hourly freshness heartbeat is not due (same clock-hour bucket as the
+        // last pass that imported every row). Anything else imports every row, as before.
+        const watermarkBefore = complete
+          ? null
+          : yield* queryLocalRowsWatermark({ dbPath: input.dbPath, harnessKey, machineId: input.machine.id }).pipe(
+              Effect.mapError((cause) => sourceFailure(input.id, cause)),
+            );
+        const importEveryRow =
+          complete || memory.completeImportBucket !== importBucket || !sameWatermark(watermarkBefore, memory.watermark);
+        const rowIdentities = rows.map((row) =>
+          sessionRowIdentity(row.source?.harnessKey, row.source?.sourceSessionId),
+        );
+        const rowFingerprints = rows.map(sessionRowFingerprint);
+        const identityCounts = new Map<string, number>();
+        for (const identity of rowIdentities) {
+          if (identity !== null) {
+            identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
+          }
+        }
+        // Rows sharing an identity are imported together every time: which one the store keeps
+        // depends on their order, which one fingerprint per identity cannot stand for.
+        const rememberedIdentity = (index: number): string | null => {
+          const identity = rowIdentities[index] ?? null;
+          return identity !== null && identityCounts.get(identity) === 1 ? identity : null;
+        };
+        const rowsToImport = importEveryRow
+          ? rows
+          : rows.filter((_row, index) => {
+              const identity = rememberedIdentity(index);
+              return identity === null || memory.imported.get(identity) !== rowFingerprints[index];
+            });
+        const imported = yield* withPerfSpan(
+          `aiUsage.engine.${input.id}.importLocalRows`,
+          importEveryRow || rowsToImport.length > 0
+            ? importLocalRows({
+                dbPath: input.dbPath,
+                importedAt,
+                machine: input.machine,
+                rows: rowsToImport,
+              })
+            : Effect.succeed(emptyLocalImport()),
+          (result) => ({
+            fleetChanged: result.fleetChanged,
+            inserted: result.inserted,
+            leftInStore: rows.length - rowsToImport.length,
+            rows: rowsToImport.length,
+            unchanged: result.unchanged,
+            updated: result.updated,
+          }),
+        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        if (importEveryRow) {
+          // Rebuilt, not merged: a session this pass did not emit missed its heartbeat, so it must
+          // be imported when it comes back.
+          memory.imported = new Map();
+          memory.completeImportBucket = importBucket;
+        }
+        for (const [index, fingerprint] of rowFingerprints.entries()) {
+          const identity = rememberedIdentity(index);
+          if (identity !== null) {
+            memory.imported.set(identity, fingerprint);
+          }
+        }
+        // The store now holds the last of the rows that shared an identity, not the row this source
+        // remembered for it: the next single row under that identity must be imported.
+        for (const [identity, count] of identityCounts) {
+          if (count > 1) {
+            memory.imported.delete(identity);
+          }
+        }
+        // Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
+        // collector positively declared, never what it stopped emitting. A session both emitted and
+        // declared retired in one pass is a collector defect; the emitted row wins (it was observed as
+        // usage) and the conflict is reported as a warning instead of being dropped silently.
+        const emittedSessionIds = new Set(
+          rows.flatMap((row) => (row.source?.sourceSessionId == null ? [] : [row.source.sourceSessionId])),
+        );
+        const declaredRetirements = collection.retiredSourceSessionIds ?? [];
+        const conflictingRetirements = declaredRetirements.filter((sessionId) => emittedSessionIds.has(sessionId));
+        const retirements = declaredRetirements.filter((sessionId) => !emittedSessionIds.has(sessionId));
+        yield* abortIfRequested(context.signal);
+        const retired = yield* withPerfSpan(
+          `aiUsage.engine.${input.id}.retireLocalRows`,
+          retireLocalRows({
+            dbPath: input.dbPath,
+            harnessKey,
+            machine: input.machine,
+            retiredAt: input.now(),
+            sourceSessionIds: retirements,
+          }),
+          (result) => ({ declared: retirements.length, retired: result.retired, skipped: result.skipped }),
+        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        // A retired session's stored row is no longer the row this source imported: if the collector
+        // emits the session again, the row must reach the store to become active again.
+        for (const sessionId of retirements) {
+          const identity = sessionRowIdentity(harnessKey, sessionId);
+          if (identity !== null) {
+            memory.imported.delete(identity);
+          }
+        }
+        if (retired.retired > 0) {
+          yield* reportProgress(context, {
+            completed: rows.length,
+            message: `Retired ${retired.retired} ${retired.retired === 1 ? 'session' : 'sessions'} the collector no longer counts as ${input.label}.`,
+            phase: 'importing',
+            total: rows.length,
+          });
+        }
+        const retirementWarnings: SanitizableSourceWarning[] = [
+          ...(conflictingRetirements.length > 0
+            ? [{ operation: 'rowRetirement.emittedAndRetired', rejectedRecords: conflictingRetirements.length }]
+            : []),
+          ...(retired.skipped > 0
+            ? [{ operation: 'rowRetirement.storeRefused', rejectedRecords: retired.skipped }]
+            : []),
+        ];
+        // Skill observations are an auxiliary fact family with their own table,
+        // written on the same engine-owned pass as the rows they were parsed
+        // beside. The engine is the only writer (ADR 0009), so this is the one
+        // place they can reach the store.
+        const minimumExposureObservedAt = new Date(
+          input.now().getTime() - SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
+        ).toISOString();
+        const preparedObservations = prepareSkillObservationImport({
+          completeness: collection.observationCompleteness ?? {
+            exposure: { rejected: 0, truncated: true },
+            invocation: { rejected: 0, truncated: true },
+          },
+          minimumExposureObservedAt,
+          observations: collection.observations ?? [],
+        });
+        yield* abortIfRequested(context.signal);
+        const importedObservations =
+          collection.observations === undefined
+            ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
+            : yield* withPerfSpan(
+                `aiUsage.engine.${input.id}.importSkillObservations`,
+                importSkillObservations({
+                  collection: {
+                    completeness: preparedObservations.completeness,
+                    harnessKey,
+                  },
+                  dbPath: input.dbPath,
+                  machineId: input.machine.id,
+                  minimumExposureObservedAt,
+                  observations: preparedObservations.observations,
+                }),
+                (result) => ({
+                  inserted: result.inserted,
+                  observations: preparedObservations.observations.length,
+                  scope: collection.observationScope ?? 'all',
+                  unchanged: result.unchanged,
+                  updated: result.updated,
+                }),
+              ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        const importedWork = { changed: 0, rejected: 0 };
+        const workObservations = collection.workObservations ?? [];
+        const observedAt = input.now().toISOString();
+        // The store bound applies to each transaction, not to the user's history. Empty snapshots
+        // must also survive: they clear request evidence from an earlier parse of that session.
+        for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
+          yield* abortIfRequested(context.signal);
+          const observations = workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH);
+          const batch = yield* withPerfSpan(
+            `aiUsage.engine.${input.id}.importCodexWorkObservations`,
+            importCodexWorkObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              observedAt,
+              observations,
+              ...(codexCollectionId === null
+                ? {}
+                : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
+            }),
+            (result) => ({ changed: result.changed, observations: observations.length, rejected: result.rejected }),
+          ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+          importedWork.changed += batch.changed;
+          importedWork.rejected += batch.rejected;
+        }
+        if (importedWork.rejected > 0) {
+          return yield* Effect.fail(
+            sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
+          );
+        }
+        if (codexCollectionId !== null && collection.workObservations !== undefined) {
+          yield* abortIfRequested(context.signal);
+          yield* importCodexWorkObservations({
             dbPath: input.dbPath,
             machineId: input.machine.id,
             observedAt,
-            observations,
-            ...(codexCollectionId === null
-              ? {}
-              : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
-          }),
-          (result) => ({ changed: result.changed, observations: observations.length, rejected: result.rejected }),
-        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        importedWork.changed += batch.changed;
-        importedWork.rejected += batch.rejected;
-      }
-      if (importedWork.rejected > 0) {
-        return yield* Effect.fail(
-          sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
-        );
-      }
-      if (codexCollectionId !== null && collection.workObservations !== undefined) {
-        yield* abortIfRequested(context.signal);
-        yield* importCodexWorkObservations({
+            observations: [],
+            collection: { id: codexCollectionId, phase: 'complete' },
+          }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+        }
+        const warnings = sanitizeSourceWarnings(input.label, [
+          ...collection.warnings,
+          ...retentionWarnings,
+          ...retirementWarnings,
+        ]);
+        // Everything this pass collected is recorded: the next pass may build on it.
+        memory.watermark = yield* queryLocalRowsWatermark({
           dbPath: input.dbPath,
+          harnessKey,
           machineId: input.machine.id,
-          observedAt,
-          observations: [],
-          collection: { id: codexCollectionId, phase: 'complete' },
         }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      }
-      const warnings = sanitizeSourceWarnings(input.label, [
-        ...collection.warnings,
-        ...retentionWarnings,
-        ...retirementWarnings,
-      ]);
-      return {
-        changed:
-          imported.inserted > 0 ||
-          imported.updated > 0 ||
-          retired.retired > 0 ||
-          importedObservations.inserted > 0 ||
-          importedObservations.updated > 0 ||
-          importedWork.changed > 0 ||
-          importedObservations.stateChanged,
-        inputCount: collection.rows.length,
-        outputCount: rows.length,
-        servedProjectionChanged: imported.fleetChanged,
-        warnings,
-      };
-    }),
-});
+        // The store adds the observations it refused to the completeness it records. A pass that
+        // delivers changed inputs only reports the same figure as a full one as long as nothing
+        // delivered before was refused; once the store refuses one, passes are complete until it
+        // accepts everything again.
+        memory.settled = importedObservations.rejected === 0;
+        return {
+          changed:
+            imported.inserted > 0 ||
+            imported.updated > 0 ||
+            retired.retired > 0 ||
+            importedObservations.inserted > 0 ||
+            importedObservations.updated > 0 ||
+            importedWork.changed > 0 ||
+            importedObservations.stateChanged,
+          inputCount: collection.rows.length,
+          outputCount: rows.length,
+          servedProjectionChanged: imported.fleetChanged,
+          warnings,
+        };
+      }),
+  };
+};
+
+/** What the RTK source keeps of a stored row: the window the match reads, under its content hash. */
+interface RtkKnownRow {
+  readonly contentHash: string;
+  /** False for a stored row that no longer validates; it is never a candidate. */
+  readonly valid: boolean;
+  readonly window: RtkRowWindow | null;
+}
 
 const createRtkSource = (input: {
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
   machine: UsageMachine;
   storage: LocalHistoryStorageService;
-}): ScheduledSource => ({
-  cadence: Duration.millis(getCollectionSourceDefinition('rtk.savings').cadenceMs),
-  detect: input.detect,
-  id: 'rtk.savings',
-  run: (context) =>
-    Effect.gen(function* () {
-      yield* reportProgress(context, { phase: 'reading' });
-      const availability = yield* input.detect;
-      if (availability.availability !== 'detected') {
-        return sourceUnavailableResult();
-      }
-      const stored = yield* withPerfSpan(
-        'aiUsage.engine.rtk.savings.queryEnrichableUsageRows',
-        queryEnrichableUsageRows({
-          dbPath: input.dbPath,
-          originMachineIds: [input.machine.id],
-          sourceAuthorities: ['local-observed'],
-        }),
-        (result) => ({ rows: result.rows.length }),
-      ).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
-      const collectorRows: CollectorRow[] = stored.rows.map(({ row }) => ({
-        ...row,
-        ...(row.source?.sourcePath ? { projectPath: row.source.sourcePath } : {}),
-      }));
-      yield* reportProgress(context, {
-        completed: collectorRows.length,
-        phase: 'normalizing',
-        total: collectorRows.length,
-      });
-      const enriched = yield* enrichCollectorRowsWithRtkSavingsResult(collectorRows).pipe(
-        Effect.provideService(LocalHistoryStorage, input.storage),
-      );
-      yield* abortIfRequested(context.signal);
-      yield* reportProgress(context, {
-        completed: 0,
-        phase: 'importing',
-        total: enriched.rows.length,
-      });
-      const contributions = enriched.rows.flatMap((row, index) => {
-        const contribution = rtkContributionFromRow(row);
-        const storedRow = stored.rows[index];
-        return contribution && storedRow ? [{ contribution, rowKey: storedRow.rowKey }] : [];
-      });
-      const imported = yield* withPerfSpan(
-        'aiUsage.engine.rtk.savings.upsertContributions',
-        upsertRtkSavingsContributions({ contributions, dbPath: input.dbPath }),
-        (result) => ({
-          contributions: contributions.length,
-          inserted: result.inserted,
-          unchanged: result.unchanged,
-          updated: result.updated,
-        }),
-      ).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
-      return {
-        changed: imported.inserted > 0 || imported.updated > 0,
-        inputCount: stored.rows.length,
-        outputCount: imported.inserted + imported.updated + imported.unchanged,
-        warnings: sanitizeSourceWarnings('RTK savings', enriched.warnings),
-      };
-    }),
-});
+}): ScheduledSource => {
+  // The match needs every active row's window on each run, but a window only changes with its
+  // row. Keeping them by content hash means a run reads and validates the stored JSON of the rows
+  // that changed since the previous run, not of the whole history.
+  let known = new Map<string, RtkKnownRow>();
+  return {
+    cadence: Duration.millis(getCollectionSourceDefinition('rtk.savings').cadenceMs),
+    detect: input.detect,
+    id: 'rtk.savings',
+    run: (context) =>
+      Effect.gen(function* () {
+        yield* reportProgress(context, { phase: 'reading' });
+        const availability = yield* input.detect;
+        if (availability.availability !== 'detected') {
+          return sourceUnavailableResult();
+        }
+        const changes = yield* withPerfSpan(
+          'aiUsage.engine.rtk.savings.queryEnrichableUsageRows',
+          queryEnrichableUsageRowChanges({
+            dbPath: input.dbPath,
+            knownContentHashes: new Map([...known].map(([rowKey, row]) => [rowKey, row.contentHash])),
+            originMachineIds: [input.machine.id],
+            sourceAuthorities: ['local-observed'],
+          }),
+          (result) => ({
+            read: result.entries.filter((entry) => entry.state !== 'known').length,
+            rows: result.entries.length,
+          }),
+        ).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
+        const next = new Map<string, RtkKnownRow>();
+        const rowKeys: string[] = [];
+        const windows: (RtkRowWindow | null)[] = [];
+        for (const entry of changes.entries) {
+          let row: RtkKnownRow | undefined;
+          if (entry.state === 'known') {
+            row = known.get(entry.rowKey);
+          } else if (entry.state === 'invalid') {
+            row = { contentHash: entry.contentHash, valid: false, window: null };
+          } else {
+            row = {
+              contentHash: entry.contentHash,
+              valid: true,
+              window: rtkRowWindow({
+                date: entry.row.date,
+                endDate: entry.row.endDate,
+                ...(entry.row.source?.sourcePath ? { projectPath: entry.row.source.sourcePath } : {}),
+              }),
+            };
+          }
+          if (row === undefined) {
+            continue;
+          }
+          next.set(entry.rowKey, row);
+          if (row.valid) {
+            rowKeys.push(entry.rowKey);
+            windows.push(row.window);
+          }
+        }
+        known = next;
+        yield* reportProgress(context, {
+          completed: rowKeys.length,
+          phase: 'normalizing',
+          total: rowKeys.length,
+        });
+        const enriched = yield* withPerfSpan('aiUsage.enrich.rtk', matchRtkSavingsWindows(windows), (result) => ({
+          matchedRows: result.totals.size,
+          rows: windows.length,
+          warnings: result.warnings.length,
+        })).pipe(Effect.provideService(LocalHistoryStorage, input.storage));
+        yield* abortIfRequested(context.signal);
+        yield* reportProgress(context, {
+          completed: 0,
+          phase: 'importing',
+          total: rowKeys.length,
+        });
+        const contributions = rowKeys.flatMap((rowKey, index) => {
+          const total = enriched.totals.get(index);
+          return total && total.saved > 0
+            ? [
+                {
+                  contribution: {
+                    rtkCommandCount: total.commands,
+                    rtkInputTokens: total.input,
+                    rtkOutputTokens: total.output,
+                    rtkSavedTokens: total.saved,
+                  },
+                  rowKey,
+                },
+              ]
+            : [];
+        });
+        const imported = yield* withPerfSpan(
+          'aiUsage.engine.rtk.savings.upsertContributions',
+          upsertRtkSavingsContributions({ contributions, dbPath: input.dbPath }),
+          (result) => ({
+            contributions: contributions.length,
+            inserted: result.inserted,
+            unchanged: result.unchanged,
+            updated: result.updated,
+          }),
+        ).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
+        return {
+          changed: imported.inserted > 0 || imported.updated > 0,
+          inputCount: rowKeys.length,
+          outputCount: imported.inserted + imported.updated + imported.unchanged,
+          warnings: sanitizeSourceWarnings('RTK savings', enriched.warnings),
+        };
+      }),
+  };
+};
 
 /**
  * Claude Desktop's session registry (ADR 0050). The rows land in their own tables, outside the

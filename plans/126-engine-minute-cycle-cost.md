@@ -676,3 +676,258 @@ Not changed, noted for whoever touches the sink next: the rate limit of the
 sink's warnings still reads the wall clock, so a clock stepped back can also
 hold back warnings of a kind for the size of the step. The counters are not
 affected.
+
+### 2026-11-18 — Step 3b (branch `perf/engine-collection-proportional`, from `edf868af`)
+
+Steps 3a, 3c, 4 and 5 are not part of this entry. Figures only.
+
+#### Why two Codex rows were rewritten on every pass
+
+One session id is carried by two rollouts (5,531 rollouts, 399 imported
+transcripts, 5,131 distinct ids, 5,132 rows). Both became a row under the same
+row key. The import compared the first copy with the stored one (the second
+copy of the previous pass) and rewrote it, then compared the second copy with
+the first and rewrote it again: 2 updates, a generation bump and `changed=true`
+on every pass, with no rollout read (0 cache misses in all 21 passes).
+
+The collector now emits one row per session id: the last copy in session order,
+which is the one the store ended up with after each pass. The stored row is
+therefore the same as before; it is no longer rewritten. Which copy is the
+better reading of the thread (the last one, or the one with the larger
+cumulative counter that the lineage code already prefers) is left as it was:
+changing it would change stored content.
+
+#### Why about 100 rows were rewritten on some passes
+
+Four times in the two measured sessions the thread-metadata read of Codex's
+state database returned no row in 1 to 3 ms (5,530 otherwise). The read-only open refuses a
+database whose file identity moves while it opens, which happens when a Codex
+process writes it (the `codex.usage-limits` source starts one every 5 minutes).
+The failure was caught and replaced by an empty metadata map, so 102 rows that
+take a field from the database were rewritten without it, and rewritten back on
+the next pass. The open is now retried (3 attempts, 100 ms apart) before the
+fallback applies. A database that stays unreadable, or one whose query fails
+(a Codex schema change, for one), still yields no metadata, but no longer
+silently: the pass carries a `codex.threadMetadata` warning. The sanity run
+below met no such failure in its 8 passes, so the retry is covered by its test
+only.
+
+#### Why `rtk.savings` ran 2.67 times a minute
+
+It never ran on its own cadence in the measured windows: 30 of its 31 runs
+were dependency runs. The scheduler queues it after every session source that
+reports a change, and three did almost every minute: `claude.sessions` (real
+activity, 12 of 12 passes), `codex.sessions` (the two-row rewrite above, 12 of
+12) and `opencode.sessions` (8 of 12, with 0 rows inserted or updated in all
+of them; the change comes from its skill-observation state and belongs to
+step 3a). 32 changed passes in 12 minutes is 2.67 per minute. The scheduling
+is unchanged. With Codex quiet it ran 1.8 times a minute in the sanity run.
+
+#### What changed
+
+- **Session sources import what changed** (`source-adapters.ts`). A session
+  source keeps, for the life of the engine, a fingerprint of each row it last
+  imported. A pass imports a row only when its fingerprint moved. Every row is
+  imported again, as before, on the first pass, after a pass that failed or
+  was interrupted, on the first pass of a new clock hour (the freshness
+  heartbeat of ADR 0046 is due for every row then), and when the store's rows
+  of that harness were written by anyone else since the last pass (count and
+  latest `updated_at`, read before and after each pass). A retired session is
+  forgotten so that a later re-emission reaches the store. Rows without a
+  session id, and rows sharing one, are imported on every pass. This applies
+  to the four session sources.
+- **Codex keeps a resident index** (`codex-history.ts`). The collector of a
+  long-running process keeps every parsed session without its skill
+  observations (36.4 of the cache's 48.1 MB of JSON). A pass stats the rollout
+  files, re-reads the ones whose size or mtime changed, and builds all rows
+  from the index; it no longer loads the session cache. Skill observations are
+  returned for the rollouts read in that pass only, and for every rollout
+  sharing a session id with one of them. Rows, work observations and
+  retirements are complete on every pass. The SQLite cache is still written,
+  for the next cold start. One-shot collection (CLI, foreground) does not use
+  the index, but it is not unchanged: the one-row-per-session-id filter, the
+  metadata retry and the metadata warning sit in the code both paths share, so
+  `collectCodexResult` emits 5,131 rows where it emitted 5,132. The index has
+  one construction site: `createIncrementalCollector` on the Codex entry of
+  `HARNESS_ADAPTERS` (`collectors/index.ts`). Without that line the session
+  source collects Codex through `collectResult` on every pass, as before, and
+  keeps the import change. The repository has no mechanism for an engine
+  tuning option (the environment variables these packages read name paths and
+  executables, and `AI_USAGE_PERF` turns diagnostics on; none selects a
+  collection strategy), so no switch was added.
+- **`rtk.savings` reads what changed** (`source-adapters.ts`,
+  `rtk-enrichment.ts`, `queryEnrichableUsageRowChanges`). The match still runs
+  over every active row on each run, because a command goes to the narrowest
+  matching session and any row can win or lose one. What a run needs from a
+  row is its window (project path, start, end), kept by content hash; the
+  stored JSON is read, parsed and validated only for rows whose hash moved.
+- **Claude**: only the import change above. Its collector is untouched.
+
+No store schema change. Two read-only store functions were added
+(`queryEnrichableUsageRowChanges`, `queryLocalRowsWatermark`). The Codex cache
+keeps its format and version.
+
+#### Limits that keep the result equal to a full collection
+
+- Work observations are sent in full on every pass: coverage is recorded per
+  collection id, so leaving a session out would mark it uncovered. Making that
+  incremental needs a change in `codex-work-store.ts`.
+- The engine caps one skill-observation import at 100,000 and truncates the
+  full list by recency. A pass that returns changed rollouts only cannot
+  reproduce that truncation, so the index is not used while the rollouts hold
+  more than 100,000 observations in total: every pass is then a complete one,
+  at the cost measured in step 1. The real history holds 95,649. **This cliff
+  is close.**
+- Retirements are declared in full on every pass (399 ids), as the retirement
+  rule requires.
+
+#### Tests
+
+`source-adapters.incremental.test.ts`: unchanged inputs import 0 rows and
+leave every stored column and both generations as they were; one changed
+session imports 1 row and moves the generation by 1; over 15 passes (change,
+new session, retirement and re-emission, failed pass, hour boundary with a
+session absent across it, rewrite of the stored rows by another writer) a
+source that keeps its memory leaves the store column for column equal to a
+source rebuilt for every pass, with equal run results; a failed pass, an hour
+boundary, a retirement and an import by another writer each force a full
+import; the engine asks an incremental collector for a complete pass first and
+after a failure. Five mutations of the conditions (no hour check, no watermark
+check, retired session kept, memory merged instead of rebuilt, failed pass
+trusted) each fail at least one of these tests. For `rtk.savings`: over 7 runs
+(content change, window change, new command, retirement, new session) the
+stored contributions equal those of a source rebuilt for every run, and the
+rows read are 3, 0, 1, 1, 0, 0, 1.
+
+`codex-incremental-collection.test.ts`: one row for a shared session id;
+a complete incremental pass equals a one-shot collection; an unchanged pass
+returns no observation; a changed rollout returns its own; rows, work
+observations, retirements, completeness and warnings equal a one-shot
+collection after each of 5 passes with a rollout added, rewritten and deleted;
+a stat change alone forces a re-read; a deleted rollout leaves the cache; a
+changed rollout brings the observations of the rollout sharing its id; two
+collectors do not share an index; the metadata read succeeds on its third
+attempt.
+
+`local-rows-incremental.test.ts`: the incremental read returns the rows of
+the full read in the same order and reads only unknown hashes; a stored row
+that no longer validates is reported invalid; the watermark moves on a
+rewrite, an insert, a retirement and a relabel, and not on an unchanged
+import, a heartbeat or another harness's rows.
+
+#### Sanity measurement (one run, not the step 4 proof)
+
+One 8-minute run on a fresh `VACUUM INTO` copy of the measurement store, first
+2 minutes dropped, 5 windows, while another measurement engine and the test
+suites of other sessions were running (load average about 46 on 20 threads).
+The run started cold for Codex: the session cache is keyed by absolute path
+and the measurement home had moved, so the first pass parsed all 5,531
+rollouts (25.9 s of CPU, outside the measured windows).
+
+| Phase | Before (step 1, session 1) | After | Change |
+| --- | ---: | ---: | ---: |
+| `codex.sessions`, CPU per run | 1,310 ms | 637 ms | −51 % |
+| `codex.sessions`, ΔRSS per run | +363 MB | +111 MB | −69 % |
+| — collect, CPU / ΔRSS | 671 ms / +229 MB | 365 ms / +52 MB | −46 % / −77 % |
+| — importLocalRows, rows compared | 5,132 | 0 | |
+| — importSkillObservations, observations compared | 95,553 | 0 | |
+| `rtk.savings`, CPU per run | 319 ms | 83 ms | −74 % |
+| `rtk.savings`, ΔRSS per run | +47 MB | +4 MB | −92 % |
+| `rtk.savings`, runs per minute | 2.67 | 1.80 | |
+| `rtk.savings`, CPU per minute | 0.89 s | 0.13 s | −85 % |
+| `codex.sessions`, CPU per minute | 1.43 s | 0.64 s | −55 % |
+| `claude.sessions`, rows compared per run | 1,195 | 8 | |
+| `claude.sessions`, importLocalRows ΔRSS | +25 MB | −10 MB | |
+| `codex.sessions` rows updated per pass | 2 (104 on 6 passes) | 0 | |
+| `codex.sessions` reports `changed` | 12 of 12 passes | 0 of 8 | |
+
+`claude.sessions` as a whole did not get cheaper in this run (510 ms of CPU
+and +131 MB per run against 295 ms and +146 MB): its cost is the re-read of
+the transcripts that changed, 368 ms of the 510, and more and larger
+transcripts were active than during step 1. The engine totals of this run
+(12.8 s of CPU per minute, peak 1,090 MB) are not comparable with step 1
+either: publication alone took 7.8 s per minute, and `opencode.sessions` did
+three full reads of 4.2 to 6.8 s of CPU.
+
+What remains in a Codex pass: listing and stat of 5,531 files and the copy of
+their sessions (170 to 230 ms), the thread-metadata read of 5,530 rows (about
+65 ms), building 5,131 rows and their fingerprints, the full work-observation
+import (80 ms) and the 399 retirements (43 ms).
+
+**Idle floor: not established, to be checked in step 4.** The resident state
+costs heap: the lowest `heapUsed` at the start of a phase was 88 MB in minutes
+6 and 7 of this run against 67 MB at the same uptime in step 1, about +21 MB
+(the row fingerprints and the RTK windows are part of it). For the Codex index
+alone there is a heap figure from outside the engine: a standalone script
+parsed the 5,531 cached sessions of the measurement cache and kept them, and
+`heapUsed` after a forced collection rose by 31.5 MB with their skill
+observations and by 11.7 MB without, which is what the index keeps. That is
+not a figure from a running engine. It happens to equal the difference between
+the two JSON sizes quoted above (48.1 − 36.4 MB); the JSON of what the index
+keeps is 11.5 MB. Against the 245 MB floor the
+step 1 sessions reached, +21 MB is 8 to 9 %: inside the 10 % budget, without
+margin. The RSS floor of this run was higher than that (median 292 MB, 317 MB
+in the last window, against 229 to 248 MB: +18 % to +38 %, over the limit if a
+like-for-like run confirms it), but the run is not like for like:
+it was already 106 MB above step 1 in its first minute (255 MB against 149 MB),
+before any of the new state existed, and the gap narrowed to 72 MB by minute
+7. A warm run on the step 1 setup has to settle whether the floor stays within
+10 %; if it does not, that is the plan's STOP condition for the Codex index.
+
+#### Review fixes (same day)
+
+An adversarial review of the branch confirmed defects, each fixed with a test
+that failed first.
+
+1. **Stale fingerprint across a duplicated session id.** A source that emitted
+   one row for a session id, then two rows with different content, then one
+   row again kept the fingerprint of the first pass: the third pass imported
+   nothing and the store held the last row of the duplicated pass. The
+   remembered identity is now deleted whenever a pass holds more than one row
+   for it. The equivalence sequence has the unique, duplicated, unique
+   transition.
+2. **Sibling observations when a rollout leaves the scan.** Two rollouts
+   sharing a session id and an observation identity: when the earlier one was
+   deleted or became unreadable, a full collection emits the other one's copy,
+   and the incremental pass returned nothing. Every session id whose set of
+   rollouts moved (read again, unreadable, removed, or read as another
+   session) now brings the observations of its remaining rollouts.
+3. **Sibling observations read from an older cache entry.** They are read from
+   the SQLite cache, whose writes may fail without failing the pass. The read
+   now requires the entry's size and mtime to be those of the index; otherwise
+   the pass is redone as a complete one, which re-reads the rollout.
+4. **Store-side rejection counts.** The stored completeness is the collector's
+   figure plus the observations the store refused in that batch, so a pass
+   delivering changed inputs only could record a lower figure than a full one.
+   A pass in which the store refuses an observation is no longer taken as
+   settled: passes are complete until the store accepts everything. While
+   settled, nothing delivered earlier was refused, so the batch's count is the
+   full count. `skill-observation-store.ts` is unchanged.
+5. **Silent metadata fallback.** See above: the failure is returned with the
+   empty map and reported as a warning, after the retries or at once for any
+   other error.
+
+Tests added with them: a failure after the import has committed (the run is
+interrupted, or the retirement is refused) forces a complete next pass and
+leaves the store equal to a rebuilt source's; the observation bound exactly
+reached (index used) and one above (every pass complete), including a pass
+that crosses it; the real Codex collector behind a session source over 7
+passes, compared with a source rebuilt for every pass on the run result, the
+stored rows and the stored `skill_observations` and collection state; the
+index with an unreadable rollout over three passes; a sibling whose cache
+entry is missing.
+
+The equivalence sequence relabels the machine in two ways. As the engine does
+it (`live.ts` rewrites the stored rows and sets the label on the very machine
+object the sources hold): the next pass imports every row, because the
+watermark moved, and finds them unchanged. And as a writer the sources do not
+know would: their machine object keeps the old label, and a rebuilt source and
+a resident one both write it back. The second case does not occur in the live
+engine; it is there to exercise the watermark.
+
+#### Not done
+
+- Claude collection itself (the transcript re-read and the 2.6 MB cache file
+  rewritten on every pass with a changed transcript, +13 to +17 MB).
+- Incremental work observations and retirements (see the limits above).
+- The `opencode.sessions` passes that report a change without changing a row.

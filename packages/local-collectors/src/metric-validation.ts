@@ -116,6 +116,18 @@ export const unlistedHistoryDirectoryWarning = (
 });
 
 /**
+ * The harness's thread-metadata database exists and could not be read. The sessions of the pass
+ * are still collected, from their history files alone, so the fields the database adds (parent,
+ * model, origin, title) are missing until a pass reads it again.
+ */
+export const unreadableThreadMetadataWarning = (harness: string, failure: LocalHistoryError): LocalHistoryWarning => ({
+  harness,
+  operation: `${harness}.threadMetadata`,
+  message: `Could not read the ${harness} thread metadata database; this pass reports its sessions without the parent, model, origin and title recorded there: ${formatLocalHistoryError(failure)}`,
+  ...(failure.path ? { path: failure.path } : {}),
+});
+
+/**
  * Child sessions held back from a pass because whether their usage belongs to
  * their root depends on an ancestor whose history was not read.
  */
