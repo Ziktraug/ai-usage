@@ -456,3 +456,184 @@ shutdown summary names the state.
 
 The measured sessions did not exercise the recovery: no append missed its
 deadline in 26 minutes.
+
+### 2026-11-18 — Step 3c, the publication's store side
+
+Write scope for this round: `served-report-store.ts` and its tests, the
+publication part of `live.ts`, `packages/report-data`, these notes. Step 3b
+(collection and import) runs in another worktree. Steps 4 and 5 are not
+started.
+
+The plan's first idea for 3c, a fingerprint computed before the assembly, was
+not pursued: the assembly is a fifth of a publication and the capture changes on
+every publication, so it would skip nothing (and see "content-free
+publications" below for why the existing fingerprint check never matches).
+
+#### Why each store-side step costs what it does (measured before any change)
+
+Method: the production functions on a fresh `VACUUM INTO` copy (10,326 served
+rows, `rows_bytes` 18.7 MB, `projection_bytes` 45.6 MB), every step timed in a
+transaction that is rolled back, plus a CPU profile. The machine was heavily
+loaded (load average 15 to 55 on 20 threads), so absolute times are about 1.5
+times the engine's and only the shares are quoted. The publications of Step 1
+changed 5 to 9 rows out of about 10,350.
+
+| Step | Share of a publication (the assembly is the other fifth) | What it does with the rows | Proportional to change? |
+| --- | ---: | --- | --- |
+| Prepare (validate, serialize, fingerprint) | 21 % | Validates every row (23 % of the step). Serializes the whole row array to count its bytes (10 %; the 18.7 MB text is then dropped). Computes two fingerprints (66 %): each one builds a canonical copy of the whole capture, serializes it and hashes it, so every row is canonicalized and serialized twice. | No. Nothing is kept from the previous publication. |
+| Insert the served projection | 30 % | SQLite inserts, 37 %: 10,326 rows of 80 columns into a table with 7 indexes, plus 10,594 model segments and 10,662 filter keys. Presentation enrichment, 30 %, of which four fifths is the row identity hash (FNV-1a 64 on `BigInt`, one multiplication per character). Two `JSON.stringify` per row, 8 %. Campaigns, ranks, local time cell and model segments, about 20 %. | No, and it cannot be within the schema: a revision is a full copy keyed by `(revision, ordinal)`, and the ordinal, the six text ranks, the two identity ranks and the campaign columns of a row depend on all rows. A moving session also gets a new `row_id` at each publication (its identity includes the active date), which shifts identity ranks of other rows. |
+| Validate the staged revision | 24 % | Counts and orphan checks, 1 %. The rest is the query catalog: the eight reader queries run on the staged revision. Overview 52 % (it reads every row and projects in JavaScript), breakdown 26 %, sessions page 14 %, support 4 %, neighbours 3 %. | No. These are whole-revision aggregates: no argument makes them independent of untouched rows, so the validation is left as it is. |
+| Commit | 6 % | Writes the WAL frames of a complete revision. | No, for the same reason as the insert. |
+| Retention (after the transaction) | about 0.2 s per publication in the engine | Deletes a whole superseded revision. Deleting the children explicitly instead of by cascade was measured and is the same within 10 %. | No. |
+
+Nothing is serialized twice between the assembly and the store except the
+rows: once whole in the prepare step (for the byte count), once per row in the
+insert (for storage), and twice in canonical form (for the fingerprints).
+
+#### What changed
+
+`served-report-store.ts`, prepare step only:
+
+- **One canonical serialization per row for both fingerprints.** The two
+  fingerprint inputs carry the same rows, and the canonical JSON of an array is
+  its members' canonical JSON joined by commas. `servedReportCaptureFingerprints`
+  canonicalizes and serializes each row once, with `canonicalReportJson` itself,
+  and feeds the text to both SHA-256 digests between the text that surrounds
+  the rows in each input. No canonical copy of the whole capture is built, and
+  nothing is cached between publications.
+- **Byte count without the whole text.** `rows_bytes` is the two brackets, one
+  comma between members and each row's own JSON length; the 18.7 MB text is no
+  longer built.
+
+Both are pure cost changes: the manifest and every stored byte are unchanged.
+
+| Measure, on the real capture | Before | After |
+| --- | ---: | ---: |
+| Fingerprints and byte count, alternating rounds in one process (two runs, loaded machine) | 789 ms, 479 ms | 296 ms, 174 ms (−63 %) |
+| Prepare step of a publication, CPU (9 publications each, base tree and changed tree, loaded machine) | 882 ms | 558 ms (−37 %) |
+| The same on a quiet machine (load average 5), CPU | 518 ms | 297 ms (−43 %) |
+| Heap growth during the prepare step, quiet machine | +98 MB | +16 MB |
+| RSS growth during the prepare step, quiet machine | +130 MB | +77 MB |
+| RSS after each publication, third to ninth, quiet machine | 849 to 1,406 MB | 622 to 867 MB |
+| Whole publication, CPU, quiet machine | 2,247 ms | 2,180 ms |
+
+The quiet-machine prepare step (518 ms) is close to the engine's in Step 1
+(597 ms), so the gain is about 0.22 s of CPU per publication, 0.4 s per active
+minute at today's rate. The other steps are unchanged; their differences
+between the two runs (assembly +66 ms, validation +65 ms) are run-to-run
+noise, which is why the whole publication moves less than its prepare step.
+The lower resident memory comes from a single benchmark pair and needs Step 4
+to confirm it in the engine.
+
+Identity evidence:
+
+- Unit tests compare both fingerprints with `reportCaptureFingerprintForPayload`
+  on fixed and on 300 generated payloads (values JSON drops or rewrites, keys
+  named `rows` and `generatedAt`, lone surrogates, 4,000 rows across the digest
+  chunk boundary).
+- Publication tests: the stored fingerprints are the reference's; six
+  successive publications of a moving capture (a session moves, one appears,
+  one is renamed, one retired, one removed with its segments and filter keys)
+  leave exactly the rows, segments, filter keys, support, context and manifest
+  of one publication of the last capture in a fresh store; an emptied capture
+  equals a from-scratch empty one; republishing an earlier capture restores it.
+- Real data, twice (two fresh copies): nine publications from the base tree
+  and nine from the changed tree, on identical copies with the same two rows
+  changed each time, produced the same nine capture fingerprints and the same
+  stored content. Publishing the last capture again renewed the revision,
+  which revalidates the stored rows with the reference fingerprint.
+- An 8-minute engine session on the fresh copy with the change published 14
+  revisions and exited cleanly.
+
+#### What did not change, and the STOPs
+
+- **Insert only what changed: needs a schema change (STOP).** Rows would have
+  to be stored once and shared by revisions, with a small per-revision
+  membership table for the ordinal, ranks and campaign columns, and the reader
+  queries rewritten to join. Expected gain per publication: most of the SQLite
+  insert (about 0.3 s), of the commit (0.17 s) and of the retention (0.2 s),
+  about a fifth of a publication, and most of the insert step's +240 MB. It is
+  a migration of the real store and its own plan.
+- **Incremental validation: not provable.** See the table.
+- **Outside this round's files, pure cost, not done.** (1) The row identity
+  hash in `report-core/session-query.ts`: a prototype of FNV-1a 64 on 16-bit
+  limbs gave the same result as the `BigInt` version on 20,004 strings
+  (astral characters and lone surrogates included) at a quarter of the cost;
+  it is about a quarter of the insert step and also runs wherever rows are
+  enriched. (2) `served-revision.ts` serializes each row again for storage;
+  taking the text already produced for the byte count would save about 4 % of
+  the insert step.
+- **A copy of the previous revision's rows when no row changed** (see below)
+  was considered and not built. It would skip the JavaScript half of the
+  insert step for those publications, but proving the copy byte-identical
+  needs every value the projection reads to be determined by the row's JSON
+  text, and `-0`, `NaN` and undefined members are not. Step 3b should remove
+  most of the cases it would serve.
+
+#### Content-free publications
+
+A poller compared each revision's rows with the previous one during the
+8-minute session: **7 of 14 publications stored rows identical to the revision
+they replaced.**
+
+| Rows | Publications | Triggered by | What differed |
+| --- | ---: | --- | --- |
+| Moved | 7 | `claude.sessions` | rows and analytics |
+| Identical | 6 | `codex.sessions`, alone or with `opencode.sessions` | `generatedAt`, `machineFreshness.machines[].lastSeenAt`, `machineFreshness.observedAt`, `datasets.providerStatus.generatedAt` (one also `analytics.recentSessions`, a count over a sliding window) |
+| Identical | 1 | the three usage-limits sources | quota windows (a real change of the support) |
+
+Every Codex pass reports `updated=2` (8 of 8 in that session, 15 of 21 in
+Step 1; the other 6 were the hourly heartbeat, 104 rows). The most recently
+rewritten Codex rows in the Step 1 copy are sessions from February to October,
+and two of the four have zero tokens, which the report leaves out. The rewrite
+moves the machine's `lastSeenAt`, which is part of the fingerprint, so a
+complete revision is written for it. Why two old rows are rewritten on every
+pass is still not known; it is in Step 3b's files. When a Codex pass with no
+changed rollout stops rewriting rows, these publications disappear with no
+loss of freshness: 6 of 14 here, and 9 of the 30 publications of Step 1 were
+triggered by `codex.sessions` with at most `opencode.sessions` (their rows
+were not compared).
+
+Two related facts:
+
+- `datasets.providerStatus.generatedAt` is the wall clock of the read, not the
+  publication's `generatedAt`. The capture is therefore not a function of the
+  store and the configuration, and the store's fingerprint check after the
+  assembly (renew instead of rewrite) can never match while a provider status
+  exists. Changing it changes served content, so it was not touched.
+- Two assemblies of the same store differ in nothing else.
+
+#### What remains is publication frequency (STOP, operator)
+
+From Step 1's two sessions and the session above:
+
+| | Value |
+| --- | --- |
+| Publications per minute | 1.7 to 2.0 |
+| CPU per publication | 3.3 to 3.5 s before this change, an estimated 3.1 to 3.3 s after |
+| Time from the end of a changed source pass to its publication | median 4 to 5 s, maximum 18 to 44 s |
+| Gap between publications | median 38 to 40 s, minimum 5 s |
+
+| Option | Publications per minute | CPU per minute for publication | Freshness given up |
+| --- | ---: | ---: | --- |
+| Today | 1.7 to 2.0 | 5.3 to 6.2 s | none |
+| Step 3b stops the content-free Codex publications | 1.0 to 1.3 | 3.1 to 4.0 s | none |
+| At most one source-woken publication per minute | at most 1.0 | at most 3.1 s | a change waits up to 60 s more (about 30 s on average) instead of 4 to 5 s |
+| At most one per two minutes | 0.5 | about 1.6 s | up to 120 s more |
+
+Explicit requests stay immediate in every option. Even with Step 3b, one moving
+Claude session costs one publication per minute, about 3.1 s of CPU: by itself
+close to PR #61's whole budget of 4.0 s per active minute. Reaching that target
+needs a cap, or the schema change above, or both.
+
+#### What Step 4 should compare
+
+- The Step 1 measurement repeated on a fresh copy with both Step 3 branches
+  combined: CPU per active minute, peak RSS, the floor, and publications per
+  minute with the share triggered by `codex.sessions` alone.
+- Per publication: the prepare step (expected about −37 %) and the others
+  unchanged.
+- Content identity on identical inputs: compare the stored rows, segments and
+  filter keys, and the support with `datasets.providerStatus.generatedAt`
+  masked. Capture fingerprints of two separate runs differ because of that
+  clock, even with no code change; they compare equal only when it is pinned.
