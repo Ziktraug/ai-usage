@@ -47,7 +47,8 @@ This package imports no other `@ai-usage/*` package.
 - `./provider-quota`: provider-neutral quota observations/history.
 - `./provider-status`: provider status windows and reset helpers.
 - `./report-budgets`: frozen row/byte/query/import budgets.
-- `./report-capture-fingerprint`: semantic capture fingerprinting.
+- `./report-capture-fingerprint`: semantic capture fingerprinting, and the one
+  definition of what a fingerprint leaves out (the publication clocks).
 - `./report-data`: serialized report payloads and preparation.
 - `./session-detail-request`: lightweight canonical detail request parsing,
   fingerprint, and shared validation error, without loading response validation.

@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+// biome-ignore lint/performance/noNamespaceImport: one test replaces an export of this module through its namespace
+import * as reportCaptureFingerprint from '@ai-usage/report-core/report-capture-fingerprint';
 import { reportCaptureFingerprintForPayload } from '@ai-usage/report-core/report-capture-fingerprint';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
@@ -64,7 +67,24 @@ const generator = (seed: number) => {
     state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
     return state / 2_147_483_648;
   };
-  const keys = ['a', 'B', 'rows', 'payload', '10', '2', 'é', 'z', 'generatedAt', 'observedAt', 'a b', 'A'];
+  const keys = [
+    'a',
+    'B',
+    'rows',
+    'payload',
+    '10',
+    '2',
+    'é',
+    'z',
+    'generatedAt',
+    'observedAt',
+    'a b',
+    'A',
+    // The members the reference treats specially, or that the two fingerprints place differently.
+    'machineFreshness',
+    'datasets',
+    'localContext',
+  ];
   const texts = ['', 'plain', 'quote " and \\ backslash', 'été 🚀', 'line\nbreak', '\ud800 lone', '],[', '"rows":'];
   const value = (depth: number): unknown => {
     const pick = next();
@@ -119,6 +139,17 @@ describe('served report capture fingerprints', () => {
       { machineFreshness: 'unavailable', undefinedMember: undefined },
       // A key that sorts after `rows`, one that sorts before it, and an index-like key.
       { rowz: 1, row: 2, 7: 'seven', rows: 'replaced by the capture rows' },
+      // A dataset's own clock is content, and a support member named like the private context is
+      // replaced by it in the private fingerprint only.
+      {
+        datasets: {
+          machineFreshness: { observedAt: '2026-07-29T12:00:00.000Z' },
+          providerStatus: { generatedAt: '2026-07-29T12:00:00.000Z', observedAt: '2026-07-29T12:00:00.000Z' },
+        },
+        generatedAt: '2026-07-29T12:00:00.000Z',
+        localContext: { generatedAt: '2026-07-29T12:00:00.000Z', machineFreshness: { observedAt: 'kept' } },
+        machineFreshness: { datasets: [], localContext: null, observedAt: '2026-07-29T12:00:00.000Z' },
+      },
     ];
     for (const support of supports) {
       expect(bothFingerprints({ localContext, rows, sourceAuthorities: authorities(rows.length), support })).toEqual(
@@ -138,6 +169,51 @@ describe('served report capture fingerprints', () => {
       });
 
     expect(at('2026-07-29T12:00:00.000Z')).toEqual(at('2026-07-29T12:01:00.000Z'));
+  });
+
+  test('take the clocks to leave out from the reference, so the two cannot drift apart', () => {
+    // The validator of a stored revision recomputes both fingerprints with the reference. If the
+    // reference ever leaves out one more member, the publication must leave it out too, including
+    // a member no other test payload carries. `datasets` stands for that member here.
+    const original = reportCaptureFingerprint.reportCaptureFingerprintInput;
+    const withoutDatasets = (input: object, rowSourceAuthorities?: readonly SessionDetailSourceAuthority[]) => {
+      const { datasets: _datasets, ...rest } = input as Record<string, unknown>;
+      return original(rest, rowSourceAuthorities);
+    };
+    const sha256OfCanonicalJson = (value: unknown): string =>
+      createHash('sha256')
+        .update(JSON.stringify(reportCaptureFingerprint.canonicalReportJson(value)))
+        .digest('hex');
+    const rows = [row(1), row(2)];
+    const sourceAuthorities = authorities(rows.length);
+    const support = (datasetClock: string) => ({
+      datasets: { providerStatus: { generatedAt: datasetClock } },
+      generatedAt: '2026-07-29T12:00:00.000Z',
+      timeZone: 'UTC',
+    });
+    const payload = { ...support('2026-07-29T12:00:00.000Z'), rows };
+    const at = (datasetClock: string) =>
+      servedReportCaptureFingerprints({ localContext, rows, sourceAuthorities, support: support(datasetClock) });
+
+    const spy = spyOn(reportCaptureFingerprint, 'reportCaptureFingerprintInput').mockImplementation(withoutDatasets);
+    try {
+      expect(at('2026-07-29T12:00:00.000Z')).toEqual({
+        captureFingerprint: sha256OfCanonicalJson(withoutDatasets(payload)),
+        privateCaptureFingerprint: sha256OfCanonicalJson(
+          withoutDatasets({ ...payload, localContext }, sourceAuthorities),
+        ),
+      });
+      expect(at('2026-07-29T12:01:00.000Z')).toEqual(at('2026-07-29T12:00:00.000Z'));
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Restored: the dataset clock is content again, as the reference says.
+    expect(reportCaptureFingerprint.reportCaptureFingerprintInput).toBe(original);
+    expect(at('2026-07-29T12:01:00.000Z')).not.toEqual(at('2026-07-29T12:00:00.000Z'));
+    expect(
+      bothFingerprints({ localContext, rows, sourceAuthorities, support: support('2026-07-29T12:01:00.000Z') }),
+    ).toEqual(sameTwice);
   });
 
   test('change with a row, with its position, with the local context and with a source authority', () => {

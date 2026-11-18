@@ -14,6 +14,7 @@ import {
 import {
   canonicalReportJson,
   reportCaptureFingerprintForPayload,
+  reportCaptureFingerprintInput,
 } from '@ai-usage/report-core/report-capture-fingerprint';
 import { isSerializedUsageRow, type SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
@@ -123,30 +124,17 @@ const FINGERPRINT_DIGEST_CHUNK_CHARACTERS = 64 * 1024;
 
 /**
  * The canonical JSON text `reportCaptureFingerprintForPayload` hashes, with `rowsMarker` standing
- * where the rows belong. The clocks are left out exactly as the reference leaves them out; the
- * tests pin the two together.
+ * where the rows belong. What is left out of a fingerprint is decided by the reference's own input
+ * step, `reportCaptureFingerprintInput`, which never looks inside the rows; there is no second
+ * definition here to keep in step with it.
  */
 const captureFingerprintTextAroundRows = (
   payload: Record<string, unknown>,
   rowsMarker: string,
   rowSourceAuthorities?: readonly SessionDetailSourceAuthority[],
 ): readonly [before: string, after: string] => {
-  const payloadAroundRows: Record<string, unknown> = { ...payload, rows: rowsMarker };
-  const { generatedAt: _generatedAt, machineFreshness, ...payloadWithoutClocks } = payloadAroundRows;
-  const semanticMachineFreshness =
-    typeof machineFreshness === 'object' && machineFreshness !== null && !Array.isArray(machineFreshness)
-      ? Object.fromEntries(
-          Object.entries(machineFreshness).filter(([key, value]) => key !== 'observedAt' && value !== undefined),
-        )
-      : machineFreshness;
-  const semanticPayload =
-    machineFreshness === undefined
-      ? payloadWithoutClocks
-      : { ...payloadWithoutClocks, machineFreshness: semanticMachineFreshness };
   const text = JSON.stringify(
-    canonicalReportJson(
-      rowSourceAuthorities === undefined ? semanticPayload : { payload: semanticPayload, rowSourceAuthorities },
-    ),
+    canonicalReportJson(reportCaptureFingerprintInput({ ...payload, rows: rowsMarker }, rowSourceAuthorities)),
   );
   const marker = JSON.stringify(rowsMarker);
   const at = text.indexOf(marker);
