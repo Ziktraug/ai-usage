@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { projectSessionPage } from '@ai-usage/report-core/session-query';
 import {
@@ -8,16 +9,26 @@ import {
   buildDashboardMetrics,
   buildHarnessProviderGroups,
   buildModelGroups,
+  buildPreviousPeriodBounds,
   buildPreviousPeriodSummary,
   buildProjectGroupRows,
   buildSortedDashboardRows,
   buildVisibleSummary,
+  comparePeriodMetric,
   createFilterSnapshot,
   filterRowsByDateBounds,
   filterTimelineRows,
   machineFilterOptionsForRows,
+  type PeriodBaseline,
+  type PeriodBaselineInput,
+  previousPeriodWindow,
+  processedTokensReading,
+  resolvePeriodBaseline,
+  totalApiValueReading,
 } from './dashboard-model';
 import type { DateBounds } from './date-range';
+import type { ReportSummary } from './lib/foundation/presentation/report-value';
+import { demoReportPayload } from './report-data';
 import { enrichReportRow } from './shared';
 
 const baseRow: SerializedRow = {
@@ -675,5 +686,312 @@ describe('dashboard model', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.campaignTotalCount).toBe(2);
     expect(rows[0]?.costApprox).toBe(5);
+  });
+});
+
+describe('period-over-period comparison', () => {
+  const generatedAt = new Date('2026-06-11T12:00:00.000Z');
+  /** A closed seven-day selection: 4 June 00:00 to 10 June 23:59:59.999. */
+  const week: DateBounds = {
+    from: new Date('2026-06-04T00:00:00.000Z'),
+    to: new Date('2026-06-10T23:59:59.999Z'),
+  };
+  const weekBefore = {
+    from: new Date('2026-05-28T00:00:00.001Z'),
+    to: new Date('2026-06-03T23:59:59.999Z'),
+  };
+  const datedRow = (name: string, activeDate: string, overrides: Partial<SerializedRow> = {}) =>
+    row({ activeDate, date: activeDate, name, sessionLabel: name, ...overrides });
+  const summaryOf = (...rows: ReturnType<typeof row>[]): ReportSummary =>
+    buildVisibleSummary(rows, { from: null, to: null });
+  const baselineFor = (overrides: Partial<PeriodBaselineInput<ReportSummary>> = {}): PeriodBaseline<ReportSummary> =>
+    resolvePeriodBaseline({
+      bounds: week,
+      generatedAt,
+      previousSummary: summaryOf(datedRow('previous', '2026-06-01T12:00:00.000Z')),
+      recordedFirst: new Date('2026-01-01T00:00:00.000Z'),
+      sourceCoverage: null,
+      ...overrides,
+    });
+
+  describe('previous window', () => {
+    test('has the length of the selection and ends where the selection starts', () => {
+      expect(previousPeriodWindow(week, generatedAt)).toEqual(weekBefore);
+    });
+
+    test('ends an open selection at the generation instant, as the focused projections do', () => {
+      const open: DateBounds = { from: new Date('2026-06-04T00:00:00.000Z'), to: null };
+      const expected = { from: new Date('2026-05-27T12:00:00.000Z'), to: new Date('2026-06-03T23:59:59.999Z') };
+
+      expect(previousPeriodWindow(open, generatedAt)).toEqual(expected);
+      expect(buildPreviousPeriodBounds(open, generatedAt)).toEqual(expected);
+    });
+
+    test('never shrinks below one day', () => {
+      const morning: DateBounds = {
+        from: new Date('2026-06-11T00:00:00.000Z'),
+        to: new Date('2026-06-11T06:00:00.000Z'),
+      };
+
+      expect(previousPeriodWindow(morning, generatedAt)).toEqual({
+        from: new Date('2026-06-10T00:00:00.000Z'),
+        to: new Date('2026-06-10T23:59:59.999Z'),
+      });
+    });
+
+    test('does not exist for a selection without a start', () => {
+      expect(previousPeriodWindow({ from: null, to: null }, generatedAt)).toBeNull();
+      expect(previousPeriodWindow({ from: null, to: week.to }, generatedAt)).toBeNull();
+    });
+
+    test.each([
+      { label: 'a closed selection', range: { from: '2026-06-04T00:00:00.000Z', to: '2026-06-10T23:59:59.999Z' } },
+      { label: 'an open selection', range: { from: '2026-06-04T00:00:00.000Z', to: null } },
+    ])('holds exactly the sessions the focused Overview projection counts for $label', ({ range }) => {
+      const window = previousPeriodWindow(
+        { from: new Date(range.from), to: range.to === null ? null : new Date(range.to) },
+        generatedAt,
+      );
+      if (window === null) {
+        throw new Error('A bounded selection must have a previous window');
+      }
+      const { rows: _rows, tableRows: _tableRows, ...support } = demoReportPayload;
+      const at = (name: string, time: number): SerializedRow => ({
+        ...baseRow,
+        activeDate: new Date(time).toISOString(),
+        date: new Date(time).toISOString(),
+        name,
+        sessionLabel: name,
+        source: { harnessKey: 'codex', rootSourceSessionId: name, sourceSessionId: name },
+      });
+      const projectedPrevious = (rows: SerializedRow[]) =>
+        projectFocusedOverview(
+          rows,
+          { ...support, generatedAt: generatedAt.toISOString() },
+          {
+            includeAdvanced: false,
+            query: {
+              filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+              range,
+              revision: 'window-parity',
+            },
+            timeline: { dimension: 'harness', granularity: 'day' },
+          },
+        ).view.previousSummary;
+
+      expect(
+        projectedPrevious([at('first instant', window.from.getTime()), at('last instant', window.to.getTime())])
+          ?.sessionCount,
+      ).toBe(2);
+      expect(
+        projectedPrevious([at('too early', window.from.getTime() - 1), at('selected', window.to.getTime() + 1)]),
+      ).toBeNull();
+    });
+  });
+
+  describe('baseline', () => {
+    test('is the previous summary over the equal-length window when history covers it', () => {
+      const previousSummary = summaryOf(datedRow('previous', '2026-06-01T12:00:00.000Z'));
+
+      expect(baselineFor({ previousSummary })).toEqual({
+        kind: 'available',
+        previous: previousSummary,
+        window: weekBefore,
+      });
+    });
+
+    test('is covered by history that starts exactly with the previous window', () => {
+      expect(baselineFor({ recordedFirst: weekBefore.from }).kind).toBe('available');
+    });
+
+    test('does not exist for a full-range selection, whatever summary is supplied', () => {
+      expect(baselineFor({ bounds: { from: null, to: null } })).toEqual({ kind: 'full-range' });
+      expect(baselineFor({ bounds: { from: null, to: week.to }, previousSummary: null })).toEqual({
+        kind: 'full-range',
+      });
+    });
+
+    test('is unrecorded when history starts inside the selected period', () => {
+      const recordedFirst = new Date('2026-06-05T08:00:00.000Z');
+
+      expect(baselineFor({ previousSummary: null, recordedFirst })).toEqual({
+        kind: 'history-shorter-than-window',
+        previousPeriod: 'unrecorded',
+        recordedFirst,
+        window: weekBefore,
+      });
+      expect(baselineFor({ previousSummary: null, recordedFirst: week.from }).kind).toBe('history-shorter-than-window');
+    });
+
+    test('is only partly recorded when history starts inside the previous window', () => {
+      const recordedFirst = new Date('2026-06-01T12:00:00.000Z');
+
+      expect(baselineFor({ recordedFirst })).toEqual({
+        kind: 'history-shorter-than-window',
+        previousPeriod: 'partly-recorded',
+        recordedFirst,
+        window: weekBefore,
+      });
+    });
+
+    test('names every harness whose history starts after the previous window', () => {
+      const covered = { label: 'Codex', recordedFirst: new Date('2026-01-01T00:00:00.000Z') };
+      const late = { label: 'Claude Code', recordedFirst: new Date('2026-06-02T09:00:00.000Z') };
+      const later = { label: 'Cursor', recordedFirst: new Date('2026-06-08T09:00:00.000Z') };
+
+      expect(baselineFor({ sourceCoverage: [covered, late, later] })).toEqual({
+        kind: 'source-not-covering-window',
+        sources: [late, later],
+        window: weekBefore,
+      });
+      expect(baselineFor({ sourceCoverage: [covered] }).kind).toBe('available');
+      expect(baselineFor({ sourceCoverage: [] }).kind).toBe('available');
+    });
+
+    test('reports short history before a late harness, because it explains every harness at once', () => {
+      const recordedFirst = new Date('2026-06-01T12:00:00.000Z');
+
+      expect(baselineFor({ recordedFirst, sourceCoverage: [{ label: 'Codex', recordedFirst }] }).kind).toBe(
+        'history-shorter-than-window',
+      );
+    });
+
+    test('has no sessions when history covers the previous window but nothing matched in it', () => {
+      expect(baselineFor({ previousSummary: null })).toEqual({ kind: 'no-previous-sessions', window: weekBefore });
+      expect(baselineFor({ previousSummary: null, recordedFirst: null })).toEqual({
+        kind: 'no-previous-sessions',
+        window: weekBefore,
+      });
+    });
+  });
+
+  describe('metric', () => {
+    const current = summaryOf(datedRow('current', '2026-06-08T12:00:00.000Z', { costApprox: 3, tokIn: 40 }));
+    const previous = summaryOf(datedRow('previous', '2026-06-01T12:00:00.000Z', { costApprox: 2, tokIn: 15 }));
+    const available = baselineFor({ previousSummary: previous });
+
+    test('measures the change against the previous window with one reading for both periods', () => {
+      const read: (summary: ReportSummary) => ReturnType<typeof totalApiValueReading> = (summary) =>
+        totalApiValueReading(summary);
+      const seen: ReportSummary[] = [];
+
+      expect(
+        comparePeriodMetric(
+          available,
+          current,
+          (summary) => {
+            seen.push(summary);
+            return read(summary);
+          },
+          false,
+        ),
+      ).toEqual({
+        current: 3,
+        kind: 'change',
+        percent: 50,
+        previous: 2,
+        provisional: false,
+        window: weekBefore,
+      });
+      expect(seen).toEqual([current, previous]);
+    });
+
+    test('reports a decrease, an unchanged value and a provisional period', () => {
+      const baseline = baselineFor({ previousSummary: current });
+
+      expect(comparePeriodMetric(baseline, previous, processedTokensReading, false)).toMatchObject({
+        current: 25,
+        kind: 'change',
+        percent: -50,
+        previous: 50,
+      });
+      expect(comparePeriodMetric(baseline, current, processedTokensReading, false)).toMatchObject({
+        kind: 'change',
+        percent: 0,
+      });
+      expect(comparePeriodMetric(baseline, previous, processedTokensReading, true)).toMatchObject({
+        kind: 'change',
+        provisional: true,
+      });
+    });
+
+    test('derives no percentage from a zero baseline', () => {
+      const unpricedWork = summaryOf(datedRow('free', '2026-06-01T12:00:00.000Z', { costApprox: 0 }));
+      const baseline = baselineFor({ previousSummary: unpricedWork });
+
+      expect(comparePeriodMetric(baseline, current, totalApiValueReading, false)).toEqual({
+        kind: 'zero-baseline',
+        window: weekBefore,
+      });
+      expect(comparePeriodMetric(baseline, unpricedWork, totalApiValueReading, false)).toEqual({
+        kind: 'zero-baseline',
+        window: weekBefore,
+      });
+    });
+
+    test('keeps a partly measured metric out of the percentage without silencing a complete one', () => {
+      const partlyPriced = summaryOf(
+        datedRow('priced', '2026-06-01T10:00:00.000Z', { costApprox: 2, tokIn: 15 }),
+        datedRow('unpriced', '2026-06-01T12:00:00.000Z', { costApprox: 0, costKnown: false, tokIn: 15 }),
+      );
+      const partialBaseline = baselineFor({ previousSummary: partlyPriced });
+
+      expect(comparePeriodMetric(partialBaseline, current, totalApiValueReading, false)).toEqual({
+        current: { complete: true, value: 3 },
+        kind: 'partial-measurement',
+        previous: { complete: false, value: 2 },
+        window: weekBefore,
+      });
+      expect(comparePeriodMetric(available, partlyPriced, totalApiValueReading, false)).toMatchObject({
+        current: { complete: false, value: 2 },
+        kind: 'partial-measurement',
+        previous: { complete: true, value: 2 },
+      });
+      expect(comparePeriodMetric(partialBaseline, current, processedTokensReading, false)).toMatchObject({
+        current: 50,
+        kind: 'change',
+        previous: 50,
+      });
+    });
+
+    test.each([
+      baselineFor({ bounds: { from: null, to: null } }),
+      baselineFor({ previousSummary: null, recordedFirst: new Date('2026-06-05T08:00:00.000Z') }),
+      baselineFor({ recordedFirst: new Date('2026-06-01T12:00:00.000Z') }),
+      baselineFor({ sourceCoverage: [{ label: 'Cursor', recordedFirst: new Date('2026-06-02T09:00:00.000Z') }] }),
+      baselineFor({ previousSummary: null }),
+    ])('carries the missing baseline through unchanged: $kind', (baseline) => {
+      expect<unknown>(comparePeriodMetric(baseline, current, processedTokensReading, false)).toBe(baseline);
+    });
+  });
+
+  test('compares the same aggregation over both windows under the current filter set', () => {
+    const rows = [
+      datedRow('Codex current', '2026-06-08T12:00:00.000Z', { tokIn: 90 }),
+      datedRow('Codex previous', '2026-06-01T12:00:00.000Z', { tokIn: 40 }),
+      datedRow('Claude current', '2026-06-09T12:00:00.000Z', { harness: 'Claude', tokIn: 10 }),
+      datedRow('Claude previous', '2026-06-02T12:00:00.000Z', { harness: 'Claude', tokIn: 190 }),
+    ];
+    const processedTokensChange = (filtered: typeof rows) =>
+      comparePeriodMetric(
+        resolvePeriodBaseline({
+          bounds: week,
+          generatedAt,
+          previousSummary: buildPreviousPeriodSummary(filtered, week, generatedAt),
+          recordedFirst: new Date('2026-01-01T00:00:00.000Z'),
+          sourceCoverage: null,
+        }),
+        buildVisibleSummary(filtered, week),
+        processedTokensReading,
+        false,
+      );
+
+    expect(processedTokensChange(rows)).toMatchObject({ current: 120, kind: 'change', percent: -52, previous: 250 });
+    expect(processedTokensChange(filterTimelineRows(rows, createFilterSnapshot('', ['Codex'], [], {})))).toMatchObject({
+      current: 100,
+      kind: 'change',
+      percent: 100,
+      previous: 50,
+    });
   });
 });

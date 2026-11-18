@@ -17,7 +17,7 @@ import {
 } from './dashboard-analytics';
 import type { Metric, MetricDelta } from './dashboard-metric-model';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
-import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
+import { DAY_MS, type DateBounds, rowMatchesDateBounds } from './date-range';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from './lib/foundation/presentation/format';
 import {
   aggregateApiPriceProvenance,
@@ -384,15 +384,30 @@ export const buildCampaignTableRows = (
 export const buildVisibleSummary = (rows: DashboardRow[], bounds: DateBounds) =>
   buildReportSummary(rows, (row) => rowMatchesDateBounds(row, bounds));
 
-export const buildPreviousPeriodBounds = (bounds: DateBounds, generatedAt: Date): DateBounds | null => {
+/** A closed interval of instants; both ends belong to it. */
+export interface PeriodWindow {
+  readonly from: Date;
+  readonly to: Date;
+}
+
+/**
+ * The window of equal length that ends where the selected period starts. It mirrors the previous
+ * period of the focused Overview projections (`previousPeriodSummary` in report-core and its SQLite
+ * twin): an open selection ends at the report's generation instant and the span is at least one day.
+ * A selection without a start has no previous window.
+ */
+export const previousPeriodWindow = (bounds: DateBounds, generatedAt: Date): PeriodWindow | null => {
   if (!bounds.from) {
     return null;
   }
   const from = bounds.from.getTime();
-  const to = (bounds.to ?? endOfDay(generatedAt)).getTime();
+  const to = (bounds.to ?? generatedAt).getTime();
   const span = Math.max(DAY_MS, to - from);
   return { from: new Date(from - span), to: new Date(from - 1) };
 };
+
+export const buildPreviousPeriodBounds = (bounds: DateBounds, generatedAt: Date): DateBounds | null =>
+  previousPeriodWindow(bounds, generatedAt);
 
 export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBounds, generatedAt: Date) => {
   const previousBounds = buildPreviousPeriodBounds(bounds, generatedAt);
@@ -402,6 +417,168 @@ export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBou
   const summary = buildVisibleSummary(rows, previousBounds);
   return summary.sessionCount > 0 ? summary : null;
 };
+
+/** The earliest recorded activity of one harness under the current filters. */
+export interface PeriodSourceCoverage {
+  /** The harness as reports label it. */
+  readonly label: string;
+  readonly recordedFirst: Date;
+}
+
+/**
+ * Why the previous window cannot serve as a baseline. Each reason is its own outcome so that no
+ * caller can turn a missing baseline into a zero or a percentage.
+ */
+export type PeriodBaselineAbsence =
+  /** The selection has no start, so no window of equal length precedes it. */
+  | { readonly kind: 'full-range' }
+  /**
+   * Recorded history under the current filters starts after the previous window does. The window is
+   * `unrecorded` when history starts inside the selected period, `partly-recorded` when it starts
+   * inside the previous window: what it holds then covers only part of the window.
+   */
+  | {
+      readonly kind: 'history-shorter-than-window';
+      readonly previousPeriod: 'partly-recorded' | 'unrecorded';
+      readonly recordedFirst: Date;
+      readonly window: PeriodWindow;
+    }
+  /** History as a whole covers the previous window, but these harnesses start after it does. */
+  | {
+      readonly kind: 'source-not-covering-window';
+      readonly sources: readonly PeriodSourceCoverage[];
+      readonly window: PeriodWindow;
+    }
+  /** History covers the previous window and no session matched the current filters in it. */
+  | { readonly kind: 'no-previous-sessions'; readonly window: PeriodWindow };
+
+export type PeriodBaseline<Summary> =
+  | { readonly kind: 'available'; readonly previous: Summary; readonly window: PeriodWindow }
+  | PeriodBaselineAbsence;
+
+export interface PeriodBaselineInput<Summary> {
+  /** The selected period, exactly as the summaries were queried. */
+  readonly bounds: DateBounds;
+  readonly generatedAt: Date;
+  /** The same aggregation over the previous window under the same filters; null when it holds no session. */
+  readonly previousSummary: Summary | null;
+  /** Earliest recorded activity under the current filters; null when nothing is recorded. */
+  readonly recordedFirst: Date | null;
+  /** Per-harness earliest activity under the current filters; null when the caller cannot observe it. */
+  readonly sourceCoverage: readonly PeriodSourceCoverage[] | null;
+}
+
+/**
+ * Decides whether the previous window is a like-for-like baseline. A window that recorded history
+ * does not cover from its first instant is never one: activity that was not recorded cannot be told
+ * from activity that did not happen.
+ */
+export const resolvePeriodBaseline = <Summary>({
+  bounds,
+  generatedAt,
+  previousSummary,
+  recordedFirst,
+  sourceCoverage,
+}: PeriodBaselineInput<Summary>): PeriodBaseline<Summary> => {
+  const window = previousPeriodWindow(bounds, generatedAt);
+  if (window === null || bounds.from === null) {
+    return { kind: 'full-range' };
+  }
+  const startsAfterWindow = (first: Date): boolean => first.getTime() > window.from.getTime();
+  if (recordedFirst !== null && startsAfterWindow(recordedFirst)) {
+    return {
+      kind: 'history-shorter-than-window',
+      previousPeriod: recordedFirst.getTime() >= bounds.from.getTime() ? 'unrecorded' : 'partly-recorded',
+      recordedFirst,
+      window,
+    };
+  }
+  const sources = (sourceCoverage ?? []).filter((source) => startsAfterWindow(source.recordedFirst));
+  if (sources.length > 0) {
+    return { kind: 'source-not-covering-window', sources, window };
+  }
+  return previousSummary === null
+    ? { kind: 'no-previous-sessions', window }
+    : { kind: 'available', previous: previousSummary, window };
+};
+
+/** One metric read from one period's summary. */
+export interface PeriodMetricReading {
+  /** False when the value only bounds the metric from below, such as an API value with unpriced usage. */
+  readonly complete: boolean;
+  readonly value: number;
+}
+
+/**
+ * The outcome of comparing one metric with the previous window. Only `change` carries a percentage;
+ * the limits are per metric, so one metric can lack a percentage while another keeps its own.
+ */
+export type MetricPeriodComparison =
+  | {
+      readonly current: number;
+      readonly kind: 'change';
+      /** Signed change against the previous window, in percent of its value. */
+      readonly percent: number;
+      readonly previous: number;
+      /** The selected period has not ended, so its side of the comparison can still grow. */
+      readonly provisional: boolean;
+      readonly window: PeriodWindow;
+    }
+  /** The previous window measured nothing for this metric: a percentage of zero does not exist. */
+  | { readonly kind: 'zero-baseline'; readonly window: PeriodWindow }
+  /** At least one period only bounds this metric from below, which cannot anchor a percentage. */
+  | {
+      readonly current: PeriodMetricReading;
+      readonly kind: 'partial-measurement';
+      readonly previous: PeriodMetricReading;
+      readonly window: PeriodWindow;
+    }
+  | PeriodBaselineAbsence;
+
+/** Compares one metric across both periods by applying the same reading to both summaries. */
+export const comparePeriodMetric = <Summary>(
+  baseline: PeriodBaseline<Summary>,
+  currentSummary: Summary,
+  read: (summary: Summary) => PeriodMetricReading,
+  periodInProgress: boolean,
+): MetricPeriodComparison => {
+  if (baseline.kind !== 'available') {
+    return baseline;
+  }
+  const { window } = baseline;
+  const current = read(currentSummary);
+  const previous = read(baseline.previous);
+  if (!(current.complete && previous.complete)) {
+    return { current, kind: 'partial-measurement', previous, window };
+  }
+  if (previous.value <= 0) {
+    return { kind: 'zero-baseline', window };
+  }
+  return {
+    current: current.value,
+    kind: 'change',
+    percent: ((current.value - previous.value) / previous.value) * 100,
+    previous: previous.value,
+    provisional: periodInProgress,
+    window,
+  };
+};
+
+/** Estimated API-equivalent value; a lower bound as soon as part of the usage is unpriced. */
+export const totalApiValueReading = (
+  summary: Pick<ReportSummary, 'priceMeasurement' | 'totalCost'>,
+): PeriodMetricReading => ({
+  complete: summary.priceMeasurement.state !== 'partially measured',
+  value: summary.totalCost,
+});
+
+/** Processed tokens: cache read, cache write, input and output. */
+export const processedTokensReading = (
+  summary: Pick<ReportSummary, 'cacheRead' | 'cacheWrite' | 'tokIn' | 'tokOut'>,
+): PeriodMetricReading => ({
+  complete: true,
+  value: summary.cacheRead + summary.cacheWrite + summary.tokIn + summary.tokOut,
+});
 
 export const hiddenSessionCount = (totalRows: number, visibleRows: number) => totalRows - visibleRows;
 
