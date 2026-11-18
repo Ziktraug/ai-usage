@@ -419,13 +419,6 @@ export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBou
   return summary.sessionCount > 0 ? summary : null;
 };
 
-/** Where the recorded history of one harness starts, whatever the other filters select. */
-export interface PeriodHarnessCoverage {
-  /** The harness as reports label it. */
-  readonly label: string;
-  readonly recordedFirst: Date;
-}
-
 /** The recorded history that decides whether a window was recorded at all. */
 export interface PeriodRecordedHistory {
   /** Earliest recorded activity of this history. */
@@ -488,12 +481,6 @@ export type PeriodBaselineAbsence =
       readonly previousPeriod: 'partly-recorded' | 'unrecorded';
       readonly window: PeriodWindow;
     }
-  /** History as a whole covers the previous window, but these harnesses start after it does. */
-  | {
-      readonly harnesses: readonly PeriodHarnessCoverage[];
-      readonly kind: 'harness-not-covering-window';
-      readonly window: PeriodWindow;
-    }
   /** History covers the previous window and no session matched the current filters in it. */
   | { readonly kind: 'no-previous-sessions'; readonly window: PeriodWindow };
 
@@ -505,8 +492,6 @@ export interface PeriodBaselineInput<Summary> {
   /** The selected period, exactly as the summaries were queried. */
   readonly bounds: DateBounds;
   readonly generatedAt: Date;
-  /** Where the history of each selected harness starts; null when the caller cannot observe it. */
-  readonly harnessCoverage: readonly PeriodHarnessCoverage[] | null;
   /** The same aggregation over the previous window under the same filters; null when it holds no session. */
   readonly previousSummary: Summary | null;
   /** The history that decides what was recorded (`periodRecordedHistory`); null when nothing is recorded. */
@@ -521,7 +506,6 @@ export interface PeriodBaselineInput<Summary> {
 export const resolvePeriodBaseline = <Summary>({
   bounds,
   generatedAt,
-  harnessCoverage,
   previousSummary,
   recordedHistory,
 }: PeriodBaselineInput<Summary>): PeriodBaseline<Summary> => {
@@ -529,18 +513,13 @@ export const resolvePeriodBaseline = <Summary>({
   if (window === null || bounds.from === null) {
     return { kind: 'full-range' };
   }
-  const startsAfterWindow = (first: Date): boolean => first.getTime() > window.from.getTime();
-  if (recordedHistory !== null && startsAfterWindow(recordedHistory.first)) {
+  if (recordedHistory !== null && recordedHistory.first.getTime() > window.from.getTime()) {
     return {
       history: recordedHistory,
       kind: 'history-shorter-than-window',
       previousPeriod: recordedHistory.first.getTime() >= bounds.from.getTime() ? 'unrecorded' : 'partly-recorded',
       window,
     };
-  }
-  const harnesses = (harnessCoverage ?? []).filter((harness) => startsAfterWindow(harness.recordedFirst));
-  if (harnesses.length > 0) {
-    return { harnesses, kind: 'harness-not-covering-window', window };
   }
   return previousSummary === null
     ? { kind: 'no-previous-sessions', window }

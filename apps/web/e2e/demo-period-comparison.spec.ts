@@ -17,14 +17,24 @@ const PROCESSED_TOKENS_EXPLANATION = [
   'Previous period, same filters: Jun 10, 2026 · 76,600 processed tokens',
   IN_PROGRESS_CAVEAT,
 ];
+const DEFAULT_PERIOD_EXPLANATION = [
+  'Recorded history starts Apr 12, 2026.',
+  'Previous period, same filters: Apr 11, 2026 – May 11, 2026',
+];
+/** Each marker has a short name; the explanation is the content of the popover it opens. */
+const API_VALUE_MARKER = 'About the API-equivalent value comparison';
+const PROCESSED_TOKENS_MARKER = 'About the processed tokens comparison';
+/** Anchored at the start: a signed change such as "+10%" or "−20%" must not satisfy an unchanged volume. */
+const TODAY_PROCESSED_TOKENS_DELTA = /^\+166%\s+vs previous period\b/;
+const UNCHANGED_PROCESSED_TOKENS_DELTA = /^0%\s+vs previous period\b/;
 /** 25 May to 11 June: the previous window of equal length ends on 24 May and holds OpenCode's first session. */
 const SINCE_MAY_25 = '/?range=2026-05-25..2026-06-11';
 const MAX_TAB_STOPS = 60;
 /** WCAG 1.4.10 reflow: content must not need horizontal scrolling at a width of 320 CSS pixels. */
 const REFLOW_WIDTH = 320;
 /**
- * An open tooltip is portalled to the document body, outside every landmark, which the
- * best-practice `region` rule reports for any tooltip of the design system. The open state is
+ * An open popover is portalled to the document body, outside every landmark, which the
+ * best-practice `region` rule reports for any overlay of the design system. The open state is
  * therefore checked against the WCAG A and AA rules; the settled page runs every default rule.
  */
 const WCAG_RULE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21aa'];
@@ -35,8 +45,20 @@ const processedTokensDeltaFor = (page: Page): Locator =>
   page.locator('[data-executive-metrics] > div').filter({ hasText: 'Processed tokens' }).locator('[data-period-delta]');
 const sessionFilterFor = (page: Page): Locator =>
   page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' });
+const markerFor = (scope: Locator, name: string): Locator => scope.getByRole('button', { exact: true, name });
+const explanationFor = (page: Page, name: string): Locator => page.getByRole('dialog', { exact: true, name });
 /** Each line of an open explanation, in order. */
-const tooltipLinesFor = (page: Page): Locator => page.getByRole('tooltip').locator('[data-explanation-line]');
+const explanationLinesFor = (page: Page, name: string): Locator =>
+  explanationFor(page, name).locator('[data-explanation-line]');
+
+/** Opens an explanation from the pointer, checks every line, and closes it again with Escape. */
+const expectExplanation = async (page: Page, marker: Locator, name: string, lines: readonly string[]) => {
+  await marker.click();
+  await expect(explanationLinesFor(page, name)).toHaveText(lines);
+  await page.keyboard.press('Escape');
+  await expect(explanationFor(page, name)).toHaveCount(0);
+  await expect(marker).toBeFocused();
+};
 
 const selectPeriod = async (page: Page, name: string): Promise<void> => {
   await page.getByRole('region', { name: 'Report period' }).getByRole('button', { exact: true, name }).click();
@@ -67,19 +89,17 @@ test('compares each period with the previous one, or says why it cannot', async 
   // Default 30 days: recorded history starts inside the previous 30 days.
   await expect(comparison).toHaveAttribute('data-period-comparison', 'history-shorter-than-window');
   await expect(comparison).toContainText(PARTLY_RECORDED);
-  await expect(comparison.getByRole('button')).toHaveAccessibleName(
-    'Recorded history starts Apr 12, 2026.\nPrevious period, same filters: Apr 11, 2026 – May 11, 2026',
-  );
+  await expectExplanation(page, markerFor(comparison, API_VALUE_MARKER), API_VALUE_MARKER, DEFAULT_PERIOD_EXPLANATION);
   await expect(delta).toHaveCount(0);
 
   await selectPeriod(page, 'Today');
   await expect(comparison).toHaveAttribute('data-period-comparison', 'change');
   await expect(comparison).toContainText(TODAY_API_VALUE_STATEMENT);
   await expect(comparison.locator('[data-period-comparison-caveat]')).toHaveText(IN_PROGRESS_CAVEAT);
-  await expect(comparison.getByRole('button')).toHaveAccessibleName(
+  await expectExplanation(page, markerFor(comparison, API_VALUE_MARKER), API_VALUE_MARKER, [
     'Previous period, same filters: Jun 10, 2026 · $0.17 API-equivalent value',
-  );
-  await expect(delta).toContainText('+166% vs previous period');
+  ]);
+  await expect(delta).toHaveText(TODAY_PROCESSED_TOKENS_DELTA);
   await expect(page.locator('[data-period-delta]')).toHaveCount(1);
 
   // The comparison follows the filter set: this title only matches the session of today. Recorded
@@ -117,65 +137,89 @@ test('judges what was recorded from the harness history, never from the first ma
   await openOverview(page, `${SINCE_MAY_25}&q=OpenCode`);
   await expect(comparison).toHaveAttribute('data-period-comparison', 'zero-baseline');
   await expect(comparison).toContainText('No percentage: the previous period has no API-equivalent value.');
-  await expect(processedTokensDeltaFor(page)).toContainText('0% vs previous period');
+  await expect(processedTokensDeltaFor(page)).toHaveText(UNCHANGED_PROCESSED_TOKENS_DELTA);
 
   // Under the OpenCode harness filter, OpenCode's own history decides, and it starts in that window.
   await openOverview(page, `${SINCE_MAY_25}&harness=OpenCode`);
   await expect(comparison).toHaveAttribute('data-period-comparison', 'history-shorter-than-window');
   await expect(comparison).toContainText(PARTLY_RECORDED);
-  await expect(comparison.getByRole('button')).toHaveAccessibleName(
-    'Recorded OpenCode history starts May 24, 2026.\nPrevious period, same filters: May 07, 2026 – May 24, 2026',
-  );
+  await expectExplanation(page, markerFor(comparison, API_VALUE_MARKER), API_VALUE_MARKER, [
+    'Recorded OpenCode history starts May 24, 2026.',
+    'Previous period, same filters: May 07, 2026 – May 24, 2026',
+  ]);
   await expect(processedTokensDeltaFor(page)).toHaveCount(0);
 });
 
 test('explains the processed-token delta to keyboard, pointer and assistive technology alike', async ({ page }) => {
   await openOverview(page);
   await selectPeriod(page, 'Today');
-  const marker = processedTokensDeltaFor(page).getByRole('button');
-  const tooltip = page.getByRole('tooltip');
+  const marker = markerFor(processedTokensDeltaFor(page), PROCESSED_TOKENS_MARKER);
+  const explanation = explanationFor(page, PROCESSED_TOKENS_MARKER);
 
-  await expect(marker).toHaveAccessibleName(PROCESSED_TOKENS_EXPLANATION.join('\n'));
+  // A short name: the explanation is announced once, as the content of the popover, not as the name.
+  await expect(marker).toHaveAccessibleName(PROCESSED_TOKENS_MARKER);
+  await expect(marker).toHaveAttribute('aria-haspopup', 'dialog');
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await page.getByRole('region', { name: 'Report period' }).getByRole('button', { exact: true, name: 'Today' }).focus();
   await tabTo(page, marker);
-  await expect(tooltipLinesFor(page)).toHaveText(PROCESSED_TOKENS_EXPLANATION);
+  await expect(explanation).toHaveCount(0);
+  await page.keyboard.press('Enter');
+  await expect(explanationLinesFor(page, PROCESSED_TOKENS_MARKER)).toHaveText(PROCESSED_TOKENS_EXPLANATION);
   expect((await new AxeBuilder({ page }).withTags(WCAG_RULE_TAGS).analyze()).violations).toEqual([]);
   await page.keyboard.press('Escape');
-  await expect(tooltip).toHaveCount(0);
+  await expect(explanation).toHaveCount(0);
+  await expect(marker).toBeFocused();
 
-  await heroFor(page).locator('strong').first().hover();
-  await marker.hover();
-  await expect(tooltipLinesFor(page)).toHaveText(PROCESSED_TOKENS_EXPLANATION);
+  await marker.click();
+  await expect(explanationLinesFor(page, PROCESSED_TOKENS_MARKER)).toHaveText(PROCESSED_TOKENS_EXPLANATION);
+  await heroFor(page).locator('strong').first().click();
+  await expect(explanation).toHaveCount(0);
+});
+
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true });
+
+  test('opens the explanation with a tap', async ({ page }) => {
+    await openOverview(page);
+    await selectPeriod(page, 'Today');
+    const marker = markerFor(processedTokensDeltaFor(page), PROCESSED_TOKENS_MARKER);
+
+    await marker.tap();
+    await expect(explanationLinesFor(page, PROCESSED_TOKENS_MARKER)).toHaveText(PROCESSED_TOKENS_EXPLANATION);
+  });
 });
 
 test('keeps every explanation within a 320 px viewport', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: REFLOW_WIDTH });
-  const expectWithinViewport = async (marker: Locator, lines: readonly string[]): Promise<void> => {
-    // A scroll closes an open tooltip, so the marker is brought into view and left to settle before
-    // the pointer opens it; the keyboard path is covered above.
+  const expectWithinViewport = async (marker: Locator, name: string, lines: readonly string[]): Promise<void> => {
     await marker.scrollIntoViewIfNeeded();
     await settleAnimations(page);
-    await marker.hover();
-    await expect(tooltipLinesFor(page)).toHaveText(lines);
-    const box = await page.getByRole('tooltip').boundingBox();
+    await marker.click();
+    await expect(explanationLinesFor(page, name)).toHaveText(lines);
+    await settleAnimations(page);
+    const box = await explanationFor(page, name).boundingBox();
     expect(box).not.toBeNull();
     expect(box?.x).toBeGreaterThanOrEqual(0);
     expect((box?.x ?? 0) + (box?.width ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(REFLOW_WIDTH);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(REFLOW_WIDTH);
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await expect(explanationFor(page, name)).toHaveCount(0);
   };
 
   await openOverview(page);
-  await expectWithinViewport(comparisonFor(page).getByRole('button'), [
-    'Recorded history starts Apr 12, 2026.',
-    'Previous period, same filters: Apr 11, 2026 – May 11, 2026',
-  ]);
+  await expectWithinViewport(
+    markerFor(comparisonFor(page), API_VALUE_MARKER),
+    API_VALUE_MARKER,
+    DEFAULT_PERIOD_EXPLANATION,
+  );
 
   await selectPeriod(page, 'Today');
-  await expectWithinViewport(processedTokensDeltaFor(page).getByRole('button'), PROCESSED_TOKENS_EXPLANATION);
+  await expectWithinViewport(
+    markerFor(processedTokensDeltaFor(page), PROCESSED_TOKENS_MARKER),
+    PROCESSED_TOKENS_MARKER,
+    PROCESSED_TOKENS_EXPLANATION,
+  );
 });
 
 test('keeps the Overview free of accessibility violations when no percentage can be shown', async ({ page }) => {

@@ -120,13 +120,6 @@ const explain = (outcome: MetricPeriodComparison, copy: PeriodComparisonMetricCo
       return outcome.previousPeriod === 'unrecorded'
         ? withoutPercentage(NO_PREVIOUS_PERIOD, [historyStart(outcome.history)])
         : withoutPercentage(PARTLY_RECORDED, [historyStart(outcome.history), previousPeriod(outcome.window)]);
-    case 'harness-not-covering-window':
-      return withoutPercentage(PARTLY_RECORDED, [
-        ...outcome.harnesses.map(({ label, recordedFirst }) =>
-          historyStart({ first: recordedFirst, limitedToHarnesses: [label] }),
-        ),
-        previousPeriod(outcome.window),
-      ]);
     case 'no-previous-sessions':
       return withoutPercentage('No sessions exist in the previous period.', [previousPeriod(outcome.window)]);
     default: {

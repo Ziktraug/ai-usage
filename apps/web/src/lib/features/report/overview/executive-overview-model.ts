@@ -292,9 +292,8 @@ export const buildExecutiveOverviewModel = ({
   totalSessionCount,
 }: ExecutiveOverviewModelInput): ExecutiveOverviewModel => {
   // One baseline for every metric: the Overview result's previous summary is the same aggregation
-  // over the previous window under the same filters. The contract carries no per-harness start of
-  // history, so harness coverage cannot be judged here.
-  const baseline = resolvePeriodBaseline({ ...comparisonPeriod, harnessCoverage: null, previousSummary });
+  // over the previous window under the same filters.
+  const baseline = resolvePeriodBaseline({ ...comparisonPeriod, previousSummary });
   const apiValueComparison = presentPeriodComparison(
     comparePeriodMetric(baseline, summary, totalApiValueReading, periodInProgress),
     API_VALUE_COMPARISON_COPY,

@@ -182,21 +182,4 @@ describe('period comparison presentation', () => {
       `Recorded history of Codex, Claude, and Cursor starts ${fmtDateOnly(first)}.`,
     );
   });
-
-  test('names each harness that does not cover the previous period', () => {
-    const claude = { label: 'Claude Code', recordedFirst: new Date(2026, 5, 2, 9) };
-    const cursor = { label: 'Cursor', recordedFirst: new Date(2026, 5, 8, 9) };
-    const presentation = presentPeriodComparison(
-      { harnesses: [claude, cursor], kind: 'harness-not-covering-window', window },
-      apiValue,
-    );
-
-    expect(presentation.figure).toBeNull();
-    expect(presentation.statement).toBe('No percentage: the previous period is only partly recorded.');
-    expect(presentation.explanation).toEqual([
-      `Recorded Claude Code history starts ${fmtDateOnly(claude.recordedFirst)}.`,
-      `Recorded Cursor history starts ${fmtDateOnly(cursor.recordedFirst)}.`,
-      previousPeriod,
-    ]);
-  });
 });

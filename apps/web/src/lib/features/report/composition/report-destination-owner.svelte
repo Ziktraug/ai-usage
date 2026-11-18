@@ -2,6 +2,7 @@
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { dev } from '$app/env';
   import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import type { DashboardSearch } from '../../../../dashboard-search';
@@ -226,7 +227,12 @@
     sessionClient={runtime.sessionClient}
     warnings={model.warnings}
   />
-{:else if mode !== 'live'}
+{:else if dev && mode !== 'live'}
+  <!--
+    `dev` is SvelteKit's compile-time constant: demo and e2e run on the Vite development server, so a
+    production build drops this branch, the synthetic destination and its fixtures from the first
+    load. The report load refuses a synthetic mode in a production build before this renders.
+  -->
   <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
   <SyntheticReportDestination
     {detailRoute}

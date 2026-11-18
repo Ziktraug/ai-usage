@@ -711,7 +711,6 @@ describe('period-over-period comparison', () => {
     resolvePeriodBaseline({
       bounds: week,
       generatedAt,
-      harnessCoverage: null,
       previousSummary: summaryOf(datedRow('previous', '2026-06-01T12:00:00.000Z')),
       recordedHistory: everyHarness(new Date('2026-01-01T00:00:00.000Z')),
       ...overrides,
@@ -844,31 +843,6 @@ describe('period-over-period comparison', () => {
       const history = { first: new Date('2026-06-01T12:00:00.000Z'), limitedToHarnesses: ['Codex'] };
 
       expect(baselineFor({ recordedHistory: history })).toMatchObject({ history, previousPeriod: 'partly-recorded' });
-    });
-
-    test('names every harness whose history starts after the previous window', () => {
-      const covered = { label: 'Codex', recordedFirst: new Date('2026-01-01T00:00:00.000Z') };
-      const late = { label: 'Claude Code', recordedFirst: new Date('2026-06-02T09:00:00.000Z') };
-      const later = { label: 'Cursor', recordedFirst: new Date('2026-06-08T09:00:00.000Z') };
-
-      expect(baselineFor({ harnessCoverage: [covered, late, later] })).toEqual({
-        harnesses: [late, later],
-        kind: 'harness-not-covering-window',
-        window: weekBefore,
-      });
-      expect(baselineFor({ harnessCoverage: [covered] }).kind).toBe('available');
-      expect(baselineFor({ harnessCoverage: [] }).kind).toBe('available');
-    });
-
-    test('reports short history before a late harness, because it explains every harness at once', () => {
-      const recordedFirst = new Date('2026-06-01T12:00:00.000Z');
-
-      expect(
-        baselineFor({
-          harnessCoverage: [{ label: 'Codex', recordedFirst }],
-          recordedHistory: everyHarness(recordedFirst),
-        }).kind,
-      ).toBe('history-shorter-than-window');
     });
 
     test('has no sessions when history covers the previous window but nothing matched in it', () => {
@@ -1026,7 +1000,6 @@ describe('period-over-period comparison', () => {
       baselineFor({ bounds: { from: null, to: null } }),
       baselineFor({ previousSummary: null, recordedHistory: everyHarness(new Date('2026-06-05T08:00:00.000Z')) }),
       baselineFor({ recordedHistory: everyHarness(new Date('2026-06-01T12:00:00.000Z')) }),
-      baselineFor({ harnessCoverage: [{ label: 'Cursor', recordedFirst: new Date('2026-06-02T09:00:00.000Z') }] }),
       baselineFor({ previousSummary: null }),
     ])('carries the missing baseline through unchanged: $kind', (baseline) => {
       expect<unknown>(comparePeriodMetric(baseline, current, processedTokensReading, false)).toBe(baseline);
@@ -1045,7 +1018,6 @@ describe('period-over-period comparison', () => {
         resolvePeriodBaseline({
           bounds: week,
           generatedAt,
-          harnessCoverage: null,
           previousSummary: buildPreviousPeriodSummary(filtered, week, generatedAt),
           recordedHistory: everyHarness(new Date('2026-01-01T00:00:00.000Z')),
         }),

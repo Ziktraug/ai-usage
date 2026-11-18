@@ -54,6 +54,7 @@ import {
   ReportBootstrapUnavailableError,
   reportPageDataFor,
   requireAvailableReportBootstrap,
+  SyntheticReportUnavailableError,
 } from './report-bootstrap';
 
 const liveOptions = () => ({
@@ -380,11 +381,29 @@ describe('report bootstrap', () => {
   });
 
   it.each(['demo', 'e2e'] as const)('selects the %s payload without acquiring server state', (mode) => {
-    const data = reportPageDataFor(mode, undefined);
+    const data = reportPageDataFor(mode, undefined, { developmentServer: true });
 
     expect(data.mode).toBe(mode);
     expect(data.queryState.dehydratedState.queries).toHaveLength(0);
     expect(data.mode === 'live' ? undefined : data.payload.rows.length).toBeGreaterThan(0);
+  });
+
+  it.each(['demo', 'e2e'] as const)(
+    'refuses the %s report in a production build, which compiles the synthetic destination out',
+    (mode) => {
+      expect(() => reportPageDataFor(mode, undefined, { developmentServer: false })).toThrow(
+        SyntheticReportUnavailableError,
+      );
+      expect(() => reportPageDataFor(mode, undefined, { developmentServer: false })).toThrow(
+        `The ${mode} report runs on the development server only; a production build serves the live report.`,
+      );
+    },
+  );
+
+  it('serves the live report from a production build', () => {
+    const queryState = deferredLiveReportQueryState();
+
+    expect(reportPageDataFor('live', queryState, { developmentServer: false })).toEqual({ mode: 'live', queryState });
   });
 
   it('represents SPA entry as an empty hydration delta for the persistent browser cache', () => {
@@ -394,7 +413,9 @@ describe('report bootstrap', () => {
   });
 
   it('refuses live page data the server never acquired', () => {
-    expect(() => reportPageDataFor('live', undefined)).toThrow(ReportBootstrapUnavailableError);
+    expect(() => reportPageDataFor('live', undefined, { developmentServer: false })).toThrow(
+      ReportBootstrapUnavailableError,
+    );
   });
 
   it('awaits a successful compatible publication and dehydrates the exact current alias key', async () => {

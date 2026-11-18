@@ -23,8 +23,12 @@ const HARNESS_GROUP_SHARE_PATTERN = />([\d.]+%|—)<\/span> <strong/u;
 const HARNESS_GROUP_VALUE_PATTERN = /<strong[^>]*>([^<]+)<\/strong>/u;
 const PROCESSED_TOKENS_DELTA_PATTERN = /<dt[^>]*>Processed tokens<\/dt>[\s\S]*?<dd[^>]*data-period-delta[\s\S]*?<\/dd>/;
 const SIGNED_DELTA_PATTERN = />\s*[+−][\d.]+%\s+vs previous period\s*</;
-/** The marker names the previous window and its value, and says that it shares the filters. */
-const DELTA_MARKER_LABEL_PATTERN = /aria-label="Previous period, same filters: [^"]+ · [^"]+ processed tokens\n/;
+/**
+ * Each marker opens its explanation as a popover, so its name stays short and the explanation is not
+ * announced twice; the explanation lines themselves are checked in demo-period-comparison.spec.ts.
+ */
+const PRIMARY_MARKER_LABEL = 'aria-label="About the API-equivalent value comparison"';
+const DELTA_MARKER_LABEL = 'aria-label="About the processed tokens comparison"';
 const SINGLE_SESSION_FIRST_PATTERN = / — 1 session · /;
 const SESSION_FIRST_PATTERN = / — [\d,]+ sessions? · /;
 
@@ -139,14 +143,18 @@ describe('decision-first Overview Svelte surfaces', () => {
 
     expect(todayBody).toContain('data-period-comparison="change"');
     expect(delta).toMatch(SIGNED_DELTA_PATTERN);
-    expect(delta).toMatch(DELTA_MARKER_LABEL_PATTERN);
-    expect(delta).toContain('\nThis period is still in progress, so the comparison is provisional."');
+    expect(delta).toContain(DELTA_MARKER_LABEL);
+    expect(delta).toContain('aria-haspopup="dialog"');
     expect(todayBody.match(/data-period-delta/g)).toHaveLength(1);
+    // Closed explanations are not in the document: only an opened popover holds them.
+    expect(todayBody).not.toContain('Previous period, same filters:');
+    expect(todayBody).not.toContain('data-explanation-line');
 
     // The demonstration history starts inside the window that precedes the default 30 days.
     expect(thirtyDayBody).toContain('data-period-comparison="history-shorter-than-window"');
     expect(thirtyDayBody).toContain('No percentage: the previous period is only partly recorded.');
-    expect(thirtyDayBody).toContain('aria-label="Recorded history starts ');
+    expect(thirtyDayBody).toContain(PRIMARY_MARKER_LABEL);
+    expect(thirtyDayBody).not.toContain(DELTA_MARKER_LABEL);
     expect(thirtyDayBody).not.toContain('data-period-delta');
     expect(thirtyDayBody).not.toContain('than the previous equal-length period.');
   });
@@ -174,7 +182,9 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(body).not.toContain('data-period-delta');
     expect(body).not.toContain('data-period-comparison-caveat');
     expect(body).toContain('This estimate covers work in the selected custom period.');
-    expect(body).toContain('Previous period, same filters: Apr 1');
+    // The explanation opens on demand, so its previous window is not in the document: the bounds the
+    // result on screen is judged against are checked in overview-result-scope.test.ts.
+    expect(body).toContain(PRIMARY_MARKER_LABEL);
   });
 
   test('renders the executive answer before evidence and investigation during SSR', () => {

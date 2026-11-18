@@ -62,13 +62,23 @@
   /** Balanced lines keep an explanation marker beside its sentence instead of wrapping alone below it. */
   const balancedLines = css({ textWrap: 'balance' });
   /**
-   * One explanation line in the shared tooltip, which keeps text on one line: a line wraps instead
-   * at a readable measure, and within a 320 px viewport less the tooltip padding and edge offset.
+   * The explanation opens on demand, from a pointer, a tap or the keyboard. It wraps at a readable
+   * measure, and within a 320 px viewport less its padding and the positioner's edge offset.
    */
-  const explanationLine = css({
-    display: 'block',
-    maxW: 'min(60ch, calc(100vw - 48px))',
-    whiteSpace: 'normal',
+  const explanationContent = css({
+    zIndex: 70,
+    display: 'grid',
+    gap: '4px',
+    maxW: 'min(60ch, calc(100vw - 32px))',
+    p: '10px 12px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'md',
+    bg: 'surface',
+    boxShadow: 'overlay',
+    color: 'ink',
+    fontSize: '12px',
+    lineHeight: 1.5,
+    animation: 'fadeIn 0.12s ease-out',
   });
   const insight = css({
     borderInlineStart: '3px solid token(colors.lineStrong)',
@@ -105,7 +115,7 @@
     numericDisplay,
     sectionDivider,
   } from '@ai-usage/design-system/report';
-  import { HarnessBadge, provenanceMarkerClass, Tooltip } from '@ai-usage/design-system/svelte';
+  import { HarnessBadge, Popover, provenanceMarkerClass } from '@ai-usage/design-system/svelte';
   import type { ComponentProps } from 'svelte';
   import { fmtMoney } from '../../../foundation/presentation/format';
   import ActivityExplorer from '../range/activity-explorer.svelte';
@@ -153,23 +163,29 @@
   };
 </script>
 
+<!--
+  A popover rather than a tooltip: a tap opens it as well as a pointer or Enter, and Escape closes it.
+  The trigger carries a short name; the explanation is the content of the dialog it opens.
+-->
 {#snippet explanationMarker(
   lines: readonly string[],
+  label: string,
 )}
   {#if lines.length > 0}
-    {@const explanation = lines.join('\n')}
-    {#snippet explanationLines()}
-      {#each lines as line, index (index)}
-        <span class={explanationLine} data-explanation-line>{line}</span>
-      {/each}
-    {/snippet}
-    <Tooltip content={explanationLines}>
-      {#snippet trigger(
-        triggerProps,
-      )}
-        <button {...triggerProps} aria-label={explanation} class={provenanceMarkerClass} type="button">i</button>
+    <Popover
+      contentAriaLabel={label}
+      contentClass={explanationContent}
+      triggerAriaLabel={label}
+      triggerClass={provenanceMarkerClass}
+      triggerTitle={label}
+    >
+      {#snippet trigger()}
+        <span aria-hidden="true">i</span>
       {/snippet}
-    </Tooltip>
+      {#each lines as line, index (index)}
+        <span data-explanation-line>{line}</span>
+      {/each}
+    </Popover>
   {/if}
 {/snippet}
 
@@ -201,7 +217,7 @@
             data-period-comparison={primaryComparison.outcome.kind}
           >
             {primaryComparison.statement}
-            {@render explanationMarker(primaryComparison.explanation)}
+            {@render explanationMarker(primaryComparison.explanation, 'About the API-equivalent value comparison')}
             {#if primaryComparison.caveat}
               <span class={qualification} data-period-comparison-caveat>{primaryComparison.caveat}</span>
             {/if}
@@ -218,7 +234,10 @@
               <dd class={cx(executiveCaption, balancedLines)} data-period-delta>
                 {supportMetric.comparison.figure}
                 vs previous period
-                {@render explanationMarker(explanationWithCaveat(supportMetric.comparison))}
+                {@render explanationMarker(
+                  explanationWithCaveat(supportMetric.comparison),
+                  `About the ${supportMetric.label.toLowerCase()} comparison`,
+                )}
               </dd>
             {/if}
             {#if supportMetric.qualification}

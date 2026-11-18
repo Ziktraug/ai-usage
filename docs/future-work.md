@@ -65,15 +65,20 @@ over-emphasize it or build ROI/break-even features on top of it.
   alone; the first match of any other filter never reads as unrecorded history.
   Still open, each needing the Overview contract (the report-core projection and
   its SQLite twin) rather than a browser workaround: a harness whose history
-  starts after the previous window is not detected until the result carries each
-  harness's first recorded activity (the typed `harness-not-covering-window`
-  outcome exists but is never produced, and a harness filter combined with
-  another filter falls back to the history of every harness), and token metrics
-  cannot carry a partial-counter caveat until the summary counts those sessions
-  (`processedTokensReading` is always complete). A machine whose history starts
-  late has the same blind spot as a harness. Sparklines were left out: the
-  Activity timeline already shows the trend. Keep surfacing a delta only where it
-  changes a decision, with the full explanation on hover.
+  starts after the previous window is not detected, because the contract carries
+  no per-harness first recorded activity; the comparison models no such outcome
+  today, and a harness filter combined with another filter falls back to the
+  history of every harness. Token metrics cannot carry a partial-counter caveat
+  until the summary counts those sessions (`processedTokensReading` is always
+  complete). A machine whose history starts late has the same blind spot as a
+  harness. The previous window is the selection's span in milliseconds moved
+  back, as the server defines it, and is labelled with local dates; across a
+  daylight-saving change a day is not 24 hours, so the label can straddle two
+  local days (Today's previous window can read e.g. "Oct 23 – Oct 24"). Fixing it
+  means calendar-day windows in the projection and the browser alike, not a
+  browser relabel. Sparklines were left out: the Activity timeline already shows
+  the trend. Keep surfacing a delta only where it changes a decision, with the
+  full explanation on demand.
 - Universal drill-down: clicking a Rhythm day, a Model-migration band, or a
   Session-shape point applies the corresponding filter and scrolls to the session
   list. The filter bar already supports title/project/model.
