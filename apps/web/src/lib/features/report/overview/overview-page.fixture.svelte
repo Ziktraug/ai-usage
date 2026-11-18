@@ -8,6 +8,7 @@
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import ReportPeriodControl from '../range/report-period-control.svelte';
   import OverviewPage from './overview-page.svelte';
+  import { type OverviewResultScope, overviewResultScope, queriedRangeFor } from './overview-result-scope';
   import type { MachineSeriesPresenter } from './timeline-model';
 
   const openModels = (): void => undefined;
@@ -21,6 +22,7 @@
     providers = [],
     range = { mode: '30d' },
     result,
+    resultScope,
     totalSessionCount = result.summary.sessionCount,
   }: {
     activeSeriesKeys?: readonly string[];
@@ -29,10 +31,24 @@
     presentMachineSeries?: MachineSeriesPresenter;
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
     providers?: readonly ProviderStatusView[];
+    /** The selection in the URL. */
     range?: DashboardDateRangeSearch;
     result: FocusedOverviewResult;
+    /** What `result` answers; by default the URL selection without filters. */
+    resultScope?: OverviewResultScope;
     totalSessionCount?: number;
   } = $props();
+
+  const requestedRange = $derived(queriedRangeFor(range, new Date(result.metadata.generatedAt)));
+  const scope = $derived(
+    resultScope ??
+      overviewResultScope({
+        answered: { filters: { fields: {}, harness: [], machine: [], origin: [], query: '' }, range: requestedRange },
+        queryGeneratedAt: result.metadata.generatedAt,
+        requested: { range: requestedRange, selection: range },
+        revisionDateDomain: result.dateDomain,
+      }),
+  );
 </script>
 
 <ReportPeriodControl dateDomain={result.dateDomain} generatedAt={result.metadata.generatedAt} {range} />
@@ -55,7 +71,7 @@
   modelsHref="?tab=models"
   onOpenModels={openModels}
   {providers}
-  {range}
   {result}
+  resultScope={scope}
   {totalSessionCount}
 />

@@ -8,6 +8,7 @@ import { createServer } from 'vite';
 import { toDateInputValue } from '../../../../date-range';
 import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
+import { overviewResultScope } from './overview-result-scope';
 
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -20,6 +21,14 @@ const HERO_VALUE_PATTERN = /<strong class="[^"]*white-space_nowrap[^"]*"[^>]*sty
 /** The share `<span>` and value `<strong>` of one "API value by harness" row. */
 const HARNESS_GROUP_SHARE_PATTERN = />([\d.]+%|—)<\/span> <strong/u;
 const HARNESS_GROUP_VALUE_PATTERN = /<strong[^>]*>([^<]+)<\/strong>/u;
+const PROCESSED_TOKENS_DELTA_PATTERN = /<dt[^>]*>Processed tokens<\/dt>[\s\S]*?<dd[^>]*data-period-delta[\s\S]*?<\/dd>/;
+const SIGNED_DELTA_PATTERN = />\s*[+−][\d.]+%\s+vs previous period\s*</;
+/**
+ * Each marker opens its explanation as a popover, so its name stays short and the explanation is not
+ * announced twice; the explanation lines themselves are checked in demo-period-comparison.spec.ts.
+ */
+const PRIMARY_MARKER_LABEL = 'aria-label="About the API-equivalent value comparison"';
+const DELTA_MARKER_LABEL = 'aria-label="About the processed tokens comparison"';
 const SINGLE_SESSION_FIRST_PATTERN = / — 1 session · /;
 const SESSION_FIRST_PATTERN = / — [\d,]+ sessions? · /;
 
@@ -121,6 +130,61 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(todayBody).toContain('data-period-comparison-caveat');
     expect(todayBody).toContain('This period is still in progress, so the comparison is provisional.');
     expect(completeBody).not.toContain('data-period-comparison-caveat');
+  });
+
+  test('shows a processed-token delta beside its on-demand explanation only when a percentage exists', () => {
+    const today = focusedOverview({
+      from: '2026-06-11T00:00:00.000Z',
+      to: '2026-06-11T23:59:59.999Z',
+    });
+    const todayBody = render(fixture, { props: { range: { mode: 'today' }, result: today } }).body;
+    const thirtyDayBody = render(fixture, { props: { result: focusedOverview() } }).body;
+    const delta = PROCESSED_TOKENS_DELTA_PATTERN.exec(todayBody)?.[0] ?? '';
+
+    expect(todayBody).toContain('data-period-comparison="change"');
+    expect(delta).toMatch(SIGNED_DELTA_PATTERN);
+    expect(delta).toContain(DELTA_MARKER_LABEL);
+    expect(delta).toContain('aria-haspopup="dialog"');
+    expect(todayBody.match(/data-period-delta/g)).toHaveLength(1);
+    // Closed explanations are not in the document: only an opened popover holds them.
+    expect(todayBody).not.toContain('Previous period, same filters:');
+    expect(todayBody).not.toContain('data-explanation-line');
+
+    // The demonstration history starts inside the window that precedes the default 30 days.
+    expect(thirtyDayBody).toContain('data-period-comparison="history-shorter-than-window"');
+    expect(thirtyDayBody).toContain('No percentage: the previous period is only partly recorded.');
+    expect(thirtyDayBody).toContain(PRIMARY_MARKER_LABEL);
+    expect(thirtyDayBody).not.toContain(DELTA_MARKER_LABEL);
+    expect(thirtyDayBody).not.toContain('data-period-delta');
+    expect(thirtyDayBody).not.toContain('than the previous equal-length period.');
+  });
+
+  test('judges the result on screen, not the period the URL requests while that period loads', () => {
+    // The URL already asks for Today, whose comparison would show a percentage, while the result of
+    // the earlier selection is still the one on screen.
+    const earlierRange = { from: '2026-05-12T00:00:00.000Z', to: '2026-06-11T23:59:59.999Z' };
+    const earlier = focusedOverview(earlierRange);
+    const requestedToday = { from: '2026-06-11T00:00:00.000Z', to: '2026-06-11T23:59:59.999Z' };
+    const body = render(fixture, {
+      props: {
+        range: { mode: 'today' },
+        result: earlier,
+        resultScope: overviewResultScope({
+          answered: { filters: { fields: {}, harness: [], machine: [], origin: [], query: '' }, range: earlierRange },
+          queryGeneratedAt: earlier.metadata.generatedAt,
+          requested: { range: requestedToday, selection: { mode: 'today' } },
+          revisionDateDomain: earlier.dateDomain,
+        }),
+      },
+    }).body;
+
+    expect(body).toContain('data-period-comparison="history-shorter-than-window"');
+    expect(body).not.toContain('data-period-delta');
+    expect(body).not.toContain('data-period-comparison-caveat');
+    expect(body).toContain('This estimate covers work in the selected custom period.');
+    // The explanation opens on demand, so its previous window is not in the document: the bounds the
+    // result on screen is judged against are checked in overview-result-scope.test.ts.
+    expect(body).toContain(PRIMARY_MARKER_LABEL);
   });
 
   test('renders the executive answer before evidence and investigation during SSR', () => {

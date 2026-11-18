@@ -9,6 +9,7 @@ import {
   buildExecutiveOverviewModel,
   EXECUTIVE_INSIGHT_MINIMUM_CHANGE_PERCENT,
   EXECUTIVE_INSIGHT_MINIMUM_CONCENTRATION_PERCENT,
+  type ExecutiveComparisonPeriod,
   type ExecutiveOverviewModelInput,
 } from './executive-overview-model';
 
@@ -67,7 +68,16 @@ const executive: FocusedExecutiveOverview = {
   models: [executiveGroup('gpt-5.4', 50, 1_000_000), executiveGroup('claude-opus-4-6', 30, 500_000)],
 };
 
+/** A 30-day selection whose previous window, 11 April to 11 May, lies well inside recorded history. */
+const thirtyDays: ExecutiveComparisonPeriod = {
+  bounds: { from: new Date('2026-05-12T00:00:00.000Z'), to: null },
+  generatedAt: new Date('2026-06-11T12:00:00.000Z'),
+  recordedHistory: { first: new Date('2026-01-05T09:00:00.000Z'), limitedToHarnesses: [] },
+};
+const fullRange: ExecutiveComparisonPeriod = { ...thirtyDays, bounds: { from: null, to: null } };
+
 const modelInput = (overrides: Partial<ExecutiveOverviewModelInput> = {}): ExecutiveOverviewModelInput => ({
+  comparisonPeriod: thirtyDays,
   executive,
   periodInProgress: false,
   previousSummary: summary({ totalCost: 50 }),
@@ -90,9 +100,9 @@ describe('executive Overview model', () => {
     expect(model.primary.periodScope).toBe('in the last 30 days');
     expect(model.primary.comparison).toMatchObject({
       caveat: null,
-      delta: { pct: 100 },
-      explanation: null,
-      state: 'available',
+      figure: '+100%',
+      outcome: { current: 100, kind: 'change', percent: 100, previous: 50 },
+      statement: '100% higher than the previous equal-length period.',
     });
     expect(model.supportMetrics.map(({ key }) => key)).toEqual([
       'processed-tokens',
@@ -102,6 +112,10 @@ describe('executive Overview model', () => {
     ]);
     expect(model.supportMetrics).toEqual([
       {
+        comparison: expect.objectContaining({
+          figure: '0%',
+          statement: 'Unchanged from the previous equal-length period.',
+        }),
         detail: '110 processed tokens',
         key: 'processed-tokens',
         label: 'Processed tokens',
@@ -181,11 +195,11 @@ describe('executive Overview model', () => {
       qualification: expect.stringContaining('400'),
       value: '2 / 3',
     });
-    expect(model.primary.comparison).toEqual({
+    expect(model.primary.comparison).toMatchObject({
       caveat: null,
-      delta: null,
-      explanation: null,
-      state: 'available',
+      figure: null,
+      outcome: { kind: 'partial-measurement' },
+      statement: 'No percentage: the API-equivalent value is only partly priced.',
     });
     expect(model.insight).toBeNull();
   });
@@ -197,23 +211,49 @@ describe('executive Overview model', () => {
     });
     const model = buildExecutiveOverviewModel(modelInput({ previousSummary }));
 
-    expect(model.primary.comparison).toEqual({
+    expect(model.primary.comparison).toMatchObject({
       caveat: null,
-      delta: null,
-      explanation: null,
-      state: 'available',
+      figure: null,
+      outcome: { kind: 'partial-measurement' },
+      statement: 'No percentage: the API-equivalent value is only partly priced.',
     });
+    expect(model.insight).toBeNull();
+  });
+
+  test('keeps the processed-token comparison when only the API value is partly priced', () => {
+    const model = buildExecutiveOverviewModel(
+      modelInput({
+        previousSummary: summary({
+          cacheRead: 30,
+          priceMeasurement: apiPriceMeasurement({ costKnown: false, freshTokens: 200, knownCost: 50 }),
+          totalCost: 50,
+        }),
+      }),
+    );
+    const processedTokens = model.supportMetrics.find(({ key }) => key === 'processed-tokens');
+
+    expect(model.primary.comparison.figure).toBeNull();
+    expect(processedTokens?.comparison).toMatchObject({
+      figure: '+38%',
+      outcome: { current: 110, kind: 'change', previous: 80 },
+    });
+    expect(processedTokens?.comparison?.explanation[0]).toContain('80 processed tokens');
   });
 
   test('uses the established all-time boundary instead of fabricating a comparison', () => {
-    const model = buildExecutiveOverviewModel(modelInput({ previousSummary: null, rangeMode: 'all' }));
+    const model = buildExecutiveOverviewModel(
+      modelInput({ comparisonPeriod: fullRange, previousSummary: null, rangeMode: 'all' }),
+    );
 
     expect(model.primary.comparison).toEqual({
       caveat: null,
-      delta: null,
-      explanation: 'No previous period exists before the full recorded range.',
-      state: 'full-range',
+      explanation: [],
+      figure: null,
+      outcome: { kind: 'full-range' },
+      relation: null,
+      statement: 'No previous period exists before the full recorded range.',
     });
+    expect(model.supportMetrics.find(({ key }) => key === 'processed-tokens')?.comparison?.figure).toBeNull();
     expect(model.primary.periodScope).toBe('across all recorded dates');
     expect(model.insight).toBeNull();
   });
@@ -237,41 +277,37 @@ describe('executive Overview model', () => {
     );
 
     expect(model.primary.value).toMatchObject({ label: '$0.00', status: 'exact' });
-    expect(model.primary.comparison).toEqual({
+    expect(model.primary.comparison).toMatchObject({
       caveat: null,
-      delta: null,
-      explanation: 'No sessions exist in the previous period.',
-      state: 'no-prior-data',
+      figure: null,
+      outcome: { kind: 'no-previous-sessions' },
+      statement: 'No sessions exist in the previous period.',
     });
     expect(model.insight).toBeNull();
   });
 
   test('chooses no-prior copy from the recorded boundary rather than the range mode', () => {
+    const recordedHistory = { first: new Date('2026-04-12T09:20:00.000Z'), limitedToHarnesses: [] };
     const beforeRecordedRange = buildExecutiveOverviewModel(
       modelInput({
-        comparisonBoundary: {
-          rangeFrom: new Date('2026-03-13T00:00:00.000Z'),
-          recordedFirst: '2026-04-12T09:20:00.000Z',
+        comparisonPeriod: {
+          ...thirtyDays,
+          bounds: { from: new Date('2026-03-13T00:00:00.000Z'), to: null },
+          recordedHistory,
         },
         previousSummary: null,
         rangeMode: '90d',
       }),
     );
     const emptyWindowWithinHistory = buildExecutiveOverviewModel(
-      modelInput({
-        comparisonBoundary: {
-          rangeFrom: new Date('2026-05-12T00:00:00.000Z'),
-          recordedFirst: '2026-04-12T09:20:00.000Z',
-        },
-        previousSummary: null,
-        rangeMode: '30d',
-      }),
+      modelInput({ previousSummary: null, rangeMode: '30d' }),
     );
     const customBoundary = buildExecutiveOverviewModel(
       modelInput({
-        comparisonBoundary: {
-          rangeFrom: new Date('2026-04-12T00:00:00.000Z'),
-          recordedFirst: '2026-04-12T09:20:00.000Z',
+        comparisonPeriod: {
+          ...thirtyDays,
+          bounds: { from: new Date('2026-04-12T00:00:00.000Z'), to: new Date('2026-05-11T23:59:59.999Z') },
+          recordedHistory,
         },
         previousSummary: null,
         rangeMode: 'custom',
@@ -279,25 +315,51 @@ describe('executive Overview model', () => {
     );
 
     expect(beforeRecordedRange.primary.comparison).toMatchObject({
-      explanation: 'No previous period exists before the full recorded range.',
-      state: 'full-range',
+      outcome: { kind: 'history-shorter-than-window', previousPeriod: 'unrecorded' },
+      statement: 'No previous period exists before the full recorded range.',
     });
     expect(emptyWindowWithinHistory.primary.comparison).toMatchObject({
-      explanation: 'No sessions exist in the previous period.',
-      state: 'no-prior-data',
+      outcome: { kind: 'no-previous-sessions' },
+      statement: 'No sessions exist in the previous period.',
     });
-    expect(customBoundary.primary.comparison).toMatchObject({ state: 'full-range' });
+    expect(customBoundary.primary.comparison.outcome).toMatchObject({
+      kind: 'history-shorter-than-window',
+      previousPeriod: 'unrecorded',
+    });
+  });
+
+  test('shows no percentage or insight when recorded history starts inside the previous period', () => {
+    const model = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonPeriod: {
+          ...thirtyDays,
+          recordedHistory: { first: new Date('2026-04-12T09:20:00.000Z'), limitedToHarnesses: [] },
+        },
+      }),
+    );
+    const processedTokens = model.supportMetrics.find(({ key }) => key === 'processed-tokens');
+
+    expect(model.primary.comparison).toMatchObject({
+      caveat: null,
+      figure: null,
+      outcome: { kind: 'history-shorter-than-window', previousPeriod: 'partly-recorded' },
+      statement: 'No percentage: the previous period is only partly recorded.',
+    });
+    expect(processedTokens?.comparison?.figure).toBeNull();
+    expect(processedTokens?.comparison?.outcome).toBe(model.primary.comparison.outcome);
+    expect(model.insight).toBeNull();
   });
 
   test('qualifies comparisons while the selected period is still in progress', () => {
     const caveat = 'This period is still in progress, so the comparison is provisional.';
     const inProgress = buildExecutiveOverviewModel(modelInput({ periodInProgress: true }));
     const withoutDelta = buildExecutiveOverviewModel(
-      modelInput({ periodInProgress: true, previousSummary: null, rangeMode: 'all' }),
+      modelInput({ comparisonPeriod: fullRange, periodInProgress: true, previousSummary: null, rangeMode: 'all' }),
     );
     const complete = buildExecutiveOverviewModel(modelInput({ periodInProgress: false }));
 
     expect(inProgress.primary.comparison.caveat).toBe(caveat);
+    expect(inProgress.primary.comparison.outcome).toMatchObject({ kind: 'change', provisional: true });
     expect(inProgress.insight?.sentences[0]).toBe(
       'API-equivalent value is 100% higher than the previous equal-length period (this period is still in progress).',
     );

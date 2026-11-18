@@ -22,9 +22,9 @@ import { dashboardSearchCodec } from '../../shell/navigation';
 import { reportUnexpectedPrefetchFailure } from '../../shell/prefetch-errors';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
 import { campaignSessionSelectionQuery } from '../actions/campaign-session-controls-binding';
-import { ReportBootstrapUnavailableError } from './report-errors';
+import { ReportBootstrapUnavailableError, SyntheticReportUnavailableError } from './report-errors';
 
-export { ReportBootstrapUnavailableError } from './report-errors';
+export { ReportBootstrapUnavailableError, SyntheticReportUnavailableError } from './report-errors';
 
 import { initialReportTimelineFor, reportDestinationForSearch } from '../composition/report-search';
 
@@ -100,13 +100,19 @@ export const prefetchReportRoute = async (
 /**
  * Assembles the page data the report component tree consumes. Live mode adopts the state the server
  * `load` already acquired; synthetic modes keep their payload client-owned so demo and e2e runs are
- * served from the bundle rather than inlined into every document, and acquire nothing.
+ * served from the bundle rather than inlined into every document, and acquire nothing. Synthetic
+ * modes exist on the development server only: `developmentServer` is SvelteKit's compile-time `dev`,
+ * and a production build refuses them rather than render a destination it compiled out.
  */
 export const reportPageDataFor = (
   mode: RuntimeMode,
   serverQueryState: WebQueryHydrationState | undefined,
+  { developmentServer }: { readonly developmentServer: boolean },
 ): ReportPageData => {
   if (mode !== 'live') {
+    if (!developmentServer) {
+      throw new SyntheticReportUnavailableError(mode);
+    }
     return { mode, payload: syntheticPayload, queryState: deferredLiveReportQueryState() };
   }
   if (serverQueryState === undefined) {

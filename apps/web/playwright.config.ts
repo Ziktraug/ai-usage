@@ -19,6 +19,7 @@ export default defineConfig({
   testDir: './e2e',
   testIgnore: [
     'demo-isolation.spec.ts',
+    'demo-period-comparison.spec.ts',
     'production-report.spec.ts',
     'work-attempt-production.spec.ts',
     'work-codex-production.spec.ts',

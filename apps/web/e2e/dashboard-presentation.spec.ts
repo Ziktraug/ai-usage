@@ -13,6 +13,7 @@ import {
   waitForHydratedNavigation,
   waitForHydratedReport,
 } from './browser-test';
+import { settleAnimations } from './settle-animations';
 
 const EXECUTIVE_SUPPORT_METRIC_COLUMNS = 2;
 /** Panda's `md` breakpoint, where `[data-model-analysis-table]` replaces the card list. */
@@ -272,6 +273,9 @@ test('explains unavailable source freshness without replacing its compact pill',
 
   const freshnessPill = page.getByText('Freshness unavailable', { exact: true });
   await expect(freshnessPill).toBeVisible();
+  // While the route transition runs, the document root takes the pointer: the hover is retried with
+  // a forced scroll, and the tooltip closes on that scroll. Hover only once the transition is over.
+  await settleAnimations(page);
   await freshnessPill.hover();
   await expect(
     page.getByText('No source freshness observation is available for this report revision.', { exact: true }),

@@ -56,10 +56,29 @@ over-emphasize it or build ROI/break-even features on top of it.
 - "Wrapped"-style shareable report: a celebratory PNG/PDF recap of a period.
   The app's thesis is "if I had to pay API rates, how impossible would it be" —
   frame the recap around that, not ROI optimization.
-- Filter-aware period-over-period comparison: deltas + sparklines derived from the
-  same aggregation over `[t-Δ, t]` in `dashboard-model.ts`, computed against the
-  *current* filter set. Must respect data hierarchy — surface a delta only where it
-  changes a decision; push the full explanation to hover/tooltip.
+- Filter-aware period-over-period comparison exists for the API value and
+  processed tokens: the same aggregation over the previous equal-length window
+  under the *current* filter set (`dashboard-model.ts`), with a typed reason
+  whenever no percentage can be shown. Whether the previous window was recorded
+  is judged from the revision's unfiltered history (the bootstrap support's date
+  domain), or from the filtered harness's own history under a harness filter
+  alone; the first match of any other filter never reads as unrecorded history.
+  Still open, each needing the Overview contract (the report-core projection and
+  its SQLite twin) rather than a browser workaround: a harness whose history
+  starts after the previous window is not detected, because the contract carries
+  no per-harness first recorded activity; the comparison models no such outcome
+  today, and a harness filter combined with another filter falls back to the
+  history of every harness. Token metrics cannot carry a partial-counter caveat
+  until the summary counts those sessions (`processedTokensReading` is always
+  complete). A machine whose history starts late has the same blind spot as a
+  harness. The previous window is the selection's span in milliseconds moved
+  back, as the server defines it, and is labelled with local dates; across a
+  daylight-saving change a day is not 24 hours, so the label can straddle two
+  local days (Today's previous window can read e.g. "Oct 23 – Oct 24"). Fixing it
+  means calendar-day windows in the projection and the browser alike, not a
+  browser relabel. Sparklines were left out: the Activity timeline already shows
+  the trend. Keep surfacing a delta only where it changes a decision, with the
+  full explanation on demand.
 - Universal drill-down: clicking a Rhythm day, a Model-migration band, or a
   Session-shape point applies the corresponding filter and scrolls to the session
   list. The filter bar already supports title/project/model.

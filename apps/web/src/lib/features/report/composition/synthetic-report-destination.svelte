@@ -65,6 +65,7 @@
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
+  import { overviewResultScope } from '../overview/overview-result-scope';
   import {
     reportRangeProjection,
     resolveTimelineGranularity,
@@ -647,8 +648,14 @@
         onSelectTimeCell: (cell) => navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
         presentSessionItem,
         providers: mode === 'e2e' ? providers : [],
-        range: renderedSearch.range,
         result: overview,
+        // The rendered search is the one the in-memory projection answers, so both scopes agree.
+        resultScope: overviewResultScope({
+          answered: { filters: focusedQuery.filters, range: focusedQuery.range },
+          queryGeneratedAt: reportSupport.generatedAt,
+          requested: { range: focusedQuery.range, selection: renderedSearch.range },
+          revisionDateDomain: syntheticDateDomain,
+        }),
         totalSessionCount,
       }
     : null}

@@ -545,6 +545,30 @@ describe('focused report query contracts', () => {
     expect(result.view.previousSummary).toMatchObject({ sessionCount: 1, totalCost: 2 });
   });
 
+  test('aggregates the previous period under the same filters as the selected period', () => {
+    const lastTwoDays = { from: '2026-07-03T00:00:00.000Z', to: '2026-07-04T23:59:59.999Z' };
+    const overviewFor = (filters: Partial<FocusedOverviewRequest['query']['filters']>) =>
+      projectFocusedOverview(rows, support, {
+        ...overviewRequest,
+        query: {
+          ...overviewRequest.query,
+          filters: { ...overviewRequest.query.filters, ...filters },
+          range: lastTwoDays,
+        },
+      });
+
+    const unfiltered = overviewFor({});
+    const codexOnly = overviewFor({ harness: ['Codex'] });
+    const matchingOnlyTheSelectedPeriod = overviewFor({ query: 'three' });
+
+    expect(unfiltered.summary).toMatchObject({ sessionCount: 2, totalCost: 7 });
+    expect(unfiltered.view.previousSummary).toMatchObject({ sessionCount: 2, totalCost: 3 });
+    expect(codexOnly.summary).toMatchObject({ sessionCount: 1, totalCost: 3 });
+    expect(codexOnly.view.previousSummary).toMatchObject({ sessionCount: 1, totalCost: 1 });
+    expect(matchingOnlyTheSelectedPeriod.summary.sessionCount).toBe(1);
+    expect(matchingOnlyTheSelectedPeriod.view.previousSummary).toBeNull();
+  });
+
   test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
     const request = {
       ...overviewRequest,

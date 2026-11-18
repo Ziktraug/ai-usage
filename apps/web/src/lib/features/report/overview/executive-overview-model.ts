@@ -5,19 +5,25 @@ import type {
 } from '@ai-usage/report-core/focused-report-query';
 import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import {
-  type MetricComparisonBoundary,
-  type MetricComparisonState,
-  type MetricDelta,
-  metricComparisonMessage,
-  metricComparisonStateFor,
-} from '../../../../dashboard-metric-model';
-import type { DateRangeMode } from '../../../../date-range';
+  comparePeriodMetric,
+  type MetricPeriodComparison,
+  type PeriodRecordedHistory,
+  processedTokensReading,
+  resolvePeriodBaseline,
+  totalApiValueReading,
+} from '../../../../dashboard-model';
+import type { DateBounds, DateRangeMode } from '../../../../date-range';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   type ApiValuePresentation,
   aggregateApiPriceProvenance,
   aggregateApiValuePresentation,
 } from '../../../foundation/presentation/report-value';
+import {
+  type PeriodComparisonMetricCopy,
+  type PeriodComparisonPresentation,
+  presentPeriodComparison,
+} from './period-comparison-presentation';
 
 export const EXECUTIVE_INSIGHT_MINIMUM_CHANGE_PERCENT = 20;
 export const EXECUTIVE_INSIGHT_MINIMUM_CONCENTRATION_PERCENT = 40;
@@ -28,8 +34,16 @@ export interface ExecutiveInsightItem {
   readonly kind: 'campaign' | 'session';
 }
 
+/** The selected period as both summaries were queried, with the history that decides what was recorded. */
+export interface ExecutiveComparisonPeriod {
+  readonly bounds: DateBounds;
+  readonly generatedAt: Date;
+  /** The deciding history (`periodRecordedHistory`); null when nothing is recorded. */
+  readonly recordedHistory: PeriodRecordedHistory | null;
+}
+
 export interface ExecutiveOverviewModelInput {
-  readonly comparisonBoundary?: MetricComparisonBoundary;
+  readonly comparisonPeriod: ExecutiveComparisonPeriod;
   readonly executive: FocusedExecutiveOverview;
   readonly periodInProgress: boolean;
   readonly previousSummary: FocusedReportSummary | null;
@@ -39,15 +53,8 @@ export interface ExecutiveOverviewModelInput {
   readonly totalSessionCount: number;
 }
 
-export interface ExecutiveComparisonPresentation {
-  readonly caveat: string | null;
-  readonly delta: MetricDelta | null;
-  readonly explanation: string | null;
-  readonly state: MetricComparisonState;
-}
-
 export interface ExecutivePrimaryPresentation {
-  readonly comparison: ExecutiveComparisonPresentation;
+  readonly comparison: PeriodComparisonPresentation;
   readonly periodScope: string;
   readonly provenance: ReturnType<typeof aggregateApiPriceProvenance>;
   readonly value: ApiValuePresentation;
@@ -56,6 +63,12 @@ export interface ExecutivePrimaryPresentation {
 export type ExecutiveSupportMetricKey = 'cache-volume' | 'output-tokens' | 'pricing-coverage' | 'processed-tokens';
 
 export interface ExecutiveSupportMetric {
+  /**
+   * Set only where a change against the previous period informs a decision. Processed tokens are
+   * the volume of work independent of pricing; cache and output volumes are parts of that total and
+   * pricing coverage describes the data, so none of them repeats the comparison.
+   */
+  readonly comparison?: PeriodComparisonPresentation;
   readonly detail: string;
   readonly key: ExecutiveSupportMetricKey;
   readonly label: string;
@@ -103,30 +116,15 @@ export interface ExecutiveOverviewModel {
   readonly supportMetrics: readonly ExecutiveSupportMetric[];
 }
 
-const comparisonFor = (
-  summary: FocusedReportSummary,
-  previousSummary: FocusedReportSummary | null,
-  rangeMode: DateRangeMode,
-  periodInProgress: boolean,
-  comparisonBoundary?: MetricComparisonBoundary,
-): ExecutiveComparisonPresentation => {
-  const state = metricComparisonStateFor(rangeMode, previousSummary, comparisonBoundary);
-  const delta =
-    previousSummary &&
-    summary.priceMeasurement.state !== 'partially measured' &&
-    previousSummary.priceMeasurement.state !== 'partially measured' &&
-    previousSummary.totalCost > 0
-      ? {
-          hint: `Previous period of equal length: ${fmtMoney(previousSummary.totalCost)}`,
-          pct: ((summary.totalCost - previousSummary.totalCost) / previousSummary.totalCost) * 100,
-        }
-      : null;
-  return {
-    caveat: delta && periodInProgress ? 'This period is still in progress, so the comparison is provisional.' : null,
-    delta,
-    explanation: metricComparisonMessage(state),
-    state,
-  };
+const API_VALUE_COMPARISON_COPY: PeriodComparisonMetricCopy = {
+  format: fmtMoney,
+  noun: 'API-equivalent value',
+  partly: 'priced',
+};
+const PROCESSED_TOKENS_COMPARISON_COPY: PeriodComparisonMetricCopy = {
+  format: fmtCompact,
+  noun: 'processed tokens',
+  partly: 'counted',
 };
 
 const periodScopeFor = (rangeMode: DateRangeMode): string => {
@@ -151,12 +149,16 @@ const periodScopeFor = (rangeMode: DateRangeMode): string => {
 const pricingQualification = (measurement: ApiPriceMeasurement): string | null =>
   aggregateApiPriceProvenance(measurement)?.description ?? null;
 
-const buildSupportMetrics = (summary: FocusedReportSummary): readonly ExecutiveSupportMetric[] => {
-  const processedTokens = summary.cacheRead + summary.cacheWrite + summary.tokIn + summary.tokOut;
+const buildSupportMetrics = (
+  summary: FocusedReportSummary,
+  processedTokensComparison: MetricPeriodComparison,
+): readonly ExecutiveSupportMetric[] => {
+  const processedTokens = processedTokensReading(summary).value;
   const cacheVolume = summary.cacheRead + summary.cacheWrite;
   const pricingPercentage = summary.sessionCount > 0 ? (summary.pricedSessions / summary.sessionCount) * 100 : 0;
   return [
     {
+      comparison: presentPeriodComparison(processedTokensComparison, PROCESSED_TOKENS_COMPARISON_COPY),
       detail: `${fmtNum(processedTokens)} processed tokens`,
       key: 'processed-tokens',
       label: 'Processed tokens',
@@ -228,17 +230,11 @@ const leadingItemsNoun = (items: readonly [ExecutiveInsightItem, ExecutiveInsigh
 };
 
 const periodInsight = (
-  summary: FocusedReportSummary,
-  previousSummary: FocusedReportSummary | null,
+  { outcome: apiValueComparison, relation }: PeriodComparisonPresentation,
   topItems: readonly ExecutiveInsightItem[],
-  periodInProgress: boolean,
 ): ExecutivePeriodInsight | null => {
-  if (
-    summary.priceMeasurement.state !== 'measured' ||
-    previousSummary?.priceMeasurement.state !== 'measured' ||
-    previousSummary.totalCost <= 0 ||
-    summary.totalCost <= 0
-  ) {
+  // The insight restates the headline percentage, so it exists only where the headline has one.
+  if (apiValueComparison.kind !== 'change' || relation === null || apiValueComparison.current <= 0) {
     return null;
   }
   const pricedItems = topItems.filter(({ costKnown }) => costKnown);
@@ -247,21 +243,17 @@ const periodInsight = (
   if (!(first && second)) {
     return null;
   }
-  const changePercent = ((summary.totalCost - previousSummary.totalCost) / previousSummary.totalCost) * 100;
-  const concentrationPercent = ((first.costApprox + second.costApprox) / summary.totalCost) * 100;
+  const changePercent = apiValueComparison.percent;
+  const concentrationPercent = ((first.costApprox + second.costApprox) / apiValueComparison.current) * 100;
   if (
     Math.abs(changePercent) < EXECUTIVE_INSIGHT_MINIMUM_CHANGE_PERCENT ||
     concentrationPercent < EXECUTIVE_INSIGHT_MINIMUM_CONCENTRATION_PERCENT
   ) {
     return null;
   }
-  const direction = changePercent >= 0 ? 'higher' : 'lower';
   const items = [first, second] as const;
-  const comparisonSentence = periodInProgress
-    ? `API-equivalent value is ${fmtPct(Math.abs(changePercent))} ${direction} than the previous equal-length period (this period is still in progress).`
-    : `API-equivalent value is ${fmtPct(Math.abs(changePercent))} ${direction} than the previous equal-length period.`;
   const sentences = [
-    comparisonSentence,
+    `API-equivalent value is ${relation}${apiValueComparison.provisional ? ' (this period is still in progress)' : ''}.`,
     `The two leading ${leadingItemsNoun(items)} represent ${fmtPct(concentrationPercent)} of this period's measured value.`,
   ] as const;
   return { sentences, text: sentences.join(' ') };
@@ -290,7 +282,7 @@ const emptyStateFor = (summary: FocusedReportSummary, totalSessionCount: number)
 };
 
 export const buildExecutiveOverviewModel = ({
-  comparisonBoundary,
+  comparisonPeriod,
   executive,
   periodInProgress,
   previousSummary,
@@ -298,16 +290,28 @@ export const buildExecutiveOverviewModel = ({
   summary,
   topItems,
   totalSessionCount,
-}: ExecutiveOverviewModelInput): ExecutiveOverviewModel => ({
-  emptyState: emptyStateFor(summary, totalSessionCount),
-  harnesses: executive.harnesses.map((group) => groupPresentation(group, summary.totalCost)),
-  insight: periodInsight(summary, previousSummary, topItems, periodInProgress),
-  models: executive.models.map((group) => groupPresentation(group, summary.totalCost)),
-  primary: {
-    comparison: comparisonFor(summary, previousSummary, rangeMode, periodInProgress, comparisonBoundary),
-    periodScope: periodScopeFor(rangeMode),
-    provenance: aggregateApiPriceProvenance(summary.priceMeasurement),
-    value: aggregateApiValuePresentation(summary.priceMeasurement),
-  },
-  supportMetrics: buildSupportMetrics(summary),
-});
+}: ExecutiveOverviewModelInput): ExecutiveOverviewModel => {
+  // One baseline for every metric: the Overview result's previous summary is the same aggregation
+  // over the previous window under the same filters.
+  const baseline = resolvePeriodBaseline({ ...comparisonPeriod, previousSummary });
+  const apiValueComparison = presentPeriodComparison(
+    comparePeriodMetric(baseline, summary, totalApiValueReading, periodInProgress),
+    API_VALUE_COMPARISON_COPY,
+  );
+  return {
+    emptyState: emptyStateFor(summary, totalSessionCount),
+    harnesses: executive.harnesses.map((group) => groupPresentation(group, summary.totalCost)),
+    insight: periodInsight(apiValueComparison, topItems),
+    models: executive.models.map((group) => groupPresentation(group, summary.totalCost)),
+    primary: {
+      comparison: apiValueComparison,
+      periodScope: periodScopeFor(rangeMode),
+      provenance: aggregateApiPriceProvenance(summary.priceMeasurement),
+      value: aggregateApiValuePresentation(summary.priceMeasurement),
+    },
+    supportMetrics: buildSupportMetrics(
+      summary,
+      comparePeriodMetric(baseline, summary, processedTokensReading, periodInProgress),
+    ),
+  };
+};

@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { reportRouteClientEntryKeys } from '../e2e/session-scroll-benchmark-closure';
+import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 
 /**
  * These assertions read the emitted client build; they never produce one. Run `bun run build`
@@ -39,8 +40,14 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
 // Navigation-intent prefetch, independent report-region recovery and view transitions join the
-// report closure. A fresh production build measures 312,862 B gzip; see the ADR 0020 amendment.
-const RECORDED_GZIP_CLOSURE_BYTES = 312_862;
+// report closure at 312,862 B gzip; see the ADR 0020 amendment. With the Overview's period-over-period
+// comparison the closure measured 315,717 B. The synthetic report destination, its in-memory
+// projections and e2e fixtures are now compiled out of production builds (SvelteKit's `dev`; demo and
+// e2e run on the development server), and the comparison explanation opens as a popover. The demo
+// payload itself (`src/report-data.ts`, ~1.3 KB gzip) still ships: the layout's bootstrap and the
+// Work and Observatory synthetic paths import it, and its module has load-time effects. A fresh
+// production build measures 309,001 B gzip.
+const RECORDED_GZIP_CLOSURE_BYTES = 309_001;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
@@ -258,6 +265,18 @@ describe('report app client bundle', () => {
       }
       expect(readInitialAsset(entry.file).byteLength).toBeLessThan(REPORT_ENTRY_MAXIMUM_BYTES);
     }
+  });
+
+  test('compiles the synthetic report destination out of the production first load', () => {
+    // Demo and e2e run on the Vite development server; the destination owner selects the synthetic
+    // destination behind SvelteKit's compile-time `dev`, so its in-memory report fixtures must not
+    // reach the bytes a production report downloads.
+    const scripts = initialAssetPaths(readClientManifest())
+      .filter((assetPath) => assetPath.endsWith('.js'))
+      .map((assetPath) => readInitialAsset(assetPath).toString('utf8'));
+    const fixtureKeys = [FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY];
+
+    expect(fixtureKeys.filter((key) => scripts.some((script) => script.includes(key)))).toEqual([]);
   });
 
   test('keeps the report first load within its gzip budget', () => {

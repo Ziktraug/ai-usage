@@ -59,6 +59,27 @@
     letterSpacing: '-0.035em',
     lineHeight: 1.1,
   });
+  /** Balanced lines keep an explanation marker beside its sentence instead of wrapping alone below it. */
+  const balancedLines = css({ textWrap: 'balance' });
+  /**
+   * The explanation opens on demand, from a pointer, a tap or the keyboard. It wraps at a readable
+   * measure, and within a 320 px viewport less its padding and the positioner's edge offset.
+   */
+  const explanationContent = css({
+    zIndex: 70,
+    display: 'grid',
+    gap: '4px',
+    maxW: 'min(60ch, calc(100vw - 32px))',
+    p: '10px 12px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'md',
+    bg: 'surface',
+    boxShadow: 'overlay',
+    color: 'ink',
+    fontSize: '12px',
+    lineHeight: 1.5,
+    animation: 'fadeIn 0.12s ease-out',
+  });
   const insight = css({
     borderInlineStart: '3px solid token(colors.lineStrong)',
     color: 'ink',
@@ -94,11 +115,12 @@
     numericDisplay,
     sectionDivider,
   } from '@ai-usage/design-system/report';
-  import { HarnessBadge } from '@ai-usage/design-system/svelte';
+  import { HarnessBadge, Popover, provenanceMarkerClass } from '@ai-usage/design-system/svelte';
   import type { ComponentProps } from 'svelte';
-  import { fmtMoney, fmtPct } from '../../../foundation/presentation/format';
+  import { fmtMoney } from '../../../foundation/presentation/format';
   import ActivityExplorer from '../range/activity-explorer.svelte';
   import type { ExecutiveOverviewModel } from './executive-overview-model';
+  import { explanationWithCaveat } from './period-comparison-presentation';
 
   let {
     activity,
@@ -126,15 +148,7 @@
     return fmtMoney(draggedWindowApiValue);
   });
   const previewAttributes = $derived(draggedWindowApiValue === null ? {} : ({ 'aria-busy': 'true' } as const));
-  const comparisonText = $derived.by((): string | null => {
-    const { comparison } = model.primary;
-    if (comparison.delta) {
-      const direction = comparison.delta.pct >= 0 ? 'higher' : 'lower';
-      return `${fmtPct(Math.abs(comparison.delta.pct))} ${direction} than the previous equal-length period.`;
-    }
-    return comparison.explanation;
-  });
-  const comparisonCaveat = $derived(model.primary.comparison.caveat);
+  const primaryComparison = $derived(model.primary.comparison);
   const primaryQualification = $derived.by((): string => {
     const periodSentence = `This estimate covers work ${model.primary.periodScope}.`;
     const provenance = model.primary.provenance?.description;
@@ -148,6 +162,32 @@
     onOpenModels();
   };
 </script>
+
+<!--
+  A popover rather than a tooltip: a tap opens it as well as a pointer or Enter, and Escape closes it.
+  The trigger carries a short name; the explanation is the content of the dialog it opens.
+-->
+{#snippet explanationMarker(
+  lines: readonly string[],
+  label: string,
+)}
+  {#if lines.length > 0}
+    <Popover
+      contentAriaLabel={label}
+      contentClass={explanationContent}
+      triggerAriaLabel={label}
+      triggerClass={provenanceMarkerClass}
+      triggerTitle={label}
+    >
+      {#snippet trigger()}
+        <span aria-hidden="true">i</span>
+      {/snippet}
+      {#each lines as line, index (index)}
+        <span data-explanation-line>{line}</span>
+      {/each}
+    </Popover>
+  {/if}
+{/snippet}
 
 {#if model.emptyState}
   <section aria-labelledby="executive-empty-title" class={cx(editorialSection, emptyState)}>
@@ -172,14 +212,16 @@
             >{displayedValue}</strong
           >
           <p class={qualification}>{primaryQualification}</p>
-          {#if comparisonText}
-            <p class={comparison}>
-              {comparisonText}
-              {#if comparisonCaveat}
-                <span class={qualification} data-period-comparison-caveat>{comparisonCaveat}</span>
-              {/if}
-            </p>
-          {/if}
+          <p
+            class={cx(primaryComparison.figure ? comparison : qualification, balancedLines)}
+            data-period-comparison={primaryComparison.outcome.kind}
+          >
+            {primaryComparison.statement}
+            {@render explanationMarker(primaryComparison.explanation, 'About the API-equivalent value comparison')}
+            {#if primaryComparison.caveat}
+              <span class={qualification} data-period-comparison-caveat>{primaryComparison.caveat}</span>
+            {/if}
+          </p>
         </div>
       </section>
       <dl class={supportingMetrics} data-executive-metrics>
@@ -188,6 +230,16 @@
             <dt class={executiveEssentialLabel}>{supportMetric.label}</dt>
             <dd class={metricValue}>{supportMetric.value}</dd>
             <dd class={executiveCaption}>{supportMetric.detail}</dd>
+            {#if supportMetric.comparison?.figure}
+              <dd class={cx(executiveCaption, balancedLines)} data-period-delta>
+                {supportMetric.comparison.figure}
+                vs previous period
+                {@render explanationMarker(
+                  explanationWithCaveat(supportMetric.comparison),
+                  `About the ${supportMetric.label.toLowerCase()} comparison`,
+                )}
+              </dd>
+            {/if}
             {#if supportMetric.qualification}
               <dd class={executiveCaption}>{supportMetric.qualification}</dd>
             {/if}

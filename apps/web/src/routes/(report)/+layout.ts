@@ -3,8 +3,10 @@ import {
   prefetchReportRoute,
   ReportBootstrapUnavailableError,
   reportPageDataFor,
+  SyntheticReportUnavailableError,
 } from '#lib/features/report/core/report-bootstrap.ts';
 import { prefetchNavigationIntent } from '#lib/features/shell/intent-prefetch.ts';
+import { dev } from '$app/env';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ data, parent, untrack, url }) => {
@@ -15,9 +17,9 @@ export const load: LayoutLoad = async ({ data, parent, untrack, url }) => {
     await prefetchNavigationIntent(data.reportQueryState, (runtime) => prefetchReportRoute(runtime, target, {}, true));
   }
   try {
-    return reportPageDataFor(parentData.runtimeMode, data.reportQueryState);
+    return reportPageDataFor(parentData.runtimeMode, data.reportQueryState, { developmentServer: dev });
   } catch (cause) {
-    if (cause instanceof ReportBootstrapUnavailableError) {
+    if (cause instanceof ReportBootstrapUnavailableError || cause instanceof SyntheticReportUnavailableError) {
       error(cause.status, cause.message);
     }
     throw cause;

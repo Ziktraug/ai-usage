@@ -23,9 +23,16 @@ Query client used by every Report destination.
   use R0's edit-run replace/push policy. Day selection navigates to Sessions
   with the selected custom day range. Punchcard selection serializes the
   `LocalTimeCell` into canonical `timeCell` and navigates to Sessions.
-- Pass the current `DashboardDateRangeSearch` as `range`. Feed dimension,
-  granularity and value changes back into the same focused destination; changing
-  chart granularity must not change the report range.
+- Pass the current `DashboardDateRangeSearch` as the activity `range`. Feed
+  dimension, granularity and value changes back into the same focused
+  destination; changing chart granularity must not change the report range.
+- Describe the result with `overviewResultScope` from the query it answers
+  (`commit.destination.query`), not from the URL: the retained Overview of the
+  previous period stays on screen while a new one loads or after its refresh
+  failed, and its period comparison must judge its own range and filters. Pass
+  the revision's unfiltered `bootstrap.dateDomain` with it, so that only the
+  history of every harness, or of the filtered harness alone, decides whether
+  the previous period was recorded.
 - Pass `bootstrap.machineFreshness` to `freshness`. Build provider views from
   the bootstrap provider-status dataset at its captured `generatedAt`; do not
   reacquire or infer them from real local histories in the client.
