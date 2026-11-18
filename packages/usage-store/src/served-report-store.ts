@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import {
   type FocusedReportSupport,
   type FocusedSupportResult,
@@ -10,7 +11,10 @@ import {
   MAX_REPORT_RUNNER_ARTIFACT_BYTES,
   MAX_SESSION_QUERY_DATABASE_BYTES,
 } from '@ai-usage/report-core/report-budgets';
-import { reportCaptureFingerprintForPayload } from '@ai-usage/report-core/report-capture-fingerprint';
+import {
+  canonicalReportJson,
+  reportCaptureFingerprintForPayload,
+} from '@ai-usage/report-core/report-capture-fingerprint';
 import { isSerializedUsageRow, type SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -113,6 +117,100 @@ const sessionPullRequestLink = (candidate: string): ServedSessionPullRequestLink
     repository: `${match[1]}/${match[2]}`,
     url: url.toString(),
   };
+};
+
+const FINGERPRINT_DIGEST_CHUNK_CHARACTERS = 64 * 1024;
+
+/**
+ * The canonical JSON text `reportCaptureFingerprintForPayload` hashes, with `rowsMarker` standing
+ * where the rows belong. The clocks are left out exactly as the reference leaves them out; the
+ * tests pin the two together.
+ */
+const captureFingerprintTextAroundRows = (
+  payload: Record<string, unknown>,
+  rowsMarker: string,
+  rowSourceAuthorities?: readonly SessionDetailSourceAuthority[],
+): readonly [before: string, after: string] => {
+  const payloadAroundRows: Record<string, unknown> = { ...payload, rows: rowsMarker };
+  const { generatedAt: _generatedAt, machineFreshness, ...payloadWithoutClocks } = payloadAroundRows;
+  const semanticMachineFreshness =
+    typeof machineFreshness === 'object' && machineFreshness !== null && !Array.isArray(machineFreshness)
+      ? Object.fromEntries(
+          Object.entries(machineFreshness).filter(([key, value]) => key !== 'observedAt' && value !== undefined),
+        )
+      : machineFreshness;
+  const semanticPayload =
+    machineFreshness === undefined
+      ? payloadWithoutClocks
+      : { ...payloadWithoutClocks, machineFreshness: semanticMachineFreshness };
+  const text = JSON.stringify(
+    canonicalReportJson(
+      rowSourceAuthorities === undefined ? semanticPayload : { payload: semanticPayload, rowSourceAuthorities },
+    ),
+  );
+  const marker = JSON.stringify(rowsMarker);
+  const at = text.indexOf(marker);
+  if (at < 0 || text.indexOf(marker, at + marker.length) >= 0) {
+    throw new Error('Served report capture fingerprint could not locate its rows');
+  }
+  return [text.slice(0, at), text.slice(at + marker.length)];
+};
+
+/**
+ * Both fingerprints of one publication: `reportCaptureFingerprintForPayload(payload)` and
+ * `reportCaptureFingerprintForPayload({ ...payload, localContext }, sourceAuthorities)` for
+ * `payload = { ...support, rows }`, to the byte.
+ *
+ * Calling the reference twice canonicalizes and serializes every row twice, and builds two
+ * canonical copies of the whole capture, which is most of what preparing a publication costs. The
+ * two inputs carry the same rows, and the canonical JSON of an array is its elements' canonical
+ * JSON joined by commas. Each row is therefore canonicalized and serialized once, and its text is
+ * fed to both digests between the text that surrounds the rows in each input.
+ */
+export const servedReportCaptureFingerprints = (input: {
+  readonly localContext: object;
+  readonly rows: readonly unknown[];
+  readonly sourceAuthorities: readonly SessionDetailSourceAuthority[];
+  readonly support: object;
+}): { readonly captureFingerprint: string; readonly privateCaptureFingerprint: string } => {
+  const rowsMarker = `served-report-rows:${randomUUID()}`;
+  const payload: Record<string, unknown> = { ...input.support };
+  const [publicBefore, publicAfter] = captureFingerprintTextAroundRows(payload, rowsMarker);
+  const [privateBefore, privateAfter] = captureFingerprintTextAroundRows(
+    { ...payload, localContext: input.localContext },
+    rowsMarker,
+    input.sourceAuthorities,
+  );
+  const publicDigest = createHash('sha256').update(publicBefore);
+  const privateDigest = createHash('sha256').update(privateBefore);
+  let chunk = '[';
+  for (const [index, row] of input.rows.entries()) {
+    // An array member JSON cannot represent serializes as null, as it does inside the whole array.
+    chunk += `${index === 0 ? '' : ','}${JSON.stringify(canonicalReportJson(row)) ?? 'null'}`;
+    if (chunk.length >= FINGERPRINT_DIGEST_CHUNK_CHARACTERS) {
+      publicDigest.update(chunk);
+      privateDigest.update(chunk);
+      chunk = '';
+    }
+  }
+  chunk += ']';
+  return {
+    captureFingerprint: publicDigest.update(chunk).update(publicAfter).digest('hex'),
+    privateCaptureFingerprint: privateDigest.update(chunk).update(privateAfter).digest('hex'),
+  };
+};
+
+/**
+ * `Buffer.byteLength(JSON.stringify(rows))` without building that text: the JSON of an array is
+ * its brackets, one comma between members, and each member's own JSON. Only the byte count is
+ * needed, and the whole text is tens of megabytes for a full report.
+ */
+export const serializedRowsByteLength = (rows: readonly SerializedRow[]): number => {
+  let bytes = 2 + Math.max(0, rows.length - 1);
+  for (const row of rows) {
+    bytes += Buffer.byteLength(JSON.stringify(row));
+  }
+  return bytes;
 };
 
 interface ServedReportStoreDependencies {
@@ -982,18 +1080,17 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
       projectAliases: capture.projectAliases,
       projectGroupConfigs: capture.projectGroupConfigs,
     });
-    const serializedRows = JSON.stringify(capture.rows);
     const supportJson = JSON.stringify(reportSupport);
     const localContextJson = JSON.stringify(localContext);
-    const rowsBytes = Buffer.byteLength(serializedRows);
+    const rowsBytes = serializedRowsByteLength(capture.rows);
     const supportBytes = Buffer.byteLength(supportJson);
     const localContextBytes = Buffer.byteLength(localContextJson);
-    const payload = { ...reportSupport, rows: capture.rows };
-    const captureFingerprint = reportCaptureFingerprintForPayload(payload);
-    const privateCaptureFingerprint = reportCaptureFingerprintForPayload(
-      { ...payload, localContext },
-      capture.sourceAuthorities,
-    );
+    const { captureFingerprint, privateCaptureFingerprint } = servedReportCaptureFingerprints({
+      localContext,
+      rows: capture.rows,
+      sourceAuthorities: capture.sourceAuthorities,
+      support: reportSupport,
+    });
     if (rowsBytes + supportBytes + localContextBytes > MAX_REPORT_RUNNER_ARTIFACT_BYTES) {
       throw new Error(`Served report publication exceeds ${MAX_REPORT_RUNNER_ARTIFACT_BYTES} bytes`);
     }

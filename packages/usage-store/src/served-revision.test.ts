@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type FocusedReportSupport, focusedRevisionFingerprint } from '@ai-usage/report-core/focused-report-query';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import { reportCaptureFingerprintForPayload } from '@ai-usage/report-core/report-capture-fingerprint';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { Effect } from 'effect';
 import {
@@ -1090,4 +1091,160 @@ test('bounds declaring session pairs independently of distinct PRs and filters m
   expect(legacy.declarations).toEqual([]);
   expect(legacy.links).toHaveLength(1);
   expect(legacy.truncated).toBe(true);
+});
+
+describe('a served revision is a function of its capture', () => {
+  /** Everything stored for the current revision, without its id and its publication clocks. */
+  const storedCurrentRevision = async (dbPath: string) => {
+    const { Database } = await import('bun:sqlite');
+    const database = new Database(dbPath, { readonly: true });
+    try {
+      const current = database.query('SELECT revision FROM served_report_current WHERE singleton = 1').get() as {
+        revision: string;
+      };
+      const content = (sql: string): unknown[] =>
+        (database.query(sql).all(current.revision) as Record<string, unknown>[]).map(
+          ({ revision: _revision, ...columns }) => columns,
+        );
+      return {
+        context: content('SELECT * FROM served_report_local_context WHERE revision = ?'),
+        filterKeys: content(
+          'SELECT * FROM served_session_model_filter_keys WHERE revision = ? ORDER BY ordinal, model_key',
+        ),
+        manifest: content(`
+          SELECT capture_fingerprint, private_capture_fingerprint, config_fingerprint, generated_at, complete,
+            row_count, segment_count, filter_key_count, rows_bytes, support_bytes, projection_bytes
+          FROM served_report_revisions WHERE revision = ?
+        `),
+        rows: content('SELECT * FROM served_report_rows WHERE revision = ? ORDER BY ordinal'),
+        segments: content('SELECT * FROM served_session_model_segments WHERE revision = ? ORDER BY ordinal, model_key'),
+        support: content('SELECT * FROM served_report_support WHERE revision = ?'),
+      };
+    } finally {
+      database.close();
+    }
+  };
+  const multiModelRow = (name: string, tokenTotal: number): SerializedRow => ({
+    ...row(name, tokenTotal),
+    models: ['gpt-5', 'gpt-5-mini'],
+  });
+  const authoritiesFor = (rows: readonly SerializedRow[]) =>
+    rows.map((candidate) =>
+      candidate.name.startsWith('portable') ? ('portable-opaque' as const) : ('local-observed' as const),
+    );
+  const publish = async (dbPath: string, revision: string, rows: readonly SerializedRow[], now: number) =>
+    await Effect.runPromise(
+      publishServedReportRevision(
+        publication(dbPath, revision, rows, { capture: { sourceAuthorities: authoritiesFor(rows) }, now }),
+      ),
+    );
+
+  test('stores the two fingerprints the reference computes for the capture', async () => {
+    const dbPath = await createStore();
+    const rows = [row('first', 1), multiModelRow('second', 2), row('portable-third', 3)];
+    const sourceAuthorities = authoritiesFor(rows);
+
+    const result = await publish(dbPath, 'revision-fingerprints', rows, 1000);
+    const stored = await storedCurrentRevision(dbPath);
+    const payload = { ...support(rows.length), rows };
+    const localContext = JSON.parse((stored.context[0] as { context_json: string }).context_json) as object;
+
+    expect(result.manifest.captureFingerprint).toBe(reportCaptureFingerprintForPayload(payload));
+    expect(stored.manifest).toMatchObject([
+      {
+        capture_fingerprint: reportCaptureFingerprintForPayload(payload),
+        private_capture_fingerprint: reportCaptureFingerprintForPayload(
+          { ...payload, localContext },
+          sourceAuthorities,
+        ),
+        row_count: 3,
+        rows_bytes: Buffer.byteLength(JSON.stringify(rows)),
+      },
+    ]);
+  });
+
+  test('successive publications of a moving capture end exactly where one publication of the last capture does', async () => {
+    const stepByStep = await createStore();
+    const fromScratch = await createStore();
+    const initial = [row('alpha', 1), multiModelRow('bravo', 2), row('portable-charlie', 3), row('delta', 4)];
+    // A session moves, one appears in the middle, one is renamed, one is retired, one is removed
+    // together with every model segment and filter key it owned.
+    const captures: SerializedRow[][] = [
+      initial,
+      [row('alpha', 11), multiModelRow('bravo', 2), row('portable-charlie', 3), row('delta', 4)],
+      [row('alpha', 11), row('echo', 5), multiModelRow('bravo', 2), row('portable-charlie', 3), row('delta', 4)],
+      [
+        row('alpha', 11),
+        row('echo', 5),
+        multiModelRow('bravo', 2),
+        row('portable-charlie', 3),
+        row('delta-renamed', 4),
+      ],
+      [row('alpha', 11), row('echo', 5), multiModelRow('bravo', 2), row('delta-renamed', 4)],
+      [row('alpha', 12), row('echo', 5), row('delta-renamed', 4)],
+    ];
+    const last = captures.at(-1) ?? [];
+
+    const changed: boolean[] = [];
+    for (const [index, capture] of captures.entries()) {
+      changed.push((await publish(stepByStep, `revision-step-${index}`, capture, 1000 + index)).changed);
+    }
+    await publish(fromScratch, 'revision-from-scratch', last, 5000);
+    const incremental = await storedCurrentRevision(stepByStep);
+    const direct = await storedCurrentRevision(fromScratch);
+
+    expect(changed).toEqual([true, true, true, true, true, true]);
+    expect(incremental).toEqual(direct);
+    expect(incremental.rows).toHaveLength(3);
+    expect((incremental.rows as { ordinal: number; source_row_json: string }[]).map(({ ordinal }) => ordinal)).toEqual([
+      0, 1, 2,
+    ]);
+    expect(
+      (incremental.rows as { source_row_json: string }[]).map(({ source_row_json }) => JSON.parse(source_row_json)),
+    ).toEqual(last);
+    // The removed multi-model session left no segment or filter key behind.
+    expect(JSON.stringify([incremental.segments, incremental.filterKeys])).not.toContain('gpt-5-mini');
+    expect(
+      (
+        await Effect.runPromise(
+          queryServedReportRevisionSlices({ dbPath: stepByStep, now: 6000, revision: 'revision-step-5' }),
+        )
+      ).rows,
+    ).toEqual(last);
+  });
+
+  test('a capture that lost every row publishes an empty revision equal to a from-scratch empty one', async () => {
+    const emptied = await createStore();
+    const neverFilled = await createStore();
+
+    await publish(emptied, 'revision-full', [row('alpha', 1), multiModelRow('bravo', 2)], 1000);
+    const retired = await publish(emptied, 'revision-emptied', [], 2000);
+    await publish(neverFilled, 'revision-empty', [], 3000);
+    const stored = await storedCurrentRevision(emptied);
+
+    expect(retired).toMatchObject({ changed: true, renewed: false });
+    expect(stored).toEqual(await storedCurrentRevision(neverFilled));
+    expect([stored.rows, stored.segments, stored.filterKeys]).toEqual([[], [], []]);
+    // The superseded revision keeps its own rows until retention removes it.
+    expect(
+      (
+        await Effect.runPromise(
+          queryServedReportRevisionSlices({ dbPath: emptied, now: 2500, revision: 'revision-full' }),
+        )
+      ).rows,
+    ).toHaveLength(2);
+  });
+
+  test('publishing an earlier capture again restores its exact content and fingerprints', async () => {
+    const dbPath = await createStore();
+    const before = [row('alpha', 1), multiModelRow('bravo', 2)];
+
+    await publish(dbPath, 'revision-before', before, 1000);
+    const original = await storedCurrentRevision(dbPath);
+    await publish(dbPath, 'revision-moved', [row('alpha', 9)], 2000);
+    const restored = await publish(dbPath, 'revision-restored', before, 3000);
+
+    expect(restored).toMatchObject({ changed: true, renewed: false });
+    expect(await storedCurrentRevision(dbPath)).toEqual(original);
+  });
 });
