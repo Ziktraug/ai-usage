@@ -118,7 +118,7 @@ const makeProcessWideEventSinkLayer = (
             if (lost > 0) {
               try {
                 consoleWriter(
-                  `[wide-event] delivery summary file(dropped=${fileDiagnostics.dropped},failed=${fileDiagnostics.failed}) console(dropped=${consoleDiagnostics.dropped},failed=${consoleDiagnostics.failed})`,
+                  `[wide-event] delivery summary file(dropped=${fileDiagnostics.dropped},failed=${fileDiagnostics.failed}${fileDiagnostics.circuit === undefined ? '' : `,circuit=${fileDiagnostics.circuit}`}) console(dropped=${consoleDiagnostics.dropped},failed=${consoleDiagnostics.failed})`,
                   'warn',
                 );
               } catch {

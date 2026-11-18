@@ -47,7 +47,8 @@ This package imports no other `@ai-usage/*` package.
 - `./provider-quota`: provider-neutral quota observations/history.
 - `./provider-status`: provider status windows and reset helpers.
 - `./report-budgets`: frozen row/byte/query/import budgets.
-- `./report-capture-fingerprint`: semantic capture fingerprinting.
+- `./report-capture-fingerprint`: semantic capture fingerprinting, and the one
+  definition of what a fingerprint leaves out (the publication clocks).
 - `./report-data`: serialized report payloads and preparation.
 - `./session-detail-request`: lightweight canonical detail request parsing,
   fingerprint, and shared validation error, without loading response validation.
@@ -131,6 +132,11 @@ restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
 - `./collectors`: per-harness normalized collectors.
 - `./datasets`: collected report datasets.
 - `./rtk-enrichment`: RTK enrichment collection.
+- `./perf`: the `AI_USAGE_PERF` span helpers (duration, CPU, resident set and
+  JS heap around an effect or a promise; off by default, the wrapped work is
+  returned untouched). `usage-engine-runtime` uses them for its source,
+  import and publication spans. `report-data` keeps its own copy because it
+  may depend on neither this package nor `effect-runtime`.
 
 Only `usage-engine-runtime` may compose these production seams. Exact local
 detail, machine config, scheduling, report assembly, and usage-store access do

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -45,7 +45,7 @@ import {
   queryWorkThreadsPage,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/writer';
-import { Duration, Effect, Exit } from 'effect';
+import { Console, Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
 import {
   createScheduledSourceRegistry,
@@ -3137,6 +3137,112 @@ describe('collector-declared row retirement', () => {
       expect(fourth).toMatchObject({ changed: true, inputCount: 2, outputCount: 2, warnings: [] });
       expect(afterFourth).toEqual({ active: ['reclassified', 'usage-1'], deleted: [] });
       expect(JSON.stringify([first, second, third, fourth])).not.toContain(home);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+});
+
+describe('session source perf spans', () => {
+  const row = (sourceSessionId: string) => ({
+    ...normalizeUsageRow({
+      calls: 1,
+      cost: actualCost(null),
+      date: new Date('2026-07-16T09:00:00.000Z'),
+      durationMs: 60_000,
+      endDate: new Date('2026-07-16T09:01:00.000Z'),
+      harness: 'OpenCode',
+      model: 'claude-sonnet-4-6',
+      name: `Session ${sourceSessionId}`,
+      project: 'fixture',
+      provider: 'Anthropic',
+      tokens: { in: 10, out: 5, cr: 0, cw: 0 },
+    }),
+    source: { harnessKey: 'opencode', sourceSessionId },
+  });
+  const runSource = async (home: string) => {
+    const rows = [row('one'), row('two')];
+    const adapter: HarnessAdapter = {
+      collect: Effect.sync(() => rows),
+      collectResult: Effect.sync(() => ({ rows, warnings: [] })),
+      metadata: HARNESS_METADATA.opencode,
+    };
+    const source = createSessionSource({
+      adapter: () => Effect.succeed(adapter),
+      dbPath: usageStorePath(home),
+      detect: Effect.succeed({ availability: 'detected', reason: { code: 'none' } }),
+      id: 'opencode.sessions',
+      label: 'OpenCode sessions',
+      machine,
+      now: () => new Date('2026-07-16T10:00:00.000Z'),
+      storage: createLocalHistoryStorage(home),
+    });
+    const lines: string[] = [];
+    const capture: Console.Console = {
+      ...globalThis.console,
+      error: (...values: unknown[]) => {
+        lines.push(values.map(String).join(' '));
+      },
+    };
+    const result = await Effect.runPromise(
+      source.run(progressContext([])).pipe(Effect.provideService(Console.Console, capture)),
+    );
+    return { lines: lines.filter((line) => line.startsWith('[perf] ')), result };
+  };
+  let previousPerfFlag: string | undefined;
+
+  beforeEach(() => {
+    previousPerfFlag = process.env.AI_USAGE_PERF;
+  });
+
+  afterEach(() => {
+    if (previousPerfFlag === undefined) {
+      delete process.env.AI_USAGE_PERF;
+    } else {
+      process.env.AI_USAGE_PERF = previousPerfFlag;
+    }
+  });
+
+  test('reports collection, import and retirement with row counts and memory figures when enabled', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-source-perf-'));
+    try {
+      process.env.AI_USAGE_PERF = '1';
+      const { lines, result } = await runSource(home);
+
+      expect(result).toMatchObject({ changed: true, inputCount: 2, outputCount: 2 });
+      const byLabel = new Map(lines.map((line) => [line.split(' ')[1] ?? '', line]));
+      expect([...byLabel.keys()]).toEqual([
+        'aiUsage.engine.opencode.sessions.collect',
+        'aiUsage.engine.opencode.sessions.importLocalRows',
+        'aiUsage.engine.opencode.sessions.retireLocalRows',
+      ]);
+      expect(byLabel.get('aiUsage.engine.opencode.sessions.collect')).toContain(' rows=2');
+      const imported = byLabel.get('aiUsage.engine.opencode.sessions.importLocalRows') ?? '';
+      expect(imported).toContain(' inserted=2');
+      expect(imported).toContain(' rows=2');
+      for (const field of [
+        'cpuMs=',
+        'durationMs=',
+        'heapUsedMbAfter=',
+        'heapUsedMbBefore=',
+        'rssMbAfter=',
+        'rssMbBefore=',
+      ]) {
+        expect(imported).toContain(` ${field}`);
+      }
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('reports nothing and returns the same result when disabled', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-source-perf-'));
+    try {
+      delete process.env.AI_USAGE_PERF;
+      const { lines, result } = await runSource(home);
+
+      expect(lines).toEqual([]);
+      expect(result).toMatchObject({ changed: true, inputCount: 2, outputCount: 2 });
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

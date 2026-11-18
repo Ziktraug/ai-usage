@@ -49,7 +49,7 @@ was deleted.
 | [0011](0011-sveltekit-bun-runtime.md) | Run SvelteKit with svelte-adapter-bun | 2026-08-09 | Superseded by 0072 (2026-10-24) |
 | [0012](0012-tanstack-query-browser-server-state-ownership.md) | TanStack Query owns browser server state | 2026-08-08 | Superseded by 0076 (2026-10-24) |
 | [0013](0013-direct-rhythm-day-controls.md) | Direct Rhythm day controls and compact-visual accessibility | 2026-08-01 | Accepted (formerly 0009); supersedes 0005 |
-| [0014](0014-effect-runtime-package-for-wide-events.md) | `@ai-usage/effect-runtime` owns wide-event primitives | 2026-07-21 | Accepted (formerly 0002); amended by 0008 and 0009; holds the consolidated wide-event statement |
+| [0014](0014-effect-runtime-package-for-wide-events.md) | `@ai-usage/effect-runtime` owns wide-event primitives | 2026-07-21 | Accepted (formerly 0002); amended by 0008 and 0009 and 2026-11-18 (recovering file circuit); holds the consolidated wide-event statement |
 | [0015](0015-api-value-is-a-legibility-proxy.md) | The API value is a legibility proxy, not a money claim | 2026-08-25 | Accepted |
 | [0016](0016-collect-everything-present-faithfully.md) | Collect everything, present partial data faithfully | 2026-08-25 | Accepted |
 | [0017](0017-absence-is-a-gap-not-a-category.md) | Absence is a gap, not a category; defaults never hide it | 2026-08-25 | Accepted |

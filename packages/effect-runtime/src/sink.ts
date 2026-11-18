@@ -3,15 +3,26 @@ import type { WideEventSnapshot } from './model';
 import { testWideEventResourceLayer, type WideEventResourceService } from './resource';
 import { serializeWideEventSnapshot } from './sanitize';
 
+/**
+ * Delivery state of a transport that suspends itself after a blocked write: `open` drops every
+ * record until its cool-down ends, `half-open` is trying again, `closed` delivers normally.
+ */
+export type WideEventCircuitState = 'closed' | 'half-open' | 'open';
+
 export interface WideEventSinkDiagnostics {
   readonly accepted: number;
+  /** Present only on a transport that has a circuit (the file sink). */
+  readonly circuit?: WideEventCircuitState;
   readonly dropped: number;
   readonly failed: number;
   readonly submitted?: number;
   readonly transports?: Readonly<Record<string, WideEventTransportDiagnostics>>;
 }
 
-export type WideEventTransportDiagnostics = Pick<WideEventSinkDiagnostics, 'accepted' | 'dropped' | 'failed'>;
+export type WideEventTransportDiagnostics = Pick<
+  WideEventSinkDiagnostics,
+  'accepted' | 'circuit' | 'dropped' | 'failed'
+>;
 
 export interface WideEventSinkShape {
   readonly diagnostics: () => Effect.Effect<WideEventSinkDiagnostics>;

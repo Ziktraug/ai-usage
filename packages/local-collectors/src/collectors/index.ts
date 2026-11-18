@@ -27,15 +27,21 @@ import {
   stripProjectPath,
 } from '../rtk-enrichment';
 import { collectClaude, collectClaudeResult, collectClaudeRetentionWarnings } from './claude';
-import { collectCodex, collectCodexResult } from './codex';
+import { collectCodex, collectCodexResult, createCodexIncrementalCollector } from './codex';
 import { collectCursor, collectCursorResult } from './cursor';
 import type { CursorCsvOptions } from './cursor-csv';
 import { collectOpenCode, collectOpenCodeResult } from './opencode';
 
 export { collectClaudeRetentionWarnings } from './claude';
 
-interface HarnessAdapterCollection {
+export interface HarnessAdapterCollection {
   observationCompleteness?: SkillObservationCollectionCompleteness;
+  /**
+   * Only an incremental collector sets this, and only on a pass that was not asked to be complete:
+   * `observations` then lists those of the inputs read this pass, the others having been returned
+   * by an earlier pass. Rows, work observations and retirements are never partial.
+   */
+  observationScope?: 'changed';
   observations?: SkillObservation[];
   /**
    * Source session ids this pass POSITIVELY OBSERVED in the source and deliberately classifies as
@@ -49,9 +55,23 @@ interface HarnessAdapterCollection {
   workObservations?: CodexWorkObservation[];
 }
 
+export type IncrementalHarnessCollector = (request: {
+  /**
+   * True when the caller did not durably record everything the previous pass returned (its first
+   * pass, or one after a failed or interrupted import): nothing may be left out as already returned.
+   */
+  readonly complete: boolean;
+}) => Effect.Effect<HarnessAdapterCollection, LocalHistoryError, LocalHistoryStorageService>;
+
 export interface HarnessAdapter {
   collect: Effect.Effect<CollectorRow[], LocalHistoryError, LocalHistoryStorageService>;
   collectResult?: Effect.Effect<HarnessAdapterCollection, LocalHistoryError, LocalHistoryStorageService>;
+  /**
+   * For a caller that collects repeatedly in one process: a collector that keeps state between
+   * passes so a pass costs what changed. Each call returns a collector with its own state. A
+   * harness without one is collected through `collectResult` on every pass.
+   */
+  createIncrementalCollector?: () => IncrementalHarnessCollector;
   metadata: HarnessMetadata;
 }
 
@@ -97,7 +117,12 @@ export interface HarnessSelection {
 
 export const HARNESS_ADAPTERS: Record<HarnessKey, HarnessAdapter> = {
   claude: { metadata: HARNESS_METADATA.claude, collect: collectClaude, collectResult: collectClaudeResult },
-  codex: { metadata: HARNESS_METADATA.codex, collect: collectCodex, collectResult: collectCodexResult },
+  codex: {
+    metadata: HARNESS_METADATA.codex,
+    collect: collectCodex,
+    collectResult: collectCodexResult,
+    createIncrementalCollector: createCodexIncrementalCollector,
+  },
   opencode: { metadata: HARNESS_METADATA.opencode, collect: collectOpenCode, collectResult: collectOpenCodeResult },
   cursor: { metadata: HARNESS_METADATA.cursor, collect: collectCursor, collectResult: collectCursorResult() },
 };

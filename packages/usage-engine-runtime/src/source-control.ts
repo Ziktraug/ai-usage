@@ -11,6 +11,7 @@ import {
   type WideEventSink,
   withMeasured,
 } from '@ai-usage/effect-runtime';
+import { withPerfSpan } from '@ai-usage/local-collectors/perf';
 import {
   type CollectionSourceId,
   type SourceControlView,
@@ -383,26 +384,33 @@ const runSourceJobBody = (
 ): Effect.Effect<SourceExecutionCompletion, never, WideEventResourceService | WideEventService | WideEventSink> =>
   Effect.gen(function* () {
     const controller = new AbortController();
-    const sourceExecution = source
-      .run({
+    const sourceExecution = withPerfSpan(
+      `aiUsage.engine.source.${job.sourceId}`,
+      source.run({
         reportProgress: (progress) =>
           modifyControlState(runtime, (state, modifiedAt) =>
             updateSourceProgressTransition(state, job.sourceId, progress, modifiedAt),
           ),
         signal: controller.signal,
-      })
-      .pipe(
-        withMeasured('source.execute'),
-        Effect.onInterrupt(() => Effect.sync(() => controller.abort())),
-        Effect.timeoutOption(runtime.sourceTimeout),
-        Effect.match({
-          onFailure: (): SourceExecutionCompletion => ({ _tag: 'failed', failureKind: 'source-run-error' }),
-          onSuccess: (value): SourceExecutionCompletion =>
-            Option.isNone(value)
-              ? { _tag: 'timed-out', failureKind: 'source-timeout' }
-              : { _tag: 'success', result: value.value },
-        }),
-      );
+      }),
+      (result) => ({
+        changed: result.changed,
+        inputCount: result.inputCount,
+        outputCount: result.outputCount,
+        trigger: job.trigger,
+      }),
+    ).pipe(
+      withMeasured('source.execute'),
+      Effect.onInterrupt(() => Effect.sync(() => controller.abort())),
+      Effect.timeoutOption(runtime.sourceTimeout),
+      Effect.match({
+        onFailure: (): SourceExecutionCompletion => ({ _tag: 'failed', failureKind: 'source-run-error' }),
+        onSuccess: (value): SourceExecutionCompletion =>
+          Option.isNone(value)
+            ? { _tag: 'timed-out', failureKind: 'source-timeout' }
+            : { _tag: 'success', result: value.value },
+      }),
+    );
     const observedExecution =
       job.sourceId === 'rtk.savings'
         ? runBoundaryEffect(
@@ -518,7 +526,9 @@ const runPublicationJobBody = (
   },
 ): Effect.Effect<ReportPublicationResult | undefined, never, WideEventService> =>
   Effect.gen(function* () {
-    const result = yield* runtime.options.publication.publish.pipe(
+    const result = yield* withPerfSpan('aiUsage.engine.publication', runtime.options.publication.publish, (value) => ({
+      changed: value.changed,
+    })).pipe(
       withMeasured('publication.publish'),
       Effect.match({
         onFailure: () => undefined,

@@ -38,6 +38,7 @@ import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/re
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import {
   completeSkillObservationCollection,
+  MAX_SKILL_OBSERVATION_BATCH,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
   skillObservationIdentity,
@@ -106,6 +107,8 @@ interface CodexSessionReadResult {
   /** Admitted lines the parser dropped as invalid JSON or undated, summed over the sessions. */
   malformedLines: number;
   observationCompleteness: SkillObservationCollectionCompleteness;
+  /** `changed` when only the rollouts read this pass carry their skill observations. */
+  observationScope: 'all' | 'changed';
   oversizedLines: number;
   parsedLines: number;
   parseMs: number;
@@ -133,6 +136,45 @@ interface CodexSessionCacheRow {
   mtime_ms: number;
   session_json: string;
   size: number;
+}
+
+interface ResidentCodexRollout extends CodexSessionFileStat {
+  /** How many skill observations the full session carries; the resident copy holds none. */
+  observationCount: number;
+  /** The parsed session before thread metadata is merged, without its skill observations. */
+  session: CodexSession;
+}
+
+/**
+ * What a long-running collector keeps between passes so an unchanged rollout costs one `stat`:
+ * every parsed session except its skill observations, which are four fifths of the cache and are
+ * only needed when the rollout changes. Owned by one collector; never shared between homes.
+ */
+export interface CodexResidentIndex {
+  home: string | null;
+  /**
+   * The most skill observations the rollouts may hold in total for the index to answer. It is the
+   * bound of one engine import: above it the engine truncates the full list by recency, which a
+   * pass that returns the observations of changed rollouts only cannot reproduce.
+   */
+  readonly maximumObservations: number;
+  /** Null until a complete pass has filled it, and again whenever it can no longer be trusted. */
+  rollouts: Map<string, ResidentCodexRollout> | null;
+}
+
+export const createCodexResidentIndex = (maximumObservations = MAX_SKILL_OBSERVATION_BATCH): CodexResidentIndex => ({
+  home: null,
+  maximumObservations,
+  rollouts: null,
+});
+
+export interface CodexIncrementalRead {
+  /**
+   * True asks for everything, as a collector without an index returns it: the caller could not
+   * record what an earlier pass returned, so nothing may be left out as already delivered.
+   */
+  readonly complete: boolean;
+  readonly index: CodexResidentIndex;
 }
 
 interface SqliteStatement {
@@ -192,55 +234,82 @@ select parent_thread_id as parent, child_thread_id as child
 from thread_spawn_edges
 `;
 
-const readCodexThreadMetadata: Effect.Effect<
-  Map<string, CodexThreadMetadata>,
-  LocalHistoryError,
-  LocalHistoryStorageService
-> = withPerfSpan(
-  'aiUsage.collect.codex.threadMetadata',
-  Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));
-    if (!dbPath) {
-      return new Map<string, CodexThreadMetadata>();
-    }
+// Codex writes its state database while it runs. The read-only open refuses a database whose
+// identity moves under it, so a pass that meets a write used to fall back to no metadata at all:
+// every row that takes its parent, model or origin from the database was rewritten without them and
+// rewritten again on the next pass. The check is retried before giving up.
+const CODEX_METADATA_READ_ATTEMPTS = 3;
+const CODEX_METADATA_RETRY_DELAY_MS = 100;
 
-    return yield* Effect.acquireUseRelease(
-      withPerfSpan('aiUsage.collect.codex.threadMetadata.open', storage.openDatabase(dbPath)),
-      (db) =>
-        Effect.gen(function* () {
-          const rows = yield* withPerfSpan(
-            'aiUsage.collect.codex.threadMetadata.threads',
-            db.all<CodexThreadMetadataRow>(THREAD_METADATA_SQL),
-            (value) => ({ rows: value.length }),
-          );
-          const edges = yield* withPerfSpan(
-            'aiUsage.collect.codex.threadMetadata.edges',
-            db.all<CodexThreadSpawnEdgeRow>(THREAD_SPAWN_EDGES_SQL),
-            (value) => ({ rows: value.length }),
-          );
+interface CodexThreadMetadataRead {
+  /**
+   * Why the state database gave no metadata although it exists. The sessions of the pass are then
+   * built from their rollouts alone; the caller reports it rather than let the rows change quietly.
+   */
+  failure: LocalHistoryError | null;
+  metadata: Map<string, CodexThreadMetadata>;
+}
 
-          const parents = codexParentsFromEdges(edges);
+const readCodexThreadMetadata: Effect.Effect<CodexThreadMetadataRead, LocalHistoryError, LocalHistoryStorageService> =
+  withPerfSpan(
+    'aiUsage.collect.codex.threadMetadata',
+    Effect.gen(function* () {
+      const storage = yield* LocalHistoryStorage;
+      const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));
+      if (!dbPath) {
+        return { failure: null, metadata: new Map<string, CodexThreadMetadata>() };
+      }
 
-          const metadata = new Map<string, CodexThreadMetadata>();
-          for (const row of rows) {
-            const id = nonEmpty(row.id);
-            if (!id) {
-              continue;
+      const read = Effect.acquireUseRelease(
+        // Suspended so each attempt opens the database again.
+        withPerfSpan(
+          'aiUsage.collect.codex.threadMetadata.open',
+          Effect.suspend(() => storage.openDatabase(dbPath)),
+        ),
+        (db) =>
+          Effect.gen(function* () {
+            const rows = yield* withPerfSpan(
+              'aiUsage.collect.codex.threadMetadata.threads',
+              db.all<CodexThreadMetadataRow>(THREAD_METADATA_SQL),
+              (value) => ({ rows: value.length }),
+            );
+            const edges = yield* withPerfSpan(
+              'aiUsage.collect.codex.threadMetadata.edges',
+              db.all<CodexThreadSpawnEdgeRow>(THREAD_SPAWN_EDGES_SQL),
+              (value) => ({ rows: value.length }),
+            );
+
+            const parents = codexParentsFromEdges(edges);
+
+            const metadata = new Map<string, CodexThreadMetadata>();
+            for (const row of rows) {
+              const id = nonEmpty(row.id);
+              if (!id) {
+                continue;
+              }
+              const threadMetadata = codexThreadMetadataFromRow(row, parents.get(id) ?? null);
+              if (threadMetadata) {
+                metadata.set(id, threadMetadata);
+              }
             }
-            const threadMetadata = codexThreadMetadataFromRow(row, parents.get(id) ?? null);
-            if (threadMetadata) {
-              metadata.set(id, threadMetadata);
-            }
-          }
 
-          return metadata;
-        }),
-      (db) => db.close,
-    ).pipe(Effect.catch(() => Effect.succeed(new Map<string, CodexThreadMetadata>())));
-  }),
-  (metadata) => ({ rows: metadata.size }),
-);
+            return metadata;
+          }),
+        (db) => db.close,
+      );
+      for (let attempt = 1; ; attempt++) {
+        const result = yield* Effect.result(read);
+        if (Result.isSuccess(result)) {
+          return { failure: null, metadata: result.success };
+        }
+        if (attempt >= CODEX_METADATA_READ_ATTEMPTS || result.failure.operation !== 'sqlite.identityChanged') {
+          return { failure: result.failure, metadata: new Map<string, CodexThreadMetadata>() };
+        }
+        yield* Effect.sleep(CODEX_METADATA_RETRY_DELAY_MS);
+      }
+    }),
+    (read) => ({ failed: read.failure !== null, rows: read.metadata.size }),
+  );
 
 const cloneCodexSession = (session: CodexSession): CodexSession => ({
   ...session,
@@ -259,6 +328,28 @@ const cloneCodexSession = (session: CodexSession): CodexSession => ({
   })),
   start: session.start ? new Date(session.start) : null,
   ...(session.vcs ? { vcs: parseSessionVcsContext(JSON.parse(JSON.stringify(session.vcs))) } : {}),
+});
+
+const residentCodexRollout = (stat: CodexSessionFileStat, session: CodexSession): ResidentCodexRollout => ({
+  ...stat,
+  observationCount: session.skillObservations.length,
+  session: { ...session, skillObservations: [] },
+});
+
+/**
+ * A copy `mergeMetadata` may write to. It reassigns scalar fields and `models` and rewrites each
+ * phase's model, so those are copied; dates, the VCS context and the work observation are never
+ * written after parsing and stay shared with the resident session.
+ */
+const residentCodexSessionCopy = (session: CodexSession): CodexSession => ({
+  ...session,
+  models: [...session.models],
+  phases: session.phases.map((phase) => ({ ...phase })),
+  skillObservations: [],
+  skillObservationCompleteness: {
+    exposure: { ...session.skillObservationCompleteness.exposure },
+    invocation: { ...session.skillObservationCompleteness.invocation },
+  },
 });
 
 const codexSessionCachePath = (storage: LocalHistoryStorageService) =>
@@ -474,11 +565,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
   }
 };
 
-const loadCodexSessionCache = async (storage: LocalHistoryStorageService) => {
-  if (!fs.existsSync(localCodexSessionsDir(storage))) {
-    return null;
-  }
-
+const openCodexSessionCache = async (storage: LocalHistoryStorageService): Promise<SqliteDatabase> => {
   const { Database } = await import('bun:sqlite');
   const dbPath = codexSessionCachePath(storage);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -496,7 +583,24 @@ const loadCodexSessionCache = async (storage: LocalHistoryStorageService) => {
       );
       CREATE INDEX IF NOT EXISTS idx_codex_session_cache_version ON codex_session_cache(version);
     `);
+    return db;
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // Preserve the initialization error; there is no usable cache to return.
+    }
+    throw error;
+  }
+};
 
+const loadCodexSessionCache = async (storage: LocalHistoryStorageService) => {
+  if (!fs.existsSync(localCodexSessionsDir(storage))) {
+    return null;
+  }
+
+  const db = await openCodexSessionCache(storage);
+  try {
     const entries = new Map<string, CachedCodexSessionRecord>();
     for (const row of db
       .query('SELECT file_path, size, mtime_ms, session_json FROM codex_session_cache WHERE version = ?')
@@ -517,6 +621,33 @@ const loadCodexSessionCache = async (storage: LocalHistoryStorageService) => {
     }
     throw error;
   }
+};
+
+/**
+ * The skill observations the cache holds for rollouts the index kept without them. Null when any
+ * of them has no cache entry for the very parse the index holds (same size and mtime), so the
+ * caller falls back to a complete pass instead of returning a session with part of its
+ * observations, or with those of an older parse.
+ */
+const readCachedCodexSkillObservations = (
+  db: SqliteDatabase,
+  rollouts: readonly { filePath: string; stat: CodexSessionFileStat }[],
+): Map<string, SkillObservation[]> | null => {
+  const select = db.query(
+    'SELECT size, mtime_ms, session_json FROM codex_session_cache WHERE file_path = ? AND version = ?',
+  );
+  const observations = new Map<string, SkillObservation[]>();
+  for (const { filePath, stat } of rollouts) {
+    const row = select.get(filePath, CODEX_SESSION_CACHE_VERSION) as Omit<CodexSessionCacheRow, 'file_path'> | null;
+    // The entry must be the parse the index holds: a cache write that failed leaves an older one.
+    const session =
+      row && row.size === stat.size && row.mtime_ms === stat.mtimeMs ? reviveCachedSession(row.session_json) : null;
+    if (!session) {
+      return null;
+    }
+    observations.set(filePath, session.skillObservations);
+  }
+  return observations;
 };
 
 const writeCodexSessionCache = (
@@ -592,11 +723,28 @@ const codexTitleSource = (session: CodexSession, isSubagent: boolean) => {
 
 const readCodexSessions = (
   metadata: Map<string, CodexThreadMetadata>,
+  incremental?: CodexIncrementalRead,
 ): Effect.Effect<CodexSessionReadResult, LocalHistoryError, LocalHistoryStorageService> =>
   withPerfSpan(
     'aiUsage.collect.codex.sessions',
     Effect.gen(function* () {
       const storage = yield* LocalHistoryStorage;
+      const index = incremental?.index;
+      if (index && index.home !== storage.home) {
+        index.home = storage.home;
+        index.rollouts = null;
+      }
+      const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
+      // An incremental pass reads the index instead of the cache; a complete one refills it.
+      // A pass that could not walk the archived directory is complete, and so is the one after
+      // it: the copies of the unlisted rollouts drop out of their sessions and come back on
+      // recovery, which only a complete pass returns as a full collection does.
+      const resident =
+        incremental?.complete === false && archivedWalkFailure === null ? (index?.rollouts ?? null) : null;
+      if (index && !resident) {
+        // Refilled below only when this pass can vouch for every entry.
+        index.rollouts = null;
+      }
       const sessions: CodexSession[] = [];
       let bytes = 0;
       let cacheHits = 0;
@@ -614,9 +762,11 @@ const readCodexSessions = (
       let oversizedLines = 0;
       let malformedLines = 0;
       let unreadableFiles = 0;
+      let observationCount = 0;
+      // Set when an incremental pass cannot answer exactly; it is then redone as a complete one.
+      let incrementalRefused = false;
       const readFailures: LocalHistoryError[] = [];
       const unreadablePaths = new Set<string>();
-      const { archivedWalkFailure, files } = yield* listCodexSessionFilesForCollection;
       if (archivedWalkFailure) {
         // The archived rollouts are missing from this pass, so like an
         // unreadable file each skill tier weakens by one source.
@@ -624,6 +774,11 @@ const readCodexSessions = (
         observationCompleteness.invocation.rejected += 1;
       }
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
+      const nextRollouts = new Map<string, ResidentCodexRollout>();
+      const residentHits: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
+      // Session ids whose set of rollouts moved this pass: read again, unreadable, or gone.
+      const movedSessionIds = new Set<string>();
+      const unlistedDirectory = archivedWalkFailure ? codexArchivedSessionsDir(storage) : null;
       const mergeObservationCompleteness = (value: SkillObservationCollectionCompleteness): void => {
         observationCompleteness.exposure.rejected += value.exposure.rejected;
         observationCompleteness.exposure.truncated ||= value.exposure.truncated;
@@ -633,6 +788,9 @@ const readCodexSessions = (
 
       yield* Effect.acquireUseRelease(
         Effect.gen(function* () {
+          if (resident) {
+            return null;
+          }
           const cacheReadStartedAt = Date.now();
           const sessionCache = fs.existsSync(localCodexSessionsDir(storage))
             ? yield* Effect.tryPromise({
@@ -647,8 +805,8 @@ const readCodexSessions = (
           Effect.gen(function* () {
             let sliceWorkMs = 0;
             for (const filePath of files) {
-              const stat = sessionCache ? codexFileStat(filePath) : null;
-              const cached = stat ? sessionCache?.entries.get(filePath) : null;
+              const stat = sessionCache || resident ? codexFileStat(filePath) : null;
+              const cached = stat ? (resident?.get(filePath) ?? sessionCache?.entries.get(filePath)) : null;
               if (cached && cached.size === stat?.size && cached.mtimeMs === stat.mtimeMs) {
                 cacheHits++;
                 rejectedMetricRecords += cached.session.rejectedMetricRecords;
@@ -656,7 +814,16 @@ const readCodexSessions = (
                 oversizedLines += cached.session.oversizedLines;
                 malformedLines += cached.session.malformedLines;
                 mergeObservationCompleteness(cached.session.skillObservationCompleteness);
-                const session = cloneCodexSession(cached.session);
+                let session: CodexSession;
+                if (resident) {
+                  session = residentCodexSessionCopy(cached.session);
+                  observationCount += resident.get(filePath)?.observationCount ?? 0;
+                  residentHits.push({ filePath, session, stat });
+                } else {
+                  session = cloneCodexSession(cached.session);
+                  observationCount += session.skillObservations.length;
+                  nextRollouts.set(filePath, residentCodexRollout(stat, cached.session));
+                }
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
                 if (session.id || session.start) {
                   sessions.push(session);
@@ -665,6 +832,12 @@ const readCodexSessions = (
               }
 
               cacheMisses++;
+              // The id the index held for this file counts even if the file now reads as another
+              // session or not at all: its other rollouts lose a competitor either way.
+              const previousSessionId = resident?.get(filePath)?.session.id;
+              if (previousSessionId) {
+                movedSessionIds.add(previousSessionId);
+              }
               const readStartedAt = Date.now();
               // Codex may compress or archive the rollout after it was listed;
               // the read follows it to its next form with a fresh parser.
@@ -707,13 +880,19 @@ const readCodexSessions = (
                 rejectedSkillObservationRecords += parsed.session.rejectedSkillObservationRecords;
                 skippedLines += parsed.skippedLines;
                 const session = parsed.session;
+                observationCount += session.skillObservations.length;
                 mergeObservationCompleteness(session.skillObservationCompleteness);
                 // A rollout read under another path is cached under that path
                 // by the next pass, which lists it there.
                 if (stat && read.success.path === filePath) {
-                  parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
+                  const unmerged = cloneCodexSession(session);
+                  parsedForCache.push({ filePath, session: unmerged, stat });
+                  nextRollouts.set(filePath, residentCodexRollout(stat, unmerged));
                 }
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
+                if (session.id) {
+                  movedSessionIds.add(session.id);
+                }
                 if (session.id || session.start) {
                   sessions.push(session);
                 }
@@ -725,23 +904,88 @@ const readCodexSessions = (
               }
             }
 
+            // A file that failed to read keeps no entry, not even one from an
+            // earlier scan, so a stale parse can never stand in for it.
+            const retainedFiles =
+              unreadablePaths.size === 0 ? files : files.filter((filePath) => !unreadablePaths.has(filePath));
             if (sessionCache) {
               const cacheWriteStartedAt = Date.now();
-              // A file that failed to read keeps no entry, not even one from an
-              // earlier scan, so a stale parse can never stand in for it.
-              const retainedFiles =
-                unreadablePaths.size === 0 ? files : files.filter((filePath) => !unreadablePaths.has(filePath));
               yield* Effect.try({
-                try: () =>
-                  writeCodexSessionCache(
-                    sessionCache.db,
-                    retainedFiles,
-                    parsedForCache,
-                    archivedWalkFailure ? codexArchivedSessionsDir(storage) : null,
-                  ),
+                try: () => writeCodexSessionCache(sessionCache.db, retainedFiles, parsedForCache, unlistedDirectory),
                 catch: (error) => error,
               }).pipe(Effect.ignore);
               cacheWriteMs = Date.now() - cacheWriteStartedAt;
+              if (index) {
+                // More observations than one import carries: the engine truncates the full list
+                // by recency, which a pass that returns only changed rollouts cannot reproduce.
+                // Nor can an index without the archived rollouts answer for the pass that lists them again.
+                index.rollouts =
+                  archivedWalkFailure !== null || observationCount > index.maximumObservations ? null : nextRollouts;
+              }
+            }
+            if (!resident) {
+              return;
+            }
+
+            // The index follows the same retention as the cache: an unreadable rollout loses its
+            // entry, and so does one that is no longer listed. Every directory was walked, since a
+            // pass with an unwalked one never reads the index.
+            const listed = new Set(files);
+            let removed = false;
+            for (const [filePath, rollout] of resident) {
+              if (!listed.has(filePath) || unreadablePaths.has(filePath)) {
+                resident.delete(filePath);
+                removed = true;
+                if (rollout.session.id) {
+                  movedSessionIds.add(rollout.session.id);
+                }
+              }
+            }
+            for (const [filePath, rollout] of nextRollouts) {
+              resident.set(filePath, rollout);
+            }
+            // Two rollouts can carry one session id, and their observations are deduplicated
+            // across both in session order. When one of them changed, the other's observations
+            // are needed too, or the changed copy could win an identity it loses in a full pass.
+            // When one of them left the scan, the other's copy is the observation from now on.
+            const siblings = residentHits.filter(
+              ({ session }) => session.id !== null && movedSessionIds.has(session.id),
+            );
+            if (index && observationCount > index.maximumObservations) {
+              incrementalRefused = true;
+              return;
+            }
+            if (parsedForCache.length === 0 && !removed && siblings.length === 0) {
+              return;
+            }
+            const cacheWriteStartedAt = Date.now();
+            const siblingObservations = yield* Effect.tryPromise({
+              try: async () => {
+                const db = await openCodexSessionCache(storage);
+                try {
+                  try {
+                    writeCodexSessionCache(db, retainedFiles, parsedForCache, unlistedDirectory);
+                  } catch {
+                    // The cache is for the next cold start. An entry left behind by a failed write
+                    // is older than the index, which the stat check of the read below refuses.
+                  }
+                  return readCachedCodexSkillObservations(db, siblings);
+                } finally {
+                  db.close();
+                }
+              },
+              catch: (error) => error,
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
+            cacheWriteMs = Date.now() - cacheWriteStartedAt;
+            if (siblings.length === 0) {
+              return;
+            }
+            if (siblingObservations === null) {
+              incrementalRefused = true;
+              return;
+            }
+            for (const { filePath, session } of siblings) {
+              session.skillObservations = siblingObservations.get(filePath) ?? [];
             }
           }),
         (sessionCache) =>
@@ -752,6 +996,11 @@ const readCodexSessions = (
               }).pipe(Effect.ignore)
             : Effect.succeed(undefined),
       );
+
+      if (incrementalRefused && index) {
+        index.rollouts = null;
+        return yield* readCodexSessions(metadata, { complete: true, index });
+      }
 
       sessions.sort((a, b) => (a.start?.getTime() ?? 0) - (b.start?.getTime() ?? 0));
       return {
@@ -765,6 +1014,7 @@ const readCodexSessions = (
         lines,
         malformedLines,
         observationCompleteness,
+        observationScope: resident ? ('changed' as const) : ('all' as const),
         oversizedLines,
         parseMs,
         parsedLines,
@@ -786,6 +1036,7 @@ const readCodexSessions = (
       files: result.files,
       lines: result.lines,
       malformedLines: result.malformedLines,
+      observationScope: result.observationScope,
       oversizedLines: result.oversizedLines,
       parseMs: result.parseMs,
       parsedLines: result.parsedLines,
@@ -812,6 +1063,11 @@ export interface CodexUsageSessionsResult {
   malformedLines: number;
   metricWarningContext: { affectedSessions: number; lastObservedAt?: string };
   observationCompleteness: SkillObservationCollectionCompleteness;
+  /**
+   * Present on an incremental read that returned the skill observations of the rollouts it read
+   * this pass only; the others were returned by an earlier pass. Absent means all of them.
+   */
+  observationScope?: 'changed';
   /**
    * Codex declares no skill invocations, so these are `exposed` catalogue
    * entries and `inferred` exec reads. They are collected on the same pass and
@@ -843,190 +1099,230 @@ export interface CodexUsageSessionsResult {
    */
   retiredSourceSessionIds: string[];
   sessions: CodexCollectedSession[];
+  /**
+   * Why the thread-metadata database could not be read although it exists (still being written
+   * after the retries, or a query that failed). The sessions carry what their rollouts record
+   * only; the collector surfaces it as a `codex` warning.
+   */
+  threadMetadataFailure: LocalHistoryError | null;
   /** Local-only auxiliary attention evidence from the same parser pass. */
   workObservations: CodexWorkObservation[];
 }
+
+const readCodexUsageSessionsResultWith = (
+  incremental?: CodexIncrementalRead,
+): Effect.Effect<CodexUsageSessionsResult, LocalHistoryError, LocalHistoryStorageService> =>
+  withPerfSpan(
+    'aiUsage.collect.codex.usageSessions',
+    Effect.gen(function* () {
+      const { failure: threadMetadataFailure, metadata } = yield* readCodexThreadMetadata;
+      const {
+        archivedWalkFailure,
+        malformedLines,
+        observationCompleteness,
+        observationScope,
+        oversizedLines,
+        readFailures,
+        rejectedMetricRecords,
+        rejectedSkillObservationRecords,
+        sessions: readSessions,
+      } = yield* readCodexSessions(metadata, incremental);
+      // An imported transcript leaves every Codex output here: it is neither a
+      // row nor skill or work evidence of this harness. Its id is returned so the
+      // store can retire the row an earlier pass emitted for it.
+      const importedSessionIds = new Set<string>();
+      const sessions = readSessions.filter((session) => {
+        if (!isCodexExternalImport(session)) {
+          return true;
+        }
+        if (session.id) {
+          importedSessionIds.add(session.id);
+        }
+        return false;
+      });
+      // Classified per rollout; an id is retired only when no rollout kept it as a
+      // Codex session, so an import copy never retires the native thread it shares
+      // an id with (whether that thread is emitted or deferred this pass).
+      const keptSessionIds = new Set(sessions.flatMap((session) => (session.id ? [session.id] : [])));
+      const retiredSourceSessionIds = [...importedSessionIds].filter((id) => !keptSessionIds.has(id));
+      const byId = new Map<string, CodexSession>();
+      for (const session of sessions) {
+        // A rollout and its resumed continuation share an id; the one with the
+        // larger cumulative counter is the more complete reading of the thread.
+        if (session.id && (byId.get(session.id)?.maxTotal ?? -1) < session.maxTotal) {
+          byId.set(session.id, session);
+        }
+      }
+      const children = new Map<string, CodexSession[]>();
+      for (const session of sessions) {
+        if (session.id && session.parent && byId.has(session.parent)) {
+          const siblings = children.getOrInsertComputed(session.parent, () => []);
+          siblings.push(session);
+        }
+      }
+
+      // Session ids the unread rollouts may hold, from their file names. With
+      // the archived directory unlisted, any missing ancestor may be there.
+      const unreadableSessionIds = new Set(
+        readFailures.flatMap((failure) =>
+          failure.path ? codexRolloutSessionIdCandidates(path.basename(failure.path)) : [],
+        ),
+      );
+      const isUnreadableSession = (sessionId: string): boolean =>
+        archivedWalkFailure !== null || unreadableSessionIds.has(sessionId);
+
+      const usageSessions: CodexCollectedSession[] = [];
+      let ownershipDeferredSessions = 0;
+      for (const session of sessions) {
+        if (isCodexUsageOwnershipUndecided(session, byId, isUnreadableSession)) {
+          ownershipDeferredSessions++;
+          continue;
+        }
+        const kids = (session.id && children.get(session.id)) || [];
+        const tokens = {
+          in: session.tin,
+          out: session.tout,
+          cr: session.tcr,
+          cw: 0,
+        };
+        const origin = codexOrigin(session);
+        const isSubagent = origin === 'subagent';
+        const classifierRootSourceSessionId = origin === 'classifier' ? session.classifierParent : null;
+        const parentSession = session.parent ? byId.get(session.parent) : undefined;
+        const subscription = session.subscription || Boolean(parentSession?.subscription);
+        const usageOwnedByRoot = isCodexUsageOwnedByRoot(session, byId);
+        const modelSegments = codexModelSegments(session);
+        const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
+        const costKnown = modelSegments.every((segment) => segment.costKnown);
+        usageSessions.push({
+          source: {
+            harnessKey: 'codex',
+            sourceSessionId: session.id,
+            ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
+            ...(classifierRootSourceSessionId ? { rootSourceSessionId: classifierRootSourceSessionId } : {}),
+            sourcePath: session.cwd,
+            ...(session.launchSource === null
+              ? {}
+              : { launchMode: session.launchSource === 'exec' ? ('exec' as const) : ('interactive' as const) }),
+            ...(session.vcs ? { vcs: session.vcs } : {}),
+          },
+          projectPath: session.cwd,
+          date: session.start,
+          endDate: session.end,
+          provider: subscription ? 'Codex sub' : 'Codex API',
+          model: session.model,
+          ...(usageOwnedByRoot ? {} : { modelSegments }),
+          models: session.models,
+          name: codexSessionName(session),
+          ...(origin === undefined ? { originProvenance: 'origin-absent' as const } : { origin }),
+          titleSource: codexTitleSource(session, isSubagent),
+          project: base(session.cwd),
+          tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
+          cost: subscription ? actualCost(0) : approximateApiCost,
+          costApprox: usageOwnedByRoot ? 0 : costApprox,
+          costKnown: usageOwnedByRoot || costKnown,
+          calls: 1,
+          durationMs: session.activeDurationMs ?? 0,
+          partial: session.reportPartial,
+          turns: session.turns,
+          tools: session.tools,
+          linesAdded: null,
+          linesDeleted: null,
+          subagent: isSubagent || kids.length > 0,
+          usageUnavailable: usageOwnedByRoot || !session.hasTokenUsage,
+        });
+      }
+
+      // Two rollouts can carry one session id (a thread and the rollout it was resumed into). Both
+      // became a row under one row key, so every pass rewrote the stored row twice, the first copy
+      // over the second and back, and reported a change that was none. Only the copy the store kept
+      // is emitted: the last one in session order.
+      const lastEmittedById = new Map<string, CodexCollectedSession>();
+      for (const session of usageSessions) {
+        const sessionId = session.source.sourceSessionId;
+        if (sessionId) {
+          lastEmittedById.set(sessionId, session);
+        }
+      }
+      const emittedSessions = usageSessions.filter((session) => {
+        const sessionId = session.source.sourceSessionId;
+        return !sessionId || lastEmittedById.get(sessionId) === session;
+      });
+
+      // A rollout file can appear under more than one session id, so
+      // observations are deduplicated on the identity the store keys on.
+      const observations: SkillObservation[] = [];
+      const seenObservations = new Set<string>();
+      for (const session of sessions) {
+        for (const observation of session.skillObservations) {
+          const identity = skillObservationIdentity(observation);
+          if (seenObservations.has(identity)) {
+            continue;
+          }
+          seenObservations.add(identity);
+          observations.push(observation);
+        }
+      }
+
+      const rejectedSessions = sessions.filter((session) => session.rejectedMetricRecords > 0);
+      const lastObservedAt = rejectedSessions.every((session) => session.lastRejectedMetricAt !== undefined)
+        ? rejectedSessions
+            .map((session) => session.lastRejectedMetricAt!)
+            .sort()
+            .at(-1)
+        : undefined;
+      return {
+        workObservations: sessions.flatMap((session) =>
+          session.workObservation === null ? [] : [session.workObservation],
+        ),
+        metricWarningContext: {
+          affectedSessions: rejectedSessions.length,
+          ...(lastObservedAt ? { lastObservedAt } : {}),
+        },
+        archivedWalkFailure,
+        malformedLines,
+        observationCompleteness,
+        ...(observationScope === 'changed' ? { observationScope } : {}),
+        observations,
+        oversizedLines,
+        ownershipDeferredSessions,
+        readFailures,
+        rejectedMetricRecords,
+        rejectedSkillObservationRecords,
+        retiredSourceSessionIds,
+        sessions: emittedSessions,
+        threadMetadataFailure,
+      };
+    }),
+    (result) => ({
+      archivedWalkFailed: result.archivedWalkFailure !== null,
+      malformedLines: result.malformedLines,
+      observations: result.observations.length,
+      ownershipDeferredSessions: result.ownershipDeferredSessions,
+      oversizedLines: result.oversizedLines,
+      rejectedMetricRecords: result.rejectedMetricRecords,
+      rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
+      retiredSourceSessions: result.retiredSourceSessionIds.length,
+      sessions: result.sessions.length,
+      unreadableFiles: result.readFailures.length,
+    }),
+  );
 
 export const readCodexUsageSessionsResult: Effect.Effect<
   CodexUsageSessionsResult,
   LocalHistoryError,
   LocalHistoryStorageService
-> = withPerfSpan(
-  'aiUsage.collect.codex.usageSessions',
-  Effect.gen(function* () {
-    const metadata = yield* readCodexThreadMetadata;
-    const {
-      archivedWalkFailure,
-      malformedLines,
-      observationCompleteness,
-      oversizedLines,
-      readFailures,
-      rejectedMetricRecords,
-      rejectedSkillObservationRecords,
-      sessions: readSessions,
-    } = yield* readCodexSessions(metadata);
-    // An imported transcript leaves every Codex output here: it is neither a
-    // row nor skill or work evidence of this harness. Its id is returned so the
-    // store can retire the row an earlier pass emitted for it.
-    const importedSessionIds = new Set<string>();
-    const sessions = readSessions.filter((session) => {
-      if (!isCodexExternalImport(session)) {
-        return true;
-      }
-      if (session.id) {
-        importedSessionIds.add(session.id);
-      }
-      return false;
-    });
-    // Classified per rollout; an id is retired only when no rollout kept it as a
-    // Codex session, so an import copy never retires the native thread it shares
-    // an id with (whether that thread is emitted or deferred this pass).
-    const keptSessionIds = new Set(sessions.flatMap((session) => (session.id ? [session.id] : [])));
-    const retiredSourceSessionIds = [...importedSessionIds].filter((id) => !keptSessionIds.has(id));
-    const byId = new Map<string, CodexSession>();
-    for (const session of sessions) {
-      // A rollout and its resumed continuation share an id; the one with the
-      // larger cumulative counter is the more complete reading of the thread.
-      if (session.id && (byId.get(session.id)?.maxTotal ?? -1) < session.maxTotal) {
-        byId.set(session.id, session);
-      }
-    }
-    const children = new Map<string, CodexSession[]>();
-    for (const session of sessions) {
-      if (session.id && session.parent && byId.has(session.parent)) {
-        const siblings = children.getOrInsertComputed(session.parent, () => []);
-        siblings.push(session);
-      }
-    }
+> = readCodexUsageSessionsResultWith();
 
-    // Session ids the unread rollouts may hold, from their file names. With
-    // the archived directory unlisted, any missing ancestor may be there.
-    const unreadableSessionIds = new Set(
-      readFailures.flatMap((failure) =>
-        failure.path ? codexRolloutSessionIdCandidates(path.basename(failure.path)) : [],
-      ),
-    );
-    const isUnreadableSession = (sessionId: string): boolean =>
-      archivedWalkFailure !== null || unreadableSessionIds.has(sessionId);
-
-    const usageSessions: CodexCollectedSession[] = [];
-    let ownershipDeferredSessions = 0;
-    for (const session of sessions) {
-      if (isCodexUsageOwnershipUndecided(session, byId, isUnreadableSession)) {
-        ownershipDeferredSessions++;
-        continue;
-      }
-      const kids = (session.id && children.get(session.id)) || [];
-      const tokens = {
-        in: session.tin,
-        out: session.tout,
-        cr: session.tcr,
-        cw: 0,
-      };
-      const origin = codexOrigin(session);
-      const isSubagent = origin === 'subagent';
-      const classifierRootSourceSessionId = origin === 'classifier' ? session.classifierParent : null;
-      const parentSession = session.parent ? byId.get(session.parent) : undefined;
-      const subscription = session.subscription || Boolean(parentSession?.subscription);
-      const usageOwnedByRoot = isCodexUsageOwnedByRoot(session, byId);
-      const modelSegments = codexModelSegments(session);
-      const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
-      const costKnown = modelSegments.every((segment) => segment.costKnown);
-      usageSessions.push({
-        source: {
-          harnessKey: 'codex',
-          sourceSessionId: session.id,
-          ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
-          ...(classifierRootSourceSessionId ? { rootSourceSessionId: classifierRootSourceSessionId } : {}),
-          sourcePath: session.cwd,
-          ...(session.launchSource === null
-            ? {}
-            : { launchMode: session.launchSource === 'exec' ? ('exec' as const) : ('interactive' as const) }),
-          ...(session.vcs ? { vcs: session.vcs } : {}),
-        },
-        projectPath: session.cwd,
-        date: session.start,
-        endDate: session.end,
-        provider: subscription ? 'Codex sub' : 'Codex API',
-        model: session.model,
-        ...(usageOwnedByRoot ? {} : { modelSegments }),
-        models: session.models,
-        name: codexSessionName(session),
-        ...(origin === undefined ? { originProvenance: 'origin-absent' as const } : { origin }),
-        titleSource: codexTitleSource(session, isSubagent),
-        project: base(session.cwd),
-        tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
-        cost: subscription ? actualCost(0) : approximateApiCost,
-        costApprox: usageOwnedByRoot ? 0 : costApprox,
-        costKnown: usageOwnedByRoot || costKnown,
-        calls: 1,
-        durationMs: session.activeDurationMs ?? 0,
-        partial: session.reportPartial,
-        turns: session.turns,
-        tools: session.tools,
-        linesAdded: null,
-        linesDeleted: null,
-        subagent: isSubagent || kids.length > 0,
-        usageUnavailable: usageOwnedByRoot || !session.hasTokenUsage,
-      });
-    }
-
-    // A rollout file can appear under more than one session id, so
-    // observations are deduplicated on the identity the store keys on.
-    const observations: SkillObservation[] = [];
-    const seenObservations = new Set<string>();
-    for (const session of sessions) {
-      for (const observation of session.skillObservations) {
-        const identity = skillObservationIdentity(observation);
-        if (seenObservations.has(identity)) {
-          continue;
-        }
-        seenObservations.add(identity);
-        observations.push(observation);
-      }
-    }
-
-    const rejectedSessions = sessions.filter((session) => session.rejectedMetricRecords > 0);
-    const lastObservedAt = rejectedSessions.every((session) => session.lastRejectedMetricAt !== undefined)
-      ? rejectedSessions
-          .map((session) => session.lastRejectedMetricAt!)
-          .sort()
-          .at(-1)
-      : undefined;
-    return {
-      workObservations: sessions.flatMap((session) =>
-        session.workObservation === null ? [] : [session.workObservation],
-      ),
-      metricWarningContext: {
-        affectedSessions: rejectedSessions.length,
-        ...(lastObservedAt ? { lastObservedAt } : {}),
-      },
-      archivedWalkFailure,
-      malformedLines,
-      observationCompleteness,
-      observations,
-      oversizedLines,
-      ownershipDeferredSessions,
-      readFailures,
-      rejectedMetricRecords,
-      rejectedSkillObservationRecords,
-      retiredSourceSessionIds,
-      sessions: usageSessions,
-    };
-  }),
-  (result) => ({
-    archivedWalkFailed: result.archivedWalkFailure !== null,
-    malformedLines: result.malformedLines,
-    observations: result.observations.length,
-    ownershipDeferredSessions: result.ownershipDeferredSessions,
-    oversizedLines: result.oversizedLines,
-    rejectedMetricRecords: result.rejectedMetricRecords,
-    rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
-    retiredSourceSessions: result.retiredSourceSessionIds.length,
-    sessions: result.sessions.length,
-    unreadableFiles: result.readFailures.length,
-  }),
-);
+/**
+ * The same result read through a resident index: rows, work observations and retirements are
+ * always complete, and an unchanged rollout costs one `stat`. Skill observations are complete on a
+ * `complete` read and otherwise limited to the rollouts read this pass (`observationScope`).
+ */
+export const readCodexUsageSessionsIncrementally = (
+  incremental: CodexIncrementalRead,
+): Effect.Effect<CodexUsageSessionsResult, LocalHistoryError, LocalHistoryStorageService> =>
+  readCodexUsageSessionsResultWith(incremental);
 
 export const readCodexUsageSessions: Effect.Effect<
   CodexCollectedSession[],

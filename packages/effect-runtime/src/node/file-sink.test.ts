@@ -19,13 +19,14 @@ import path from 'node:path';
 import { Effect } from 'effect';
 import { runBoundaryEffect } from '../boundary';
 import type { WideEventSnapshot } from '../model';
-import { makeTestWideEventSinkLayer } from '../sink';
+import { makeTestWideEventSinkLayer, WideEventSink } from '../sink';
 import {
   appendLineToOwnedFile,
   appendLineToOwnedHandle,
   createFileWideEventSink,
   type FileWideEventWarning,
 } from './file-sink';
+import { makeEngineWideEventSinkLayer } from './index';
 import { acquireCooperativeLock, ensureOwnedLogDirectory, withCooperativeLock } from './lock';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
@@ -225,7 +226,12 @@ describe('node wide-event sinks', () => {
     releaseOpen();
     await sink.drain();
     expect(await withCooperativeLock(directory, async () => 'acquired', 200)).toBe('acquired');
-    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 0, dropped: 0, failed: 1 });
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 0,
+      circuit: 'open',
+      dropped: 0,
+      failed: 1,
+    });
     await sink.dispose();
   });
 
@@ -328,7 +334,12 @@ describe('node wide-event sinks', () => {
     await sink.drain();
 
     expect(warnings).toEqual([]);
-    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 1, dropped: 0, failed: 0 });
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 1,
+      circuit: 'closed',
+      dropped: 0,
+      failed: 0,
+    });
     expect(readFileSync(filePath, 'utf8')).toContain('busy-loop');
     await sink.dispose();
   });
@@ -357,7 +368,12 @@ describe('node wide-event sinks', () => {
     await sink.drain();
 
     expect(warnings).toEqual([]);
-    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 1, dropped: 0, failed: 0 });
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 1,
+      circuit: 'closed',
+      dropped: 0,
+      failed: 0,
+    });
     await sink.dispose();
   });
 
@@ -418,8 +434,381 @@ describe('node wide-event sinks', () => {
     releaseAppend();
     await sink.drain();
     expect(await withCooperativeLock(directory, async () => 'acquired', 200)).toBe('acquired');
-    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 0, dropped: 1, failed: 1 });
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 0,
+      circuit: 'open',
+      dropped: 1,
+      failed: 1,
+    });
     await sink.dispose();
+  });
+
+  test('recovers after the cool-down: a fast append closes the circuit and later events are written', async () => {
+    const directory = makeTempDir();
+    let current = new Date('2026-07-21T12:00:00.000Z');
+    const written: string[] = [];
+    const warnings: FileWideEventWarning[] = [];
+    let slow = true;
+    let signalAppendTimeout!: () => void;
+    const appendTimedOut = new Promise<void>((resolve) => {
+      signalAppendTimeout = resolve;
+    });
+    const sink = createFileWideEventSink({
+      appendLine: async (_filePath, line, signal) => {
+        if (slow) {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return;
+        }
+        written.push((JSON.parse(line) as WideEventSnapshot).eventId);
+      },
+      appendTimeoutMs: 20,
+      circuitCooldownMs: 30_000,
+      directory,
+      monotonicNowMs: () => current.getTime(),
+      now: () => current,
+      warn: (warning) => {
+        warnings.push(warning);
+        if (warning.kind === 'append-timeout') {
+          signalAppendTimeout();
+        }
+      },
+    });
+
+    // The slow append opens the circuit and the two events queued behind it are dropped.
+    await Effect.runPromise(sink.submit(sampleEvent('slow')));
+    await Effect.runPromise(sink.submit(sampleEvent('pending-1')));
+    await Effect.runPromise(sink.submit(sampleEvent('pending-2')));
+    await appendTimedOut;
+    await sink.drain();
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 0,
+      circuit: 'open',
+      dropped: 2,
+      failed: 1,
+    });
+
+    // Inside the cool-down nothing is attempted: the event is dropped and counted.
+    slow = false;
+    current = new Date('2026-07-21T12:00:29.000Z');
+    await Effect.runPromise(sink.submit(sampleEvent('inside-cool-down')));
+    await sink.drain();
+    expect(written).toEqual([]);
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 0,
+      circuit: 'open',
+      dropped: 3,
+      failed: 1,
+    });
+
+    // After the cool-down the next event is the probe; its fast append closes the circuit.
+    current = new Date('2026-07-21T12:00:30.000Z');
+    await Effect.runPromise(sink.submit(sampleEvent('probe')));
+    await sink.drain();
+    await Effect.runPromise(sink.submit(sampleEvent('after-recovery')));
+    await sink.drain();
+
+    expect(written).toEqual(['probe', 'after-recovery']);
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 2,
+      circuit: 'closed',
+      dropped: 3,
+      failed: 1,
+    });
+    expect(warnings.map(({ kind }) => kind)).toEqual(['append-timeout', 'circuit-open', 'circuit-closed']);
+    expect(warnings.at(-1)?.counters).toEqual({ dropped: 3, failed: 1 });
+    await sink.dispose();
+  });
+
+  test('measures the cool-down on the monotonic clock: a stepped wall clock neither cuts nor stretches it', async () => {
+    const directory = makeTempDir();
+    let wallClock = new Date('2026-07-21T12:00:00.000Z');
+    let monotonicMs = 5000;
+    let slow = true;
+    const written: string[] = [];
+    const sink = createFileWideEventSink({
+      appendLine: async (_filePath, line, signal) => {
+        if (slow) {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return;
+        }
+        written.push((JSON.parse(line) as WideEventSnapshot).eventId);
+      },
+      appendTimeoutMs: 15,
+      circuitCooldownMs: 1000,
+      directory,
+      drainTimeoutMs: 10_000,
+      monotonicNowMs: () => monotonicMs,
+      now: () => wallClock,
+    });
+
+    const submit = async (id: string) => {
+      await Effect.runPromise(sink.submit(sampleEvent(id)));
+      await sink.drain();
+      return { diagnostics: await Effect.runPromise(sink.diagnostics()), written: [...written] };
+    };
+
+    expect(await submit('slow')).toEqual({
+      diagnostics: { accepted: 0, circuit: 'open', dropped: 0, failed: 1 },
+      written: [],
+    });
+    slow = false;
+
+    // The wall clock steps two hours back while the circuit is open. The cool-down still ends one
+    // second after the timeout: not before, and not two hours later.
+    wallClock = new Date('2026-07-21T10:00:00.000Z');
+    monotonicMs = 5999;
+    expect(await submit('inside-cool-down')).toEqual({
+      diagnostics: { accepted: 0, circuit: 'open', dropped: 1, failed: 1 },
+      written: [],
+    });
+    monotonicMs = 6000;
+    expect(await submit('probe-after-step-back')).toEqual({
+      diagnostics: { accepted: 1, circuit: 'closed', dropped: 1, failed: 1 },
+      written: ['probe-after-step-back'],
+    });
+
+    // A wall clock that jumps ahead does not cut the next cool-down short either.
+    slow = true;
+    monotonicMs = 7000;
+    expect(await submit('slow-again')).toEqual({
+      diagnostics: { accepted: 1, circuit: 'open', dropped: 1, failed: 2 },
+      written: ['probe-after-step-back'],
+    });
+    slow = false;
+    wallClock = new Date('2026-07-21T13:00:00.000Z');
+    monotonicMs = 7999;
+    expect(await submit('inside-second-cool-down')).toEqual({
+      diagnostics: { accepted: 1, circuit: 'open', dropped: 2, failed: 2 },
+      written: ['probe-after-step-back'],
+    });
+    monotonicMs = 8000;
+    expect(await submit('probe-after-jump-ahead')).toEqual({
+      diagnostics: { accepted: 2, circuit: 'closed', dropped: 2, failed: 2 },
+      written: ['probe-after-step-back', 'probe-after-jump-ahead'],
+    });
+    await sink.dispose();
+  });
+
+  test('a probe that misses its deadline doubles the cool-down, and the cap bounds the doubling', async () => {
+    const directory = makeTempDir();
+    let monotonicMs = 0;
+    let appendCount = 0;
+    const sink = createFileWideEventSink({
+      appendLine: async (_filePath, _line, signal) => {
+        appendCount += 1;
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+      appendTimeoutMs: 15,
+      circuitCooldownMs: 1000,
+      circuitMaxCooldownMs: 3000,
+      directory,
+      drainTimeoutMs: 10_000,
+      monotonicNowMs: () => monotonicMs,
+    });
+    // A probe is an append attempt: it shows in the append count and, once it has missed its
+    // deadline, in the failed counter. A record inside the cool-down only adds to the dropped
+    // counter. The `append-timeout` warning is rate-limited, so it cannot tell the two apart here.
+    const submitAt = async (atMs: number, id: string) => {
+      monotonicMs = atMs;
+      await Effect.runPromise(sink.submit(sampleEvent(id)));
+      await sink.drain();
+      const { dropped, failed } = await Effect.runPromise(sink.diagnostics());
+      return { appends: appendCount, dropped, failed };
+    };
+
+    expect(await submitAt(0, 'opens')).toEqual({ appends: 1, dropped: 0, failed: 1 });
+    // First cool-down, 1 s: it ends at 1,000.
+    expect(await submitAt(999, 'inside-first-cool-down')).toEqual({ appends: 1, dropped: 1, failed: 1 });
+    expect(await submitAt(1000, 'probe-1')).toEqual({ appends: 2, dropped: 1, failed: 2 });
+    // Doubled to 2 s: it ends at 3,000.
+    expect(await submitAt(2999, 'inside-doubled-cool-down')).toEqual({ appends: 2, dropped: 2, failed: 2 });
+    expect(await submitAt(3000, 'probe-2')).toEqual({ appends: 3, dropped: 2, failed: 3 });
+    // Doubling again would give 4 s and end at 7,000. The cap makes it 3 s: it ends at 6,000, and
+    // the record submitted then is a probe.
+    expect(await submitAt(5999, 'inside-capped-cool-down')).toEqual({ appends: 3, dropped: 3, failed: 3 });
+    expect(await submitAt(6000, 'probe-3')).toEqual({ appends: 4, dropped: 3, failed: 4 });
+    // It stays at the cap: the next cool-down is 3 s again and ends at 9,000.
+    expect(await submitAt(8999, 'inside-second-capped-cool-down')).toEqual({ appends: 4, dropped: 4, failed: 4 });
+    expect(await submitAt(9000, 'probe-4')).toEqual({ appends: 5, dropped: 4, failed: 5 });
+
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 0,
+      circuit: 'open',
+      dropped: 4,
+      failed: 5,
+    });
+    await sink.dispose();
+  });
+
+  test('does not probe while the blocked append still holds the worker', async () => {
+    const directory = makeTempDir();
+    let current = new Date('2026-07-21T12:00:00.000Z');
+    let appendCount = 0;
+    const written: string[] = [];
+    let releaseAppend!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let signalAppendTimeout!: () => void;
+    const appendTimedOut = new Promise<void>((resolve) => {
+      signalAppendTimeout = resolve;
+    });
+    const sink = createFileWideEventSink({
+      appendLine: async (_filePath, line) => {
+        appendCount += 1;
+        if (appendCount === 1) {
+          await blocked;
+          return;
+        }
+        written.push((JSON.parse(line) as WideEventSnapshot).eventId);
+      },
+      appendTimeoutMs: 15,
+      circuitCooldownMs: 1000,
+      directory,
+      monotonicNowMs: () => current.getTime(),
+      now: () => current,
+      warn: ({ kind }) => {
+        if (kind === 'append-timeout') {
+          signalAppendTimeout();
+        }
+      },
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('non-cooperative')));
+    await appendTimedOut;
+    current = new Date('2026-07-21T12:01:00.000Z');
+    await Effect.runPromise(sink.submit(sampleEvent('worker-still-blocked')));
+
+    expect(appendCount).toBe(1);
+    expect(await Effect.runPromise(sink.diagnostics())).toMatchObject({ circuit: 'open', dropped: 1 });
+
+    releaseAppend();
+    await sink.drain();
+    await Effect.runPromise(sink.submit(sampleEvent('probe-after-release')));
+    await sink.drain();
+
+    expect(written).toEqual(['probe-after-release']);
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 1,
+      circuit: 'closed',
+      dropped: 1,
+      failed: 1,
+    });
+    await sink.dispose();
+  });
+
+  test('an ordinary probe failure keeps the circuit half-open until an append succeeds', async () => {
+    const directory = makeTempDir();
+    let current = new Date('2026-07-21T12:00:00.000Z');
+    let mode: 'slow' | 'failing' | 'fast' = 'slow';
+    const written: string[] = [];
+    let signalAppendTimeout!: () => void;
+    const appendTimedOut = new Promise<void>((resolve) => {
+      signalAppendTimeout = resolve;
+    });
+    const sink = createFileWideEventSink({
+      appendLine: async (_filePath, line, signal) => {
+        if (mode === 'slow') {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return;
+        }
+        if (mode === 'failing') {
+          throw new Error('disk refused the write');
+        }
+        written.push((JSON.parse(line) as WideEventSnapshot).eventId);
+      },
+      appendTimeoutMs: 15,
+      circuitCooldownMs: 1000,
+      directory,
+      monotonicNowMs: () => current.getTime(),
+      now: () => current,
+      warn: ({ kind }) => {
+        if (kind === 'append-timeout') {
+          signalAppendTimeout();
+        }
+      },
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('slow')));
+    await appendTimedOut;
+    await sink.drain();
+    mode = 'failing';
+    current = new Date('2026-07-21T12:00:01.000Z');
+    await Effect.runPromise(sink.submit(sampleEvent('failed-probe')));
+    await sink.drain();
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 0,
+      circuit: 'half-open',
+      dropped: 0,
+      failed: 2,
+    });
+
+    mode = 'fast';
+    await Effect.runPromise(sink.submit(sampleEvent('next-probe')));
+    await sink.drain();
+    expect(written).toEqual(['next-probe']);
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 1,
+      circuit: 'closed',
+      dropped: 0,
+      failed: 2,
+    });
+    await sink.dispose();
+  });
+
+  test('the shutdown loss summary reports the circuit state beside the counters', async () => {
+    const directory = makeTempDir();
+    const consoleLines: string[] = [];
+    let signalAppendTimeout!: () => void;
+    const appendTimedOut = new Promise<void>((resolve) => {
+      signalAppendTimeout = resolve;
+    });
+    const layer = makeEngineWideEventSinkLayer({
+      appendLine: async (_filePath, _line, signal) => {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      },
+      appendTimeoutMs: 15,
+      consoleWrite: (line) => {
+        consoleLines.push(line);
+        if (line.startsWith('[wide-event:file] append-timeout ')) {
+          signalAppendTimeout();
+        }
+      },
+      directory,
+      resource: {
+        instanceId: 'fixture-instance',
+        runtimeMode: 'test',
+        serviceName: 'ai-usage',
+        serviceVersion: '0.1.0-test',
+        surface: 'engine',
+      },
+      silenceConsole: true,
+    });
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sink = yield* WideEventSink;
+          yield* sink.submit(sampleEvent('slow'));
+          yield* Effect.promise(() => appendTimedOut);
+          yield* sink.submit(sampleEvent('dropped-while-open'));
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+
+    expect(consoleLines).toContain(
+      '[wide-event] delivery summary file(dropped=1,failed=1,circuit=open) console(dropped=0,failed=0)',
+    );
   });
 
   test('rate-limits typed warning kinds without exposing append errors', async () => {
@@ -569,7 +958,12 @@ describe('node wide-event sinks', () => {
     await disposal;
 
     expect(writtenEventIds).toEqual(['exit-first', 'exit-second']);
-    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 2, dropped: 0, failed: 0 });
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({
+      accepted: 2,
+      circuit: 'closed',
+      dropped: 0,
+      failed: 0,
+    });
   });
 
   test('dispose aborts an active append when the drain deadline expires', async () => {

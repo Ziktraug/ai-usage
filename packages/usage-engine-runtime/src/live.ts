@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { runBoundaryEffect, WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
+import { withPerfSpan, withPerfSpanPromise } from '@ai-usage/local-collectors/perf';
 import {
   createLocalHistoryStorage,
   LocalHistoryStorage,
@@ -1236,52 +1237,67 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
     const publishFingerprint = await Effect.runPromise(
       readStoredReportSourceFingerprint({ config: publishConfig, dbPath: options.dbPath }),
     );
+    const assemble = async ({ generations }: { readonly generations: UsageStoreGenerations }) => {
+      const beforeConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
+      const before = await Effect.runPromise(
+        readStoredReportSourceFingerprint({ config: beforeConfig, dbPath: options.dbPath }),
+      );
+      if (!sameGenerations(before, generations)) {
+        throw new Error('Stored report generations changed before publication assembly.');
+      }
+      const capture = await Effect.runPromise(
+        createStoredReportCapture({
+          config: beforeConfig,
+          dbPath: options.dbPath,
+          generatedAt: publicationTime,
+          harness: null,
+          includeCursor: true,
+          includeFacets: true,
+          machine: options.machine,
+          options: {
+            limit: null,
+            minTokens: 1,
+            project: null,
+            since: null,
+            sort: 'date',
+          },
+        }),
+      );
+      const afterConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
+      const after = await Effect.runPromise(
+        readStoredReportSourceFingerprint({ config: afterConfig, dbPath: options.dbPath }),
+      );
+      if (!(sameGenerations(after, generations) && before.configFingerprint === after.configFingerprint)) {
+        throw new Error('Stored report sources changed during publication assembly.');
+      }
+      return toStoredReportPublicationCapture(capture, after.configFingerprint);
+    };
+    // The revision span contains the assemble span; their difference is the store-side work
+    // (fingerprints, projection write and validation) inside the publication transaction.
     const result = await Effect.runPromise(
-      publishServedReportRevision({
-        assemble: async ({ generations }) => {
-          const beforeConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
-          const before = await Effect.runPromise(
-            readStoredReportSourceFingerprint({ config: beforeConfig, dbPath: options.dbPath }),
-          );
-          if (!sameGenerations(before, generations)) {
-            throw new Error('Stored report generations changed before publication assembly.');
-          }
-          const capture = await Effect.runPromise(
-            createStoredReportCapture({
-              config: beforeConfig,
-              dbPath: options.dbPath,
-              generatedAt: publicationTime,
-              harness: null,
-              includeCursor: true,
-              includeFacets: true,
-              machine: options.machine,
-              options: {
-                limit: null,
-                minTokens: 1,
-                project: null,
-                since: null,
-                sort: 'date',
-              },
-            }),
-          );
-          const afterConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
-          const after = await Effect.runPromise(
-            readStoredReportSourceFingerprint({ config: afterConfig, dbPath: options.dbPath }),
-          );
-          if (!(sameGenerations(after, generations) && before.configFingerprint === after.configFingerprint)) {
-            throw new Error('Stored report sources changed during publication assembly.');
-          }
-          return toStoredReportPublicationCapture(capture, after.configFingerprint);
-        },
-        dbPath: options.dbPath,
-        now: publicationTime.getTime(),
-        revision: nextRevision(),
-        revisionValidationCache: validationCache,
-        unchangedConfigFingerprint: publishFingerprint.configFingerprint,
-      }),
+      withPerfSpan(
+        'aiUsage.engine.publication.revision',
+        publishServedReportRevision({
+          assemble: async (input) =>
+            await withPerfSpanPromise(
+              'aiUsage.engine.publication.assemble',
+              async () => await assemble(input),
+              (capture) => ({ rows: capture.rows.length }),
+            ),
+          dbPath: options.dbPath,
+          now: publicationTime.getTime(),
+          revision: nextRevision(),
+          revisionValidationCache: validationCache,
+          unchangedConfigFingerprint: publishFingerprint.configFingerprint,
+        }),
+        (published) => ({ changed: published.changed, renewed: published.renewed }),
+      ),
     );
     try {
-      await retainRevisions({ dbPath: options.dbPath, now: publicationTime.getTime() });
+      await withPerfSpanPromise(
+        'aiUsage.engine.publication.retainRevisions',
+        async () => await retainRevisions({ dbPath: options.dbPath, now: publicationTime.getTime() }),
+      );
     } catch (cause) {
       try {
         options.reportRetentionFailure?.(cause);
@@ -1291,7 +1307,11 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
     }
     if (result.changed && options.reconcileWorkBranches) {
       try {
-        await options.reconcileWorkBranches({ config: publishConfig, now: publicationTime });
+        const reconcileWorkBranches = options.reconcileWorkBranches;
+        await withPerfSpanPromise(
+          'aiUsage.engine.publication.reconcileWorkBranches',
+          async () => await reconcileWorkBranches({ config: publishConfig, now: publicationTime }),
+        );
       } catch {
         // Its own observed boundary records the failure; the publication stays committed.
       }

@@ -1,7 +1,7 @@
 # ADR 0014: `@ai-usage/effect-runtime` owns wide-event primitives
 
 - **Status**: Accepted
-- **Date**: 2026-07-21
+- **Date**: 2026-07-21; amended 2026-11-18 (the file circuit recovers)
 - **Formerly**: numbered ADR 0002; renumbered 2026-08-25 to resolve the
   collision with the immutable-focused-report-revisions ADR. References to
   "ADR 0002" in ADR 0008 and plans 036/037 mean this record.
@@ -50,12 +50,41 @@ keep this record's 2026-07-21 text, and ADR 0008 keeps its rationale.
   rotates before 50 MiB and the 30 newest files are kept. Delivery is bounded
   and best-effort: queue, lock, filesystem and serialization failures drop
   records and never fail business work. An append timeout opens the circuit
-  while the stuck append and its lock settle on their own; retention sweeps run
-  on the first successful append and on rotation, not on steady-state appends.
-  File warnings use typed, bounded, rate-limited kinds on the console only, and
-  shutdown prints a loss summary (ADR 0008).
+  while the stuck append and its lock settle on their own; the circuit recovers
+  (2026-11-18 amendment below). Retention sweeps run on the first successful
+  append and on rotation, not on steady-state appends. File warnings use typed,
+  bounded, rate-limited kinds on the console only, and shutdown prints a loss
+  summary (ADR 0008).
 - **Never**: raw causes, payloads, prompts or credentials in a record, OTLP, or
   a remote exporter.
+
+### 2026-11-18 amendment (plan 126)
+
+An open circuit used to stay open for the life of the process: one append that
+missed its one-second deadline silenced the engine's file log until restart. It
+now recovers. While open, the sink drops and counts every record. Once the
+cool-down has passed (30 s by default) and the blocked append has released the
+worker and the lock, the next record is tried as a probe (half-open). The first
+append that succeeds closes the circuit and later records are written. A probe
+that misses its deadline reopens the circuit and doubles the cool-down, up to
+ten minutes; any other probe failure is counted and leaves the circuit
+half-open. There is no timer: recovery is decided when a record arrives. The
+cool-down is measured on a monotonic clock, so a stepped wall clock neither
+stretches nor cuts it.
+
+Limitation, accepted: an append that never settles. Recovery waits for the
+blocked append to release the worker and the lock. An append that never returns
+(a hung write or close, for example on a stuck mount) therefore keeps the
+circuit open for the life of the process, and other processes writing to the
+same directory time out on the lock. The stuck append is not abandoned, because
+a second append beside one that may still write could interleave or tear lines
+in the file. The loss stays counted and reported as below; recovery needs a
+restart.
+
+The state is reported where sink health already is: the `append-timeout` and
+`circuit-open` warnings, a new `circuit-closed` warning carrying the dropped
+and failed counters, the `circuit` field of the file transport's diagnostics
+(`closed`, `half-open`, `open`), and `circuit=` in the shutdown loss summary.
 
 ## Context
 

@@ -180,3 +180,1091 @@ bun run verify
 ```
 
 Real-data proof on a **copy** of the live store: run the engine with `AI_USAGE_PERF=1` before and after, sample `VmRSS` at 1 s for ≥ 5 cycles each, compare the served revision fingerprints for an identical input snapshot, and report the per-phase tables.
+
+## Execution notes
+
+### 2026-11-18 — Steps 0, 1 and 2 (branch `perf/engine-minute-cycle-cost`, from `037edb83`)
+
+Steps 3 to 5 are not started. Figures only: no prompt, title, project name or
+home path was copied out of the histories.
+
+#### Drift since `a42fc803`
+
+The drift check reports 982 insertions and 745 deletions over nine of the
+thirteen in-scope files (the collector-coherence fixes of 2026-11: explicit row
+retirement, OpenCode `session_v2`, Claude checkout attribution, Codex transcript
+retirement). `perf.ts`, `live.ts`, `served-report-store.ts` and `file-sink.ts`
+are unchanged. Every seam named in the plan still exists, but the line numbers
+in "Measured current state" no longer apply, and the OpenCode figures in
+section C are out of date: the collector now reads two databases and emits 878
+rows (209 from the stable database), not ~722.
+
+The plan names one `perf.ts`. There are two identical copies, one in
+`local-collectors` and one in `report-data`, because the package boundary
+rules forbid `report-data` from importing `local-collectors` or
+`effect-runtime`. Both were extended the same way. `usage-engine-runtime` had
+none and now imports the `local-collectors` one through a new `./perf` export.
+
+#### Step 0 — measurement target
+
+`docs/local-store-upgrade.md` ("Update") documents the supported way, with no
+code change. The engine ran as `bun --no-env-file src/main.ts serve --port 0`
+from `apps/usage-engine`, with:
+
+| Variable | Value | Why |
+| --- | --- | --- |
+| `AI_USAGE_DATABASE_PATH` | `<base>/home/.config/ai-usage/usage-store.sqlite` | the copy; its writer lock sits beside it |
+| `AI_USAGE_ENGINE_STATE_DIR` | `<base>/state` (`0700`) | own `rendezvous.json`, inbox and delegation directory |
+| `AI_USAGE_HOME` | `<base>/home` | harness caches, `machine.json` and `config.json` stay apart from the live ones |
+| `AI_USAGE_ROOT_DIR` | `<base>/root` | a copy of `ai-usage.config.ts`; the engine repairs modes under this root, so it must not be the main checkout |
+| `AI_USAGE_LOG_DIR` | `<base>/logs` | wide events outside the repository |
+| `AI_USAGE_TEMP_ROOT` | `<base>/tmp` | startup recovery sweeps this root |
+| `AI_USAGE_PERF` | `1` | spans on stderr |
+
+`<base>` is a `0700` directory outside the repository. `--port 0` asks the
+kernel for a free loopback port, published only in the copy's
+`rendezvous.json`, so it cannot collide with another engine.
+
+- **Copy.** `VACUUM INTO` through a read-only connection: 450.7 MB live,
+  372.8 MB copy, `user_version` 5, `integrity_check` ok, live mtime unchanged
+  by the copy, no `-wal` or `-shm` left beside the live store.
+- **Histories.** `AI_USAGE_HOME` moves the history roots together with the
+  caches. The measurement home therefore holds a symlink for each history root
+  (Claude Code, Claude Desktop, Codex, Cursor, OpenCode, RTK) and copies of
+  `machine.json` and `config.json`. The no-follow readers refuse a symlink only
+  as the last path component, so a linked parent directory is read normally.
+  Proof that the same histories were read under the same machine identity: the
+  first pass matched the copy's rows (Codex 5,130 unchanged and 2 updated of
+  5,132; Claude 1,173 unchanged, 17 inserted, 1 updated of 1,191; Cursor 87 of
+  87 unchanged). `machine.json` is copied because the engine creates a new
+  machine identity when the file is missing, and the copy's rows belong to the
+  existing one.
+- **Isolation.** The live store's mtime is not conclusive, and it did change
+  during the measurement. A watcher looked, twice per second for 9 minutes
+  (1,082 scans), for descriptors under the live `~/.config/ai-usage` in the
+  measurement engine, in its descendants (`gh`, `git`, `codex`, `claude`,
+  `opencode`) and in every `bun`, `node` and `sqlite3` process. The
+  measurement processes held none. The 34 hits all belong to one other
+  process, a separate engine (`bun` under `bun` under `systemd`) that held
+  the live store read-write for about 17 seconds, during which its mtime
+  changed 13 times. Over the three sessions (1,593 one-second samples of
+  `/proc/<pid>/fd`) the measurement engine's only `usage-store.sqlite*`
+  descriptors were the copy's.
+- **Publication.** Each session published on the copy (43 changed revisions
+  over 26 minutes); the copy holds three retained revisions, the current one
+  with 10,350 rows.
+- **What the engine did outside the copy.** It read the histories, and its
+  read-only SQLite connections created `-wal`/`-shm` siblings beside the
+  OpenCode and Cursor databases, as every engine does. The provider-usage and
+  GitHub sources ran as they do in a live engine (read-only lookups);
+  `jira.issues` never ran in this setup.
+- **Warm caches.** A first 5.5-minute session rebuilt the harness caches from
+  empty (first Codex pass 19.7 s CPU, first Claude pass 9.7 s). The measured
+  sessions started with those caches on disk, like a restarted live engine.
+
+#### Step 1 — one cycle per phase
+
+Setup: two sessions on the copy, 12 and 9 minutes, first 2 minutes of each
+dropped (startup), 15 one-minute windows kept. Other agent sessions were
+running on the machine (load average about 9 on 20 threads), so 5 to 9 Claude
+rows changed on every pass. Wall-clock durations are noisy for the same
+reason; **CPU seconds and RSS are the primary figures**. `VmRSS`, `RssAnon`,
+`RssFile` and the process CPU counters were sampled once per second.
+
+Totals in PR #61's terms (engine process only):
+
+| | CPU per active minute | Peak RSS | Idle floor |
+| --- | --- | --- | --- |
+| PR #61, after (`50fcf631`) | 3.5–4.0 s | 1,330 MB | not recorded |
+| Plan, live engine 2026-11-03 | ~16 s | 2,100 MB (`VmHWM` 2,290 MB) | 597–650 MB |
+| Session 1 (9 windows) | median 12.9 s, mean 12.0 s, range 5.4–18.9 s | 1,164 MB (median per minute 963 MB; `VmHWM` 1,176 MB) | median 229 MB |
+| Session 2 (6 windows) | median 10.4 s, mean 10.8 s, range 6.1–19.7 s | 1,163 MB (median per minute 1,072 MB; `VmHWM` 1,203 MB) | median 231 MB |
+
+CPU is about three times PR #61's level. Peak RSS is already under PR #61's
+1,330 MB, and well under the 2.1 GB the plan observed: this measurement does
+not reproduce the plan's 1.4 GB swing or its 600 MB floor. The setups differ
+(vacuumed copy, engine a few minutes old, collectors changed since
+`a42fc803`), so the gap to 2026-11-03 is not explained by phase. The floor
+rose from 171 MB to 243 MB over the first 9 minutes and from 183 MB to 248 MB
+over 6; neither session was long enough to say where it settles.
+
+Per phase, session 1 (medians per run; shares are of the engine's CPU and of
+the summed RSS increases, per minute):
+
+| Phase | Runs/min | Duration | CPU | ΔRSS | Δheap | Rows | CPU s/min | CPU share | RSS climb share |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **publication** | 1.89 | 3,263 ms | 3,493 ms | +394 MB | +98 MB | 10,349 | 6.49 | **54.0 %** | **45.8 %** |
+| — assemble (stored capture) | 1.89 | 508 ms | 581 ms | +53 MB | +33 MB | 10,349 | 1.16 | 9.7 % | 8.2 % |
+| — store side (revision minus assemble, difference of medians) | 1.89 | 2,193 ms | 2,404 ms | +380 MB | +65 MB | 10,349 | 4.48 | 37.2 % | 40.5 % |
+| — retain revisions | 1.89 | 230 ms | 199 ms | +3 MB | 0 | – | 0.38 | 3.2 % | 0.7 % |
+| — reconcile work branches | 1.89 | 239 ms | 213 ms | −13 MB | 0 | – | 0.45 | 3.7 % | 0 % |
+| **opencode.sessions** | 1.00 | 194 ms | 113 ms | +15 MB | 0 | 878 | 1.62 | 13.5 % | 5.3 % |
+| **codex.sessions** | 1.00 | 1,242 ms | 1,310 ms | +363 MB | +83 MB | 5,132 | 1.43 | 11.9 % | **25.9 %** |
+| — collect | 1.00 | 481 ms | 671 ms | +229 MB | +62 MB | 5,132 | 0.72 | 6.0 % | 15.5 % |
+| — importSkillObservations | 1.00 | 269 ms | 243 ms | +22 MB | 0 | 95,553 | 0.26 | 2.1 % | 1.9 % |
+| — importLocalRows | 1.00 | 144 ms | 150 ms | +98 MB | +21 MB | 5,132 | 0.16 | 1.4 % | 6.1 % |
+| — importCodexWorkObservations | 1.00 | 72 ms | 52 ms | +3 MB | 0 | 5,132 | 0.06 | 0.5 % | 0.4 % |
+| **rtk.savings** | 2.67 | 301 ms | 319 ms | +47 MB | +21 MB | 7,291 | 0.89 | 7.4 % | 11.4 % |
+| **claude.sessions** | 1.00 | 317 ms | 295 ms | +146 MB | +10 MB | 1,195 | 0.37 | 3.1 % | 10.5 % |
+| — collect | 1.00 | 163 ms | 215 ms | +132 MB | +10 MB | 1,195 | 0.27 | 2.2 % | 9.2 % |
+| — importLocalRows | 1.00 | 75 ms | 47 ms | +25 MB | 0 | 1,195 | 0.05 | 0.5 % | 1.5 % |
+| checkouts.status | 0.33 | 833 ms | 560 ms | −166 MB | +2 MB | 142 | 0.18 | 1.5 % | 0 % |
+| github.pull-requests | 0.22 | 33,633 ms | 722 ms | −111 MB | −6 MB | 24 | 0.16 | 1.3 % | 0 % |
+| claude.desktop-sessions | 1.00 | 87 ms | 59 ms | +14 MB | +1 MB | 129 | 0.07 | 0.6 % | 1.0 % |
+| the three usage-limits sources | 0.22 each | ~1,700 ms | 32–153 ms | ≤ 0 | ≤ 0 | 1 | 0.06 | 0.6 % | 0 % |
+| cursor.sessions | 1.00 | 32 ms | 13 ms | −9 MB | 0 | 87 | 0.02 | 0.1 % | 0 % |
+| **All top-level spans** | | | | | | | 11.29 | 94 % | 100 % |
+
+Coverage: the top-level spans (one per source run, one per publication) hold
+94 % of the engine's CPU, 96 % of its busy seconds and 100 % of the RSS
+increases seen by the sampler (session 2: 94 %, 99 %, 100 %). The peak RSS
+sample of every one of the 15 windows falls inside a publication.
+
+Session 2 gives the same order: publication 47.9 % of CPU and 49.2 % of the
+climb, opencode.sessions 16.7 % and 1.3 %, codex.sessions 14.9 % and 29.2 %,
+rtk.savings 7.2 % and 7.8 %, claude.sessions 3.4 % and 11.6 %.
+
+Inside one publication (session 2, 11 full publications, medians; the steps
+were timed through the store's existing publication-phase visitor, installed
+by a measurement-only entry script kept outside the repository):
+
+| Step | Duration | CPU | Share of the publication | ΔRSS | Δheap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| assemble the stored capture | 504 ms | 588 ms | 20 % | +32 MB | +33 MB |
+| validate, serialize and fingerprint it | 510 ms | 597 ms | 21 % | +155 MB | +43 MB |
+| insert the served projection | 746 ms | 865 ms | 30 % | +240 MB | +24 MB |
+| validate the staged revision | 608 ms | 683 ms | 24 % | +7 MB | +40 MB |
+| commit | 200 ms | 167 ms | 6 % | −1 MB | 0 |
+
+What the table says:
+
+- **Publication is the cycle.** It takes about half of the CPU and of the RSS
+  climb, 1.5 to 1.9 times per minute, and every one of the 26 publications in
+  the measured windows changed the revision. Four fifths of it is store-side work on a
+  capture that is already assembled: 10,349 rows are serialized,
+  fingerprinted, inserted and validated again each time. A fingerprint
+  computed before assembly, the plan's first idea for 3c, would not skip
+  anything on this workload, because the capture does change.
+- **OpenCode is cheap except after its own usage-limits call.** A pass costs
+  about 0.1 s when the database is unchanged. A full read costs 4.0 to 6.4 s
+  of CPU and happened 6 times in 21 minutes, each time one pass after a failed
+  open. The sequence: the `opencode.usage-limits` source runs the OpenCode
+  CLI; the next read-only open of the live database then fails the reader's
+  own identity check ("identity changed while opening"), so that pass reads
+  only the stable database (209 rows instead of 878); the pass after it finds
+  a changed WAL stat and reads everything. Of the 7 failed opens in the two
+  sessions, 5 directly follow that source and the other 2 coincide with the
+  separate engine working on the live store. The message row counts were the
+  same in all six full reads: nothing had been written. The likely mechanism,
+  inferred from the WAL file's mtime and not verified in the code: the CLI's
+  exit removes the WAL file and the engine's own read-only open creates it
+  again between the two identity readings.
+- **Codex rebuilds everything for two rows.** Each pass loads and parses the
+  session cache for 5,531 rollouts (95,553 skill observations), compares
+  5,132 rows and 95,553 observations, and updates 2 rows (104 on 6 of the 21
+  passes). It raises RSS by about 360 MB, a quarter of the climb.
+- **`rtk.savings` runs after each changed session source**, 2.3 to 2.7 times
+  per minute, re-reads 7,291 rows each time and changed nothing in any of its
+  62 runs.
+- **Claude is already proportional in CPU** (0.3 s for 5 to 9 changed rows of
+  1,195), but reading its cache still raises RSS by about 130 MB.
+
+Peak composition. At the peak, `RssAnon` is 96 % of RSS (1,123 of 1,164 MB)
+and `RssFile` stays at 41 MB, so it is not mapped files. At the highest-RSS
+step of a publication (medians): RSS 879 MB, `heapUsed` 232 MB (27 %),
+`heapTotal` 400 MB, `external` 140 MB. About a quarter of the peak is live JS
+heap; heap capacity and external buffers account for about 60 %; the rest is
+native (SQLite and allocator pages not yet returned). The climb is object and
+string churn around SQLite writes more than SQLite page cache.
+
+Garbage from earlier phases is still live in later ones. The heap floor at
+the start of a phase is 38 to 40 MB. Of 136 back-to-back transitions (gap
+≤ 5 s), 79 start at least 50 MB above it: `codex.sessions → rtk.savings`
++114 MB (median), `rtk.savings → publication` +93 MB in session 1 and +125 MB
+in session 2. It decides the peak: the 9 publications that started with
+`heapUsed` ≥ 150 MB (RSS 500–710 MB, right after `codex.sessions`) ended at
+1,034–1,149 MB, except two at 667 and 723 MB; the 17 that started below
+150 MB ended at 638–903 MB. Step 5's second condition holds on this
+measurement.
+
+Against the ≥ 20 % rule of Step 3:
+
+| Branch | CPU share | RSS climb share | Meets the rule |
+| --- | ---: | ---: | --- |
+| 3a OpenCode incremental | 13.5 % / 16.7 % | 5.3 % / 1.3 % | No |
+| 3b collection and import (Codex, Claude, `rtk.savings`, Cursor) | 22.5 % / 25.7 % | 47.8 % / 48.6 % | Yes as a group; alone, only `codex.sessions`, on the climb (25.9 % / 29.2 %) |
+| 3c publication | 54.0 % / 47.9 % | 45.8 % / 49.2 % | Yes; the assembly alone is 9.7 % |
+
+Two STOP conditions are close and belong to the operator, not to this
+execution: the remaining cost of 3c is publication freshness (the capture
+changes on every publication while agent sessions are active), and Step 5
+needs a publication cap.
+
+Sources and import paths added since `50fcf631`. Sources:
+`opencode.usage-limits` (5 min), `claude.desktop-sessions` (1 min),
+`executors.capabilities` (15 min), `checkouts.status` (5 min),
+`github.pull-requests` (10 min) and `jira.issues` (2 min);
+`cursor.commit-attribution` was removed. Import paths in `source-adapters.ts`:
+`retireLocalRows`, `importCodexWorkObservations`,
+`importClaudeDesktopSessions`, `importExecutorObservations`,
+`importCheckoutStatusObservations`, `importPullRequestObservations`,
+`importJiraIssueObservations`, `attachDeclaredWorkThreadSessions` and
+`applyWorkThreadWaitObservations`. Together the new sources cost 0.4 s of CPU
+per minute (4 %). `github.pull-requests` ran 11 times in 26 minutes against a
+10-minute cadence, in bursts of one run per minute, each holding the single
+worker for about 33 s of wall time: it delays the session sources behind it
+without costing CPU.
+
+Spans. `withPerfSpan` now reports `cpuMs`, `rssMbBefore`, `rssMbAfter`,
+`heapUsedMbBefore` and `heapUsedMbAfter` beside `durationMs`, on success and
+on failure. `cpuMs` is not in the plan's list; it was added because Step 3's
+rule is stated in CPU time. All figures are process-wide. New spans:
+`aiUsage.engine.source.<id>` around every source run,
+`aiUsage.engine.publication` around every publication,
+`aiUsage.engine.<source>.collect`, `.importLocalRows`, `.retireLocalRows`,
+`.importSkillObservations` and `.importCodexWorkObservations` in the session
+sources, `aiUsage.engine.rtk.savings.queryEnrichableUsageRows` and
+`.upsertContributions`, and `aiUsage.engine.publication.assemble`,
+`.revision`, `.retainRevisions` and `.reconcileWorkBranches`. With
+`AI_USAGE_PERF` unset the wrapped effect is returned as is.
+
+Not measured: the store-side publication steps have no span in the
+repository (the split above came from the test-only phase visitor); a
+minute with no agent activity; the cause of the two Codex rows rewritten on
+every pass; the engine after hours of uptime.
+
+#### Step 2 — the file sink's circuit recovers
+
+`file-sink.ts`: an open circuit drops and counts every record; once the
+cool-down has passed (30 s) and the blocked append has released the worker,
+the next record is tried as a probe. The first append that succeeds closes
+the circuit. A probe that misses its deadline reopens it with a doubled
+cool-down, up to 10 minutes. Any other probe failure is counted and leaves the
+circuit half-open. There is no timer: recovery is decided when a record
+arrives. The state is reported by a new `circuit-closed` warning with the
+dropped and failed counters, by a `circuit` field in the file transport's
+diagnostics and by `circuit=` in the shutdown loss summary. ADR 0014 carries
+the rule as a dated amendment.
+
+Tests (`file-sink.test.ts`): a slow append opens the circuit and drops the two
+records queued behind it; a record inside the cool-down is dropped; after the
+cool-down a fast append closes the circuit and later records are written,
+with `accepted`, `dropped` and `failed` matching; a failed probe doubles the
+cool-down up to the cap; no probe starts while the blocked append still holds
+the worker; an ordinary probe failure leaves the circuit half-open; the
+shutdown summary names the state.
+
+The measured sessions did not exercise the recovery: no append missed its
+deadline in 26 minutes.
+
+**Known limitation: the append that never settles.** Decision 5 says a slow
+append "must not silence the sink for the rest of the process". That holds for
+an append that misses its deadline and then settles. It does not hold, to the
+letter, for an append that never settles (a hung `appendFile` or
+`handle.close()`, for example on a stuck mount). The timed-out append keeps the
+worker and the interprocess lock until it returns, and no probe is started
+while the worker is busy, so the circuit stays open for the life of the
+process. Other processes writing to the same log directory time out on the lock
+and count each record as failed.
+
+This is accepted and not coded around. Starting a second append while the first
+one may still write would allow interleaved or torn lines in the NDJSON file,
+which is worse than a gap. The loss stays visible: every record is counted as
+dropped, the rate-limited `circuit-open` warning repeats, the diagnostics read
+`circuit: 'open'` and the shutdown summary prints `circuit=open`. Recovery
+needs an engine restart. The test "does not probe while the blocked append
+still holds the worker" pins the behaviour, and ADR 0014's amendment states the
+same limitation.
+
+### 2026-11-18 — Step 3c, the publication's store side
+
+Write scope for this round: `served-report-store.ts` and its tests, the
+publication part of `live.ts`, `packages/report-data`, these notes. Step 3b
+(collection and import) runs in another worktree. Steps 4 and 5 are not
+started.
+
+The plan's first idea for 3c, a fingerprint computed before the assembly, was
+not pursued: the assembly is a fifth of a publication and the capture changes on
+every publication, so it would skip nothing (and see "content-free
+publications" below for why the existing fingerprint check never matches).
+
+#### Why each store-side step costs what it does (measured before any change)
+
+Method: the production functions on a fresh `VACUUM INTO` copy (10,326 served
+rows, `rows_bytes` 18.7 MB, `projection_bytes` 45.6 MB), every step timed in a
+transaction that is rolled back, plus a CPU profile. The machine was heavily
+loaded (load average 15 to 55 on 20 threads), so absolute times are about 1.5
+times the engine's and only the shares are quoted. The publications of Step 1
+changed 5 to 9 rows out of about 10,350.
+
+| Step | Share of a publication (the assembly is the other fifth) | What it does with the rows | Proportional to change? |
+| --- | ---: | --- | --- |
+| Prepare (validate, serialize, fingerprint) | 21 % | Validates every row (23 % of the step). Serializes the whole row array to count its bytes (10 %; the 18.7 MB text is then dropped). Computes two fingerprints (66 %): each one builds a canonical copy of the whole capture, serializes it and hashes it, so every row is canonicalized and serialized twice. | No. Nothing is kept from the previous publication. |
+| Insert the served projection | 30 % | SQLite inserts, 37 %: 10,326 rows of 80 columns into a table with 7 indexes, plus 10,594 model segments and 10,662 filter keys. Presentation enrichment, 30 %, of which four fifths is the row identity hash (FNV-1a 64 on `BigInt`, one multiplication per character). Two `JSON.stringify` per row, 8 %. Campaigns, ranks, local time cell and model segments, about 20 %. | No, and it cannot be within the schema: a revision is a full copy keyed by `(revision, ordinal)`, and the ordinal, the six text ranks, the two identity ranks and the campaign columns of a row depend on all rows. A moving session also gets a new `row_id` at each publication (its identity includes the active date), which shifts identity ranks of other rows. |
+| Validate the staged revision | 24 % | Counts and orphan checks, 1 %. The rest is the query catalog: the eight reader queries run on the staged revision. Overview 52 % (it reads every row and projects in JavaScript), breakdown 26 %, sessions page 14 %, support 4 %, neighbours 3 %. | No. These are whole-revision aggregates: no argument makes them independent of untouched rows, so the validation is left as it is. |
+| Commit | 6 % | Writes the WAL frames of a complete revision. | No, for the same reason as the insert. |
+| Retention (after the transaction) | about 0.2 s per publication in the engine | Deletes a whole superseded revision. Deleting the children explicitly instead of by cascade was measured and is the same within 10 %. | No. |
+
+Nothing is serialized twice between the assembly and the store except the
+rows: once whole in the prepare step (for the byte count), once per row in the
+insert (for storage), and twice in canonical form (for the fingerprints).
+
+#### What changed
+
+`served-report-store.ts`, prepare step only:
+
+- **One canonical serialization per row for both fingerprints.** The two
+  fingerprint inputs carry the same rows, and the canonical JSON of an array is
+  its members' canonical JSON joined by commas. `servedReportCaptureFingerprints`
+  canonicalizes and serializes each row once, with `canonicalReportJson` itself,
+  and feeds the text to both SHA-256 digests between the text that surrounds
+  the rows in each input. No canonical copy of the whole capture is built, and
+  nothing is cached between publications.
+- **Byte count without the whole text.** `rows_bytes` is the two brackets, one
+  comma between members and each row's own JSON length; the 18.7 MB text is no
+  longer built.
+
+Both are pure cost changes: the manifest and every stored byte are unchanged.
+
+| Measure, on the real capture | Before | After |
+| --- | ---: | ---: |
+| Fingerprints and byte count, alternating rounds in one process (two runs, loaded machine) | 789 ms, 479 ms | 296 ms, 174 ms (−63 %) |
+| Prepare step of a publication, CPU (9 publications each, base tree and changed tree, loaded machine) | 882 ms | 558 ms (−37 %) |
+| The same on a quiet machine (load average 5), CPU | 518 ms | 297 ms (−43 %) |
+| Heap growth during the prepare step, quiet machine | +98 MB | +16 MB |
+| RSS growth during the prepare step, quiet machine | +130 MB | +77 MB |
+| RSS after each publication, third to ninth, quiet machine | 849 to 1,406 MB | 622 to 867 MB |
+| Whole publication, CPU, quiet machine | 2,247 ms | 2,180 ms |
+
+The quiet-machine prepare step (518 ms) is close to the engine's in Step 1
+(597 ms), so the gain is about 0.22 s of CPU per publication, 0.4 s per active
+minute at today's rate. The other steps are unchanged; their differences
+between the two runs (assembly +66 ms, validation +65 ms) are run-to-run
+noise, which is why the whole publication moves less than its prepare step.
+The lower resident memory comes from a single benchmark pair and needs Step 4
+to confirm it in the engine.
+
+Identity evidence:
+
+- Unit tests compare both fingerprints with `reportCaptureFingerprintForPayload`
+  on fixed and on 300 generated payloads (values JSON drops or rewrites, keys
+  named `rows` and `generatedAt`, lone surrogates, 4,000 rows across the digest
+  chunk boundary).
+- Publication tests: the stored fingerprints are the reference's; six
+  successive publications of a moving capture (a session moves, one appears,
+  one is renamed, one retired, one removed with its segments and filter keys)
+  leave exactly the rows, segments, filter keys, support, context and manifest
+  of one publication of the last capture in a fresh store; an emptied capture
+  equals a from-scratch empty one; republishing an earlier capture restores it.
+- Real data, twice (two fresh copies): nine publications from the base tree
+  and nine from the changed tree, on identical copies with the same two rows
+  changed each time, produced the same nine capture fingerprints and the same
+  stored content. Publishing the last capture again renewed the revision,
+  which revalidates the stored rows with the reference fingerprint.
+- An 8-minute engine session on the fresh copy with the change published 14
+  revisions and exited cleanly.
+
+#### What did not change, and the STOPs
+
+- **Insert only what changed: needs a schema change (STOP).** Rows would have
+  to be stored once and shared by revisions, with a small per-revision
+  membership table for the ordinal, ranks and campaign columns, and the reader
+  queries rewritten to join. Expected gain per publication: most of the SQLite
+  insert (about 0.3 s), of the commit (0.17 s) and of the retention (0.2 s),
+  about a fifth of a publication, and most of the insert step's +240 MB. It is
+  a migration of the real store and its own plan.
+- **Incremental validation: not provable.** See the table.
+- **Outside this round's files, pure cost, not done.** (1) The row identity
+  hash in `report-core/session-query.ts`: a prototype of FNV-1a 64 on 16-bit
+  limbs gave the same result as the `BigInt` version on 20,004 strings
+  (astral characters and lone surrogates included) at a quarter of the cost;
+  it is about a quarter of the insert step and also runs wherever rows are
+  enriched. (2) `served-revision.ts` serializes each row again for storage;
+  taking the text already produced for the byte count would save about 4 % of
+  the insert step.
+- **A copy of the previous revision's rows when no row changed** (see below)
+  was considered and not built. It would skip the JavaScript half of the
+  insert step for those publications, but proving the copy byte-identical
+  needs every value the projection reads to be determined by the row's JSON
+  text, and `-0`, `NaN` and undefined members are not. Step 3b should remove
+  most of the cases it would serve.
+
+#### Content-free publications
+
+A poller compared each revision's rows with the previous one during the
+8-minute session: **7 of 14 publications stored rows identical to the revision
+they replaced.**
+
+| Rows | Publications | Triggered by | What differed |
+| --- | ---: | --- | --- |
+| Moved | 7 | `claude.sessions` | rows and analytics |
+| Identical | 6 | `codex.sessions`, alone or with `opencode.sessions` | `generatedAt`, `machineFreshness.machines[].lastSeenAt`, `machineFreshness.observedAt`, `datasets.providerStatus.generatedAt` (one also `analytics.recentSessions`, a count over a sliding window) |
+| Identical | 1 | the three usage-limits sources | quota windows (a real change of the support) |
+
+Every Codex pass reports `updated=2` (8 of 8 in that session, 15 of 21 in
+Step 1; the other 6 were the hourly heartbeat, 104 rows). The most recently
+rewritten Codex rows in the Step 1 copy are sessions from February to October,
+and two of the four have zero tokens, which the report leaves out. The rewrite
+moves the machine's `lastSeenAt`, which is part of the fingerprint, so a
+complete revision is written for it. Why two old rows are rewritten on every
+pass is still not known; it is in Step 3b's files. When a Codex pass with no
+changed rollout stops rewriting rows, these publications disappear with no
+loss of freshness: 6 of 14 here, and 9 of the 30 publications of Step 1 were
+triggered by `codex.sessions` with at most `opencode.sessions` (their rows
+were not compared).
+
+Two related facts:
+
+- `datasets.providerStatus.generatedAt` is the wall clock of the read, not the
+  publication's `generatedAt`. The capture is therefore not a function of the
+  store and the configuration, and the store's fingerprint check after the
+  assembly (renew instead of rewrite) can never match while a provider status
+  exists. Changing it changes served content, so it was not touched.
+- Two assemblies of the same store differ in nothing else.
+
+#### What remains is publication frequency (STOP, operator)
+
+From Step 1's two sessions and the session above:
+
+| | Value |
+| --- | --- |
+| Publications per minute | 1.7 to 2.0 |
+| CPU per publication | 3.3 to 3.5 s before this change, an estimated 3.1 to 3.3 s after |
+| Time from the end of a changed source pass to its publication | median 4 to 5 s, maximum 18 to 44 s |
+| Gap between publications | median 38 to 40 s, minimum 5 s |
+
+| Option | Publications per minute | CPU per minute for publication | Freshness given up |
+| --- | ---: | ---: | --- |
+| Today | 1.7 to 2.0 | 5.3 to 6.2 s | none |
+| Step 3b stops the content-free Codex publications | 1.0 to 1.3 | 3.1 to 4.0 s | none |
+| At most one source-woken publication per minute | at most 1.0 | at most 3.1 s | a change waits up to 60 s more (about 30 s on average) instead of 4 to 5 s |
+| At most one per two minutes | 0.5 | about 1.6 s | up to 120 s more |
+
+Explicit requests stay immediate in every option. Even with Step 3b, one moving
+Claude session costs one publication per minute, about 3.1 s of CPU: by itself
+close to PR #61's whole budget of 4.0 s per active minute. Reaching that target
+needs a cap, or the schema change above, or both.
+
+#### What Step 4 should compare
+
+- The Step 1 measurement repeated on a fresh copy with both Step 3 branches
+  combined: CPU per active minute, peak RSS, the floor, and publications per
+  minute with the share triggered by `codex.sessions` alone.
+- Per publication: the prepare step (expected about −37 %) and the others
+  unchanged.
+- Content identity on identical inputs: compare the stored rows, segments and
+  filter keys, and the support with `datasets.providerStatus.generatedAt`
+  masked. Capture fingerprints of two separate runs differ because of that
+  clock, even with no code change; they compare equal only when it is pinned.
+
+### 2026-11-18 — Adversarial review of Steps 0 to 3c
+
+Six confirmed findings fixed, one accepted. No step of the plan moved: Step 3b
+is still on its sibling branch, Steps 4 and 5 are still pending.
+
+| Finding | What changed |
+| --- | --- |
+| The publication's fingerprint carried its own copy of the reference's clock-stripping step, pinned to it only by the inputs the tests happened to hold. A change of the reference on a member no test carried would have made the writer and the validator of a revision disagree, silently: a failed validation reads as "no reusable manifest". | `report-core` exports the step as `reportCaptureFingerprintInput`; the reference fingerprint and the store's one-pass fingerprint both call it, so there is one definition. A store test replaces the export and checks that the publication follows it. The generated payloads now carry `machineFreshness`, `datasets` and `localContext`. Digests recorded before the change are pinned in a new `report-core` test, and the identity tests pass unchanged. |
+| The test of the cool-down cap gave the same counts with and without the cap. | It now submits one millisecond before and exactly at the end of each cool-down and reads a probe in the append count and the failed counter. With the cap removed it fails at the first capped window. |
+| A failed perf span printed the error message, which can hold the store path or a transcript path. | The line carries identifiers only: `error` (tag or error name), `errorOperation`, `errorReason`, `errorCode`, each printed only when shaped like an identifier; `error=interrupted` for an interruption. Both copies of `perf.ts`. This replaces the `error=<message>` field described under "Spans" above. |
+| The cool-down was measured on the wall clock: a clock stepped back while the circuit was open kept it open longer. | The retry deadline is a reading of `performance.now()` (injectable as `monotonicNowMs`). The wall clock still names the daily file and spaces the rate-limited warnings. |
+| A `summarize` callback that threw turned a successful wrapped operation into a failure when perf was enabled. | The callback is guarded: the line reports the span's own figures and `summaryError=<name>`, and the wrapped work keeps its result. Both copies. |
+| The status row in `plans/README.md` still said Steps 3 to 5 were not started. | Updated. |
+| An append that never settles keeps the circuit open for the life of the process, against the letter of decision 5. | Accepted, not changed: see "Known limitation" under Step 2. |
+
+Not changed, noted for whoever touches the sink next: the rate limit of the
+sink's warnings still reads the wall clock, so a clock stepped back can also
+hold back warnings of a kind for the size of the step. The counters are not
+affected.
+
+### 2026-11-18 — Step 3b (branch `perf/engine-collection-proportional`, from `edf868af`)
+
+Steps 3a, 3c, 4 and 5 are not part of this entry. Figures only.
+
+#### Why two Codex rows were rewritten on every pass
+
+One session id is carried by two rollouts (5,531 rollouts, 399 imported
+transcripts, 5,131 distinct ids, 5,132 rows). Both became a row under the same
+row key. The import compared the first copy with the stored one (the second
+copy of the previous pass) and rewrote it, then compared the second copy with
+the first and rewrote it again: 2 updates, a generation bump and `changed=true`
+on every pass, with no rollout read (0 cache misses in all 21 passes).
+
+The collector now emits one row per session id: the last copy in session order,
+which is the one the store ended up with after each pass. The stored row is
+therefore the same as before; it is no longer rewritten. Which copy is the
+better reading of the thread (the last one, or the one with the larger
+cumulative counter that the lineage code already prefers) is left as it was:
+changing it would change stored content.
+
+#### Why about 100 rows were rewritten on some passes
+
+Four times in the two measured sessions the thread-metadata read of Codex's
+state database returned no row in 1 to 3 ms (5,530 otherwise). The read-only open refuses a
+database whose file identity moves while it opens, which happens when a Codex
+process writes it (the `codex.usage-limits` source starts one every 5 minutes).
+The failure was caught and replaced by an empty metadata map, so 102 rows that
+take a field from the database were rewritten without it, and rewritten back on
+the next pass. The open is now retried (3 attempts, 100 ms apart) before the
+fallback applies. A database that stays unreadable, or one whose query fails
+(a Codex schema change, for one), still yields no metadata, but no longer
+silently: the pass carries a `codex.threadMetadata` warning. The sanity run
+below met no such failure in its 8 passes, so the retry is covered by its test
+only.
+
+#### Why `rtk.savings` ran 2.67 times a minute
+
+It never ran on its own cadence in the measured windows: 30 of its 31 runs
+were dependency runs. The scheduler queues it after every session source that
+reports a change, and three did almost every minute: `claude.sessions` (real
+activity, 12 of 12 passes), `codex.sessions` (the two-row rewrite above, 12 of
+12) and `opencode.sessions` (8 of 12, with 0 rows inserted or updated in all
+of them; the change comes from its skill-observation state and belongs to
+step 3a). 32 changed passes in 12 minutes is 2.67 per minute. The scheduling
+is unchanged. With Codex quiet it ran 1.8 times a minute in the sanity run.
+
+#### What changed
+
+- **Session sources import what changed** (`source-adapters.ts`). A session
+  source keeps, for the life of the engine, a fingerprint of each row it last
+  imported. A pass imports a row only when its fingerprint moved. Every row is
+  imported again, as before, on the first pass, after a pass that failed or
+  was interrupted, on the first pass of a new clock hour (the freshness
+  heartbeat of ADR 0046 is due for every row then), and when the store's rows
+  of that harness were written by anyone else since the last pass (count and
+  latest `updated_at`, read before and after each pass). A retired session is
+  forgotten so that a later re-emission reaches the store. Rows without a
+  session id, and rows sharing one, are imported on every pass. This applies
+  to the four session sources.
+- **Codex keeps a resident index** (`codex-history.ts`). The collector of a
+  long-running process keeps every parsed session without its skill
+  observations (36.4 of the cache's 48.1 MB of JSON). A pass stats the rollout
+  files, re-reads the ones whose size or mtime changed, and builds all rows
+  from the index; it no longer loads the session cache. Skill observations are
+  returned for the rollouts read in that pass only, and for every rollout
+  sharing a session id with one of them. Rows, work observations and
+  retirements are complete on every pass. The SQLite cache is still written,
+  for the next cold start. One-shot collection (CLI, foreground) does not use
+  the index, but it is not unchanged: the one-row-per-session-id filter, the
+  metadata retry and the metadata warning sit in the code both paths share, so
+  `collectCodexResult` emits 5,131 rows where it emitted 5,132. The index has
+  one construction site: `createIncrementalCollector` on the Codex entry of
+  `HARNESS_ADAPTERS` (`collectors/index.ts`). Without that line the session
+  source collects Codex through `collectResult` on every pass, as before, and
+  keeps the import change. The repository has no mechanism for an engine
+  tuning option (the environment variables these packages read name paths and
+  executables, and `AI_USAGE_PERF` turns diagnostics on; none selects a
+  collection strategy), so no switch was added.
+- **`rtk.savings` reads what changed** (`source-adapters.ts`,
+  `rtk-enrichment.ts`, `queryEnrichableUsageRowChanges`). The match still runs
+  over every active row on each run, because a command goes to the narrowest
+  matching session and any row can win or lose one. What a run needs from a
+  row is its window (project path, start, end), kept by content hash; the
+  stored JSON is read, parsed and validated only for rows whose hash moved.
+- **Claude**: only the import change above. Its collector is untouched.
+
+No store schema change. Two read-only store functions were added
+(`queryEnrichableUsageRowChanges`, `queryLocalRowsWatermark`). The Codex cache
+keeps its format and version.
+
+#### Limits that keep the result equal to a full collection
+
+- Work observations are sent in full on every pass: coverage is recorded per
+  collection id, so leaving a session out would mark it uncovered. Making that
+  incremental needs a change in `codex-work-store.ts`.
+- The engine caps one skill-observation import at 100,000 and truncates the
+  full list by recency. A pass that returns changed rollouts only cannot
+  reproduce that truncation, so the index is not used while the rollouts hold
+  more than 100,000 observations in total: every pass is then a complete one,
+  at the cost measured in step 1. The real history holds 95,649. **This cliff
+  is close.**
+- Retirements are declared in full on every pass (399 ids), as the retirement
+  rule requires.
+
+#### Tests
+
+`source-adapters.incremental.test.ts`: unchanged inputs import 0 rows and
+leave every stored column and both generations as they were; one changed
+session imports 1 row and moves the generation by 1; over 15 passes (change,
+new session, retirement and re-emission, failed pass, hour boundary with a
+session absent across it, rewrite of the stored rows by another writer) a
+source that keeps its memory leaves the store column for column equal to a
+source rebuilt for every pass, with equal run results; a failed pass, an hour
+boundary, a retirement and an import by another writer each force a full
+import; the engine asks an incremental collector for a complete pass first and
+after a failure. Five mutations of the conditions (no hour check, no watermark
+check, retired session kept, memory merged instead of rebuilt, failed pass
+trusted) each fail at least one of these tests. For `rtk.savings`: over 7 runs
+(content change, window change, new command, retirement, new session) the
+stored contributions equal those of a source rebuilt for every run, and the
+rows read are 3, 0, 1, 1, 0, 0, 1.
+
+`codex-incremental-collection.test.ts`: one row for a shared session id;
+a complete incremental pass equals a one-shot collection; an unchanged pass
+returns no observation; a changed rollout returns its own; rows, work
+observations, retirements, completeness and warnings equal a one-shot
+collection after each of 5 passes with a rollout added, rewritten and deleted;
+a stat change alone forces a re-read; a deleted rollout leaves the cache; a
+changed rollout brings the observations of the rollout sharing its id; two
+collectors do not share an index; the metadata read succeeds on its third
+attempt.
+
+`local-rows-incremental.test.ts`: the incremental read returns the rows of
+the full read in the same order and reads only unknown hashes; a stored row
+that no longer validates is reported invalid; the watermark moves on a
+rewrite, an insert, a retirement and a relabel, and not on an unchanged
+import, a heartbeat or another harness's rows.
+
+#### Sanity measurement (one run, not the step 4 proof)
+
+One 8-minute run on a fresh `VACUUM INTO` copy of the measurement store, first
+2 minutes dropped, 5 windows, while another measurement engine and the test
+suites of other sessions were running (load average about 46 on 20 threads).
+The run started cold for Codex: the session cache is keyed by absolute path
+and the measurement home had moved, so the first pass parsed all 5,531
+rollouts (25.9 s of CPU, outside the measured windows).
+
+| Phase | Before (step 1, session 1) | After | Change |
+| --- | ---: | ---: | ---: |
+| `codex.sessions`, CPU per run | 1,310 ms | 637 ms | −51 % |
+| `codex.sessions`, ΔRSS per run | +363 MB | +111 MB | −69 % |
+| — collect, CPU / ΔRSS | 671 ms / +229 MB | 365 ms / +52 MB | −46 % / −77 % |
+| — importLocalRows, rows compared | 5,132 | 0 | |
+| — importSkillObservations, observations compared | 95,553 | 0 | |
+| `rtk.savings`, CPU per run | 319 ms | 83 ms | −74 % |
+| `rtk.savings`, ΔRSS per run | +47 MB | +4 MB | −92 % |
+| `rtk.savings`, runs per minute | 2.67 | 1.80 | |
+| `rtk.savings`, CPU per minute | 0.89 s | 0.13 s | −85 % |
+| `codex.sessions`, CPU per minute | 1.43 s | 0.64 s | −55 % |
+| `claude.sessions`, rows compared per run | 1,195 | 8 | |
+| `claude.sessions`, importLocalRows ΔRSS | +25 MB | −10 MB | |
+| `codex.sessions` rows updated per pass | 2 (104 on 6 passes) | 0 | |
+| `codex.sessions` reports `changed` | 12 of 12 passes | 0 of 8 | |
+
+`claude.sessions` as a whole did not get cheaper in this run (510 ms of CPU
+and +131 MB per run against 295 ms and +146 MB): its cost is the re-read of
+the transcripts that changed, 368 ms of the 510, and more and larger
+transcripts were active than during step 1. The engine totals of this run
+(12.8 s of CPU per minute, peak 1,090 MB) are not comparable with step 1
+either: publication alone took 7.8 s per minute, and `opencode.sessions` did
+three full reads of 4.2 to 6.8 s of CPU.
+
+What remains in a Codex pass: listing and stat of 5,531 files and the copy of
+their sessions (170 to 230 ms), the thread-metadata read of 5,530 rows (about
+65 ms), building 5,131 rows and their fingerprints, the full work-observation
+import (80 ms) and the 399 retirements (43 ms).
+
+**Idle floor: not established, to be checked in step 4.** The resident state
+costs heap: the lowest `heapUsed` at the start of a phase was 88 MB in minutes
+6 and 7 of this run against 67 MB at the same uptime in step 1, about +21 MB
+(the row fingerprints and the RTK windows are part of it). For the Codex index
+alone there is a heap figure from outside the engine: a standalone script
+parsed the 5,531 cached sessions of the measurement cache and kept them, and
+`heapUsed` after a forced collection rose by 31.5 MB with their skill
+observations and by 11.7 MB without, which is what the index keeps. That is
+not a figure from a running engine. It happens to equal the difference between
+the two JSON sizes quoted above (48.1 − 36.4 MB); the JSON of what the index
+keeps is 11.5 MB. Against the 245 MB floor the
+step 1 sessions reached, +21 MB is 8 to 9 %: inside the 10 % budget, without
+margin. The RSS floor of this run was higher than that (median 292 MB, 317 MB
+in the last window, against 229 to 248 MB: +18 % to +38 %, over the limit if a
+like-for-like run confirms it), but the run is not like for like:
+it was already 106 MB above step 1 in its first minute (255 MB against 149 MB),
+before any of the new state existed, and the gap narrowed to 72 MB by minute
+7. A warm run on the step 1 setup has to settle whether the floor stays within
+10 %; if it does not, that is the plan's STOP condition for the Codex index.
+
+#### Review fixes (same day)
+
+An adversarial review of the branch confirmed defects, each fixed with a test
+that failed first.
+
+1. **Stale fingerprint across a duplicated session id.** A source that emitted
+   one row for a session id, then two rows with different content, then one
+   row again kept the fingerprint of the first pass: the third pass imported
+   nothing and the store held the last row of the duplicated pass. The
+   remembered identity is now deleted whenever a pass holds more than one row
+   for it. The equivalence sequence has the unique, duplicated, unique
+   transition.
+2. **Sibling observations when a rollout leaves the scan.** Two rollouts
+   sharing a session id and an observation identity: when the earlier one was
+   deleted or became unreadable, a full collection emits the other one's copy,
+   and the incremental pass returned nothing. Every session id whose set of
+   rollouts moved (read again, unreadable, removed, or read as another
+   session) now brings the observations of its remaining rollouts.
+3. **Sibling observations read from an older cache entry.** They are read from
+   the SQLite cache, whose writes may fail without failing the pass. The read
+   now requires the entry's size and mtime to be those of the index; otherwise
+   the pass is redone as a complete one, which re-reads the rollout.
+4. **Store-side rejection counts.** The stored completeness is the collector's
+   figure plus the observations the store refused in that batch, so a pass
+   delivering changed inputs only could record a lower figure than a full one.
+   A pass in which the store refuses an observation is no longer taken as
+   settled: passes are complete until the store accepts everything. While
+   settled, nothing delivered earlier was refused, so the batch's count is the
+   full count. `skill-observation-store.ts` is unchanged.
+5. **Silent metadata fallback.** See above: the failure is returned with the
+   empty map and reported as a warning, after the retries or at once for any
+   other error.
+
+Tests added with them: a failure after the import has committed (the run is
+interrupted, or the retirement is refused) forces a complete next pass and
+leaves the store equal to a rebuilt source's; the observation bound exactly
+reached (index used) and one above (every pass complete), including a pass
+that crosses it; the real Codex collector behind a session source over 7
+passes, compared with a source rebuilt for every pass on the run result, the
+stored rows and the stored `skill_observations` and collection state; the
+index with an unreadable rollout over three passes; a sibling whose cache
+entry is missing.
+
+The equivalence sequence relabels the machine in two ways. As the engine does
+it (`live.ts` rewrites the stored rows and sets the label on the very machine
+object the sources hold): the next pass imports every row, because the
+watermark moved, and finds them unchanged. And as a writer the sources do not
+know would: their machine object keeps the old label, and a rebuilt source and
+a resident one both write it back. The second case does not occur in the live
+engine; it is there to exercise the watermark.
+
+#### Not done
+
+- Claude collection itself (the transcript re-read and the 2.6 MB cache file
+  rewritten on every pass with a changed transcript, +13 to +17 MB).
+- Incremental work observations and retirements (see the limits above).
+- The `opencode.sessions` passes that report a change without changing a row.
+
+### 2026-11-18 — Step 4, before and after on real data
+
+Measured on `9b3b73ab` (Steps 0 to 2, 3c with its review fixes, 3b merged)
+against the plan's base. Figures only: no prompt, title, project name or home
+path was copied out of the histories or the stores. Step 5 is not started.
+
+#### Setup
+
+- **Trees.** BEFORE is `037edb83`, the plan's base. It has no perf spans
+  (they came with Step 1), so it gives the sampler totals and, from the engine's
+  wide events on stderr, the publications and the source runs, but no per-phase
+  table. The per-phase BEFORE therefore comes from `edf868af` (Steps 0 to 2:
+  the spans and the sink fix, no Step 3 change), run from a `git archive`
+  export outside the repository with the base tree's dependencies (same
+  lockfile). AFTER is `9b3b73ab`.
+- **Inputs.** Each run had its own base: a `0700` directory outside the
+  repository with a fresh `VACUUM INTO` copy of the live store taken through a
+  read-only connection, the warm harness caches, copies of `machine.json` and
+  `config.json`, and the history symlinks, set up as in Step 0. The two copies
+  of a pair were taken back to back (1 to 5 s apart) and were byte-identical
+  (same SHA-256), with the live store's mtime unchanged by the copies. The
+  harness caches are keyed by the absolute path under `AI_USAGE_HOME`, so a
+  plain copy into a new home is cold (this is why Step 3b's sanity run started
+  cold for Codex); the cache copies had their path keys rebased to the new home
+  (5,531 Codex, 1,240 Claude, 2 OpenCode and 1 Cursor entries; the old prefix
+  appeared nowhere else in them). The histories are live, so a run read them
+  as they were during that run.
+- **Runs.** 13 minutes each, first 2 dropped, ten one-minute windows, one
+  engine at a time. Pair 1 in the order BEFORE then AFTER, pair 2 in the
+  reverse order, then a variant without the Codex index on a copy of pair 2's
+  store (see the floor), then a pair of 9-minute runs with the measurement-only
+  publication-phase entry of Step 1 for the prepare step. Isolation: in every
+  run the file-descriptor sampler saw no descriptor under the live
+  `~/.config/ai-usage`; the only `usage-store.sqlite*` descriptors were the
+  run's copy. Every engine exited (exit code 0, no `serve` process left).
+- **Load** (1-minute load average every 10 s on 20 threads; other agents ran
+  test suites): CPU seconds and RSS are the primary figures, wall-clock is
+  secondary.
+
+| Run | Tree | Load average, median (range) |
+| --- | --- | --- |
+| pair 1, BEFORE | `037edb83` | 4.4 (2.2–9.2) |
+| pair 1, AFTER | `9b3b73ab` | 9.6 (3.3–17.0) |
+| pair 2, AFTER | `9b3b73ab` | 5.2 (2.4–16.6) |
+| pair 2, BEFORE | `edf868af` | 7.0 (2.7–16.7) |
+| no-index variant | `9b3b73ab` without the index line | 3.8 (2.5–12.8) |
+| phases, BEFORE / AFTER | `edf868af` / `9b3b73ab` | 8.7 (3.4–17.9) / 6.6 (2.3–14.4) |
+
+#### Totals in PR #61's terms
+
+Engine process only (reaped children such as `gh` and `git` excluded, as in
+Step 1). Every minute was active.
+
+| Run | CPU per active minute: median (mean, range) | Peak RSS: max (median per minute; `VmHWM`) | Idle RSS floor: median (last window) |
+| --- | --- | --- | --- |
+| PR #61, after (`50fcf631`) | 3.5–4.0 s | 1,330 MB | not recorded |
+| pair 1, BEFORE `037edb83` | 9.66 s (10.15 s, 5.94–15.56) | 1,187 MB (951; 1,200) | 247 MB (257) |
+| pair 2, BEFORE `edf868af` | 12.89 s (12.08 s, 5.36–19.96) | 1,188 MB (1,118; 1,204) | 248 MB (258) |
+| pair 1, AFTER | 6.71 s (7.73 s, 3.52–16.74) | 875 MB (771; 890) | 310 MB (323) |
+| pair 2, AFTER | 7.44 s (8.21 s, 4.93–13.47) | 909 MB (800; 964) | 313 MB (316) |
+| no-index variant | 6.55 s (7.71 s, 5.17–15.22) | 1,096 MB (882; 1,105) | 256 MB (260) |
+
+- CPU per active minute fell by 24 % (pair 1, means) and 32 % (pair 2,
+  means); by 31 % and 42 % on the medians. It is still about twice PR #61's
+  4.0 s: **the CPU target is not met.** The gap by phase is below.
+- Peak RSS fell by 26 % and 23 % and stays well under 1,330 MB: **the peak
+  target is met** (it was already met before Step 3).
+- The two BEFORE runs differ by 1.9 s of mean CPU per minute on equivalent
+  inputs. Their load differed (4.4 against 7.0) and so did the tree (the
+  spans); the measurement cannot separate the two, so each pair is compared
+  within itself.
+- The top-level spans cover 92 to 94 % of the engine's CPU and 100 % of the
+  RSS climb in the instrumented runs.
+
+#### Per phase, pair 2 (same store copy, reverse order)
+
+Medians per run; CPU per minute and shares are of the engine's CPU and of the
+summed RSS increases. Pair 1's AFTER in the last column, for drift.
+
+| Phase | Runs/min | Duration | CPU | ΔRSS | Δheap | Rows | CPU s/min | CPU share | RSS climb share | Pair 1 AFTER, CPU s/min |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **publication** | 2.00 → 1.60 | 2,762 → 2,500 ms | 2,999 → 2,687 ms | +415 → +301 MB | +125 → +120 MB | 10,378 → 10,376 | 6.63 → 4.33 | 54.9 → 52.8 % | 54.1 → 55.4 % | 4.47 |
+| — assemble | | 508 → 467 ms | 583 → 575 ms | +43 → +105 MB | +32 → +54 MB | | 1.24 → 0.92 | | | 0.97 |
+| — store side (`revision`) | | 2,353 → 2,088 ms | 2,646 → 2,365 ms | +439 → +331 MB | +125 → +120 MB | | 5.86 → 3.76 | | | 3.92 |
+| — retain revisions | | 184 → 175 ms | 155 → 148 ms | +4 → 0 MB | 0 | | 0.34 → 0.26 | | | 0.24 |
+| — reconcile work branches | | 212 → 194 ms | 191 → 171 ms | −14 → −12 MB | 0 | | 0.42 → 0.31 | | | 0.30 |
+| **codex.sessions** | 1.00 | 1,271 → 475 ms | 1,356 → 419 ms | +375 → +145 MB | +83 → +3 MB | 5,132 → 5,131 | 1.56 → 0.41 | 12.9 → 5.0 % | 23.5 → 14.5 % | 0.40 |
+| — collect | | 489 → 195 ms | 678 → 235 ms | +213 → +85 MB | +61 → 0 MB | 5,132 → 5,131 | 0.82 → 0.23 | | | 0.23 |
+| — importSkillObservations | | 269 → 21 ms | 244 → 3 ms | +35 → 0 MB | 0 | 95,553 → 0 | 0.25 → 0.00 | | | 0.00 |
+| — importLocalRows | | 168 → 0 ms | 166 → 0 ms | +85 → 0 MB | +22 → 0 MB | 5,132 → 0 | 0.17 → 0.00 | | | 0.00 |
+| — importCodexWorkObservations | | 65 → 67 ms | 46 → 51 ms | +6 → −25 MB | 0 | 5,132 | 0.06 → 0.05 | | | 0.06 |
+| **rtk.savings** | 2.50 → 1.70 | 289 → 59 ms | 311 → 46 ms | +36 → +2 MB | +21 → 0 MB | 7,322 → 7,320 | 0.81 → 0.08 | 6.7 → 1.0 % | 6.7 → 1.5 % | 0.09 |
+| **opencode.sessions** | 1.00 | 151 → 202 ms | 93 → 125 ms | +73 → +51 MB | 0 | 878 | 1.33 → 1.85 | 11.0 → 22.5 % | 5.3 → 11.5 % | 1.51 |
+| **claude.sessions** | 1.00 | 306 → 327 ms | 286 → 297 ms | +151 → +145 MB | +8 → +8 MB | 1,226 → 1,224 | 0.33 → 0.33 | 2.7 → 4.0 % | 9.0 → 15.6 % | 0.32 |
+| — importLocalRows, rows compared | | 79 → 47 ms | 55 → 20 ms | | | 1,226 → 5 | 0.06 → 0.02 | | | 0.02 |
+| github.pull-requests | 0.40 → 0.60 | ~34 s | 651 → 634 ms | ≤ 0 | ≤ 0 | 25 | 0.26 → 0.38 | | | 0.08 |
+| checkouts.status | 0.50 → 0.60 | 872 → 575 ms | 468 → 339 ms | ≤ +5 MB | | 145 | 0.22 → 0.23 | | | 0.15 |
+| claude.desktop-sessions, cursor.sessions, the three usage-limits sources | | | | | | | 0.17 → 0.12 | | | 0.11 |
+| **All top-level spans** | | | | | | | 11.31 → 7.73 | | | 7.13 |
+
+Inside a publication (the phase-entry pair, medians of 12 and 7 full
+publications):
+
+| Step | CPU before → after | ΔRSS | Δheap |
+| --- | ---: | ---: | ---: |
+| assemble the stored capture | 616 → 593 ms | +60 → +126 MB | +33 → +35 MB |
+| **prepare (validate, serialize, fingerprint)** | **575 → 283 ms (−51 %)** | **+195 → +107 MB** | **+47 → +17 MB** |
+| insert the served projection | 795 → 673 ms | +209 → +113 MB | +19 → +25 MB |
+| validate the staged revision | 597 → 544 ms | +17 → +2 MB | +41 → +52 MB |
+| commit | 145 → 139 ms | −2 → −2 MB | 0 |
+| RSS at the highest step boundary, median (max) | 857 (1,140) → 740 (852) MB | | |
+
+The prepare step lost half its CPU, more than the −37 % Step 3c measured on
+a benchmark; the other steps are within run-to-run noise (the insert's −15 %
+was not targeted by any change and comes from a single pair).
+
+What the tables say:
+
+- **Codex** is three times cheaper per pass and raises RSS by 145 MB instead of
+  375 MB; it compares no row and no skill observation when no rollout changed.
+- **`rtk.savings`** runs 1.5 to 1.7 times a minute instead of 2.5 and costs
+  46 ms instead of 311 ms: −90 % per minute.
+- **Publication** costs 10 % less CPU per run (the prepare step) and runs
+  1.6 times a minute instead of 1.8 to 2.0, because Codex no longer wakes it:
+  −35 % of CPU per minute. It is still more than half of the cycle, and alone
+  (4.3 to 4.5 s per minute) above PR #61's whole budget.
+- **`opencode.sessions`** did not change and is now the second phase: 4 to 5
+  full reads per 13-minute run, 4 to 6 s of CPU each, after a failed open that
+  follows the OpenCode usage-limits call (Step 1's mechanism, unchanged in both
+  trees: 4 to 5 failed opens per run). Its share doubled only because the rest
+  shrank. Step 3a was not executed because it fell under the ≥ 20 % rule.
+- **Claude** is unchanged in cost; its import compares 5 rows instead of
+  1,226.
+
+Gap to PR #61's 4.0 s per active minute, by phase (pair 2 AFTER, CPU per
+minute): publication 4.33 s, `opencode.sessions` 1.85 s, `codex.sessions`
+0.41 s, `github.pull-requests` 0.38 s, `claude.sessions` 0.33 s,
+`checkouts.status` 0.23 s, the rest 0.20 s. Publication alone exceeds the
+target. Reaching it needs the publication cap or the schema change recorded
+under Step 3c (both STOPs for the operator), and the OpenCode full reads
+(Step 3a or a fix of the failed open).
+
+#### Publications per minute
+
+From the engine's wide events (all four runs; the same windows as above):
+
+| Run | Publications per minute | Changed | Triggered by `codex.sessions` alone | `codex.sessions` with at most `opencode.sessions` | Rows identical to the previous revision (read-only poller) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| pair 1, BEFORE | 1.8 | 18 of 18 | 3 of 18 (17 %) | 5 of 18 (28 %) | 5 of 20 |
+| pair 2, BEFORE | 2.0 | 20 of 20 | 4 of 20 (20 %) | 5 of 20 (25 %) | 9 of 22 |
+| pair 1, AFTER | 1.6 | 16 of 16 | 0 | 0 | 7 of 18 |
+| pair 2, AFTER | 1.6 | 16 of 16 | 0 | 0 | 6 of 17 |
+
+`codex.sessions` reported a change on 10 of 10 passes before and 0 of 10
+after, in all runs. Content-free publications remain: the AFTER publications
+woken by `opencode.sessions` alone (4 per run) match the AFTER revisions whose
+rows equal the previous one's and whose support differs only in clocks (3 to
+5 per run) or quota windows; that source reports a change without changing a
+row (listed under Step 3b, "Not done"). Gap from a changed source to its
+publication (pair 1 AFTER, perf spans): median 5.5 s, maximum 40 s.
+
+#### STOP (a): the idle RSS floor rises by 25 % — the Codex resident index
+
+| Run | Floor median | Last window | Lowest heap at a phase start |
+| --- | ---: | ---: | ---: |
+| pair 1, BEFORE | 247 MB | 257 MB | – (no spans) |
+| pair 2, BEFORE | 248 MB | 258 MB | 45.5 MB |
+| pair 1, AFTER | 310 MB (+25.5 %) | 323 MB (+25.7 %) | 61.2 MB |
+| pair 2, AFTER | 313 MB (+26.2 %) | 316 MB (+22.5 %) | 55.7 MB |
+| no-index variant | 256 MB (+3.2 %) | 260 MB (+0.8 %) | 48.1 MB |
+
+The pairs are like for like (one store copy per pair, the same rebased
+caches), and the rise is the same in both orders: **the floor rises by 22 to
+26 %, over the 10 % limit, so the STOP condition holds.** The variant is
+`9b3b73ab` with the single line `createIncrementalCollector:
+createCodexIncrementalCollector,` removed from the Codex entry of
+`HARNESS_ADAPTERS` (`packages/local-collectors/src/collectors/index.ts`), run
+from an export outside the repository on a copy of pair 2's store. Without the
+index the floor is back within 1 to 3 % of BEFORE, so the index accounts for
+the whole rise: about +57 MB of RSS floor, of which 8 to 16 MB is live heap
+(the rest is heap capacity and allocator pages kept by the process). This is
+larger than the 31.5 MB (with observations) or 11.7 MB (without) measured for
+the index outside the engine in Step 3b.
+
+What the index buys, from the same variant (CPU per `codex.sessions` pass
+1,185 ms without it against 368 to 419 ms with it; ΔRSS +381 MB against
++145 to +149 MB; CPU per minute 1.24 s against 0.40 s): about 0.8 s of CPU per
+active minute, and a peak 190 to 220 MB lower (1,096 MB without it against
+875 to 909 MB). Without it the import change still holds: the variant
+compared 0 Codex rows per pass, but its collector returns all 95,553 skill
+observations and their import costs 245 ms per pass again.
+
+**Operator's choice, not made here:** keep the index (floor +57 MB, +22 to
+26 %, against 0.8 s of CPU per minute and a lower peak) and accept the floor,
+or remove that one line (floor back within 3 %, CPU and peak as in the
+variant). The index was not removed.
+
+#### STOP (b): content identity — every difference is explained by input changes
+
+The final revisions of the two runs of each pair, compared row by row by row
+id (`step4-compare.ts`, figures only), with
+`datasets.providerStatus.generatedAt` masked. The criterion: a session whose
+rows differ is explained when its latest activity (largest `endDate` over its
+rows in either revision) is after the moment the pair's copies were taken,
+because the two runs then read different inputs for it; any other difference
+would be a defect.
+
+| | Pair 1 | Pair 2 |
+| --- | ---: | ---: |
+| Rows (first run / second run) | 10,375 / 10,376 | 10,377 / 10,379 |
+| Rows equal in every stored column except position and ranks | 10,368 | 10,368 |
+| Of those, rows with a different segment or filter key | 0 | 0 |
+| Sessions whose rows differ | 8 (all Claude Code) | 11 (all Claude Code) |
+| — a moving session (new row id, activity after the copies) | 7 | 9 |
+| — a session that only the later run saw (started after the copies) | 1 | 2 |
+| — unexplained (no activity after the copies) | **0** | **0** |
+| Codex, OpenCode, Cursor rows differing | 0 | 0 |
+
+- The ordinal and the identity ranks of the other rows move with those
+  sessions (a moving session's row id includes its active date), and 33
+  `campaign_total_count` values move with one campaign that holds a moving
+  session; nothing else differs in an unchanged row.
+- Support: `analytics` aggregates (totals, per harness, model and provider),
+  the project groups that hold a differing session (3 of 121 in pair 1, 2 of
+  120 in pair 2; in pair 1 one group exists only in the earlier run, because
+  its only session, active after the copies, belongs to another group in the
+  later run), `projectGroups` order, and the clocks: `generatedAt`,
+  `machineFreshness`, per-provider `generatedAt` and quota `resetsAt` (read
+  live by the usage-limits sources).
+- The Codex collector now emits 5,131 rows where it emitted 5,132 (one row per
+  session id, Step 3b); the served Codex rows are identical, as Step 3b
+  expected.
+
+The identical inputs required by decision 2 cannot be held fixed on live
+histories; with that limit, the real-data comparison shows no content change
+caused by the code. The fixed-input proofs remain the tests of Steps 3b and 3c.
+
+#### Step 5's entry test, from these runs
+
+- Longest burst above half a core (1 Hz samples): 8 to 11 s after (one burst
+  over 10 s in pair 1, none in pair 2), 9 to 11 s before. The first condition
+  is borderline.
+- Heap carried into the next phase: 38 of 86 back-to-back transitions in
+  pair 2's AFTER (16 of 76 in pair 1's) start at least 50 MB above the heap
+  floor, against 40 of 98 before. The second condition still holds.
+
+Step 5 therefore applies, and it needs a publication cap, which is the
+operator's decision (STOP conditions). It was not started.
+
+#### Done criteria, as of this step
+
+| Criterion | State |
+| --- | --- |
+| Step 1's table and Step 4's before/after recorded | Met (this section). |
+| Phases fixed reduced by ≥ 50 % in CPU and RSS climb, floor unchanged ±10 % | Met for `codex.sessions` (CPU −69 %, ΔRSS −61 %) and `rtk.savings` (−85 %, −94 % per run), and for the publication's prepare step (CPU −51 %, ΔRSS −45 %); the publication as a whole −10 % CPU and −27 % ΔRSS per run. **Not met for the floor: +22 to 26 % (STOP a, operator).** |
+| CPU ≤ 4.0 s per active minute and peak ≤ 1,330 MB, or the gap explained by phase | Peak met (875 to 909 MB). CPU not met (6.7 to 8.2 s); the gap is explained by phase above. |
+| Step 5 not needed, done, or stopped for the cap | Stopped for the operator's cap decision (its second condition holds). |
+| Served content byte-identical for fixed inputs | Tests of 3b and 3c; real data: no unexplained difference. |
+| Sink recovers and reports drops | Met (Step 2 tests). |
+| Plan row updated | Met. |
+
+The plan is not done. Open for the operator: the floor (keep or remove the
+Codex index), the publication cap (Step 3c and Step 5), and the
+insert-only-what-changed schema change (its own plan). Not executed and
+outside the operator decisions: Step 3a (OpenCode, now 22 % of the CPU, above
+the ≥ 20 % rule in pair 2 but not in pair 1's 19.5 %) and the `opencode.sessions`
+passes that report a change without changing a row.
+
+Measurement kit (outside the repository, beside Step 1's): new scripts
+`step4-make-base.ts` (base with rebased warm caches), `step4-run.sh` (one run
+with the load log and the revision poller), `step4-events.ts` (publications
+and source runs from the wide events, for the tree without spans),
+`step4-compare.ts` and `step4-groups.ts` (content identity), `step4-bursts.ts`
+and `step4-phases-pair.sh`; `measure.ts`, `analyze.ts`,
+`analyze-publication.ts`, `publication-frequency.ts` and `watch-revisions.ts`
+were used unchanged.
+
+### 2026-11-18 — Operator decisions: plan closed with deferrals
+
+The operator resolved the three open STOPs of Step 4 on 2026-11-18. The pull
+request merges Steps 0 to 4; nothing else of this plan is executed.
+
+| STOP | Operator decision |
+| --- | --- |
+| (a) The idle RSS floor rises by 22 to 26 % (about +57 MB), over decision 3's 10 % budget, all of it the Codex resident index | **Keep the index and accept the floor.** The 0.8 s of CPU per active minute and the 190 to 220 MB lower peak it buys are worth the higher floor. This decision, not a measurement, lifts the 10 % budget for this index only; any other floor rise still meets the STOP condition. |
+| (b) A publication frequency cap (Steps 3c and 5) | **Deferred to a separate future plan.** Not executed here; Step 5, which needs the cap, is therefore not started either. |
+| (c) Inserting only the rows that changed, which needs a per-revision shared-rows schema change | **Deferred to a separate future plan**, with (b). |
+
+Consequences for the done criteria: the floor criterion is met by the
+operator's decision (a), not by measurement. The CPU target (≤ 4.0 s per active
+minute) stays unmet (6.7 to 8.2 s), with the gap explained by phase in Step 4;
+closing it is the future plan's subject (the cap, the schema change or both).
+Step 3a (OpenCode) and the `opencode.sessions` passes that report a change
+without changing a row are not executed and are left to that plan as well.
+
+The reviewer's note on the fingerprint short-circuit is already recorded under
+Step 3c ("Two related facts"): `datasets.providerStatus.generatedAt` is the
+wall clock of the read, so the store's fingerprint-unchanged check after the
+assembly can never match while a provider status exists. It is restated in the
+pull request body and left to the future plan, because changing it changes
+served content.
+
+### 2026-11-18 — Review follow-up: an unwalkable archive left the index out of step
+
+A review of the pull request found (and a trace confirmed) a case where the
+incremental Codex pass and a full collection disagreed. While
+`archived_sessions` could not be walked, the resident index kept the entries
+of its rollouts, as the cache does, but their session ids were never marked
+as moved; once the walk recovered, an archived rollout was a plain index hit.
+Scenario: session S has an archived rollout A and an active rollout B that
+carry one observation identity with different content (a resumed thread
+re-emitting `catalogue:<name>` later). The walk fails, B changes, the walk
+recovers. A full collection returns A's copy again (first in session order);
+the incremental pass returned nothing, so the store kept B's copy until the
+next complete pass, which only a restart, a failed pass or a store refusal
+requests (the hourly full import does not ask the collector for one). The
+first failing pass already diverged the same way in the other direction: a
+full pass returns B's copy, the incremental pass returned nothing.
+
+Fix (`packages/local-collectors/src/codex-history.ts`): a pass whose archived
+walk failed never reads the index and never fills it. It is a complete pass,
+answered from the on-disk cache (which still keeps the unlisted entries), and
+so is the first pass after the walk recovers, because the index is empty by
+then. Incremental and full collection are therefore equal by construction
+around a walk failure; the retention of unlisted entries in the index is gone,
+since no pass that reads the index has an unwalked directory. Cost: while the
+archive stays unwalkable (a warned, abnormal state), each minute pass reads
+the whole cache again, as before Step 3b.
+
+Test: `matches a full collection while the archived directory cannot be walked
+and once it can again` in
+`packages/local-collectors/src/codex-incremental-collection.test.ts`. It
+failed before the fix at the first failing pass and, with those assertions
+removed, at the recovery pass (expected A's copy, received no observation);
+it passes after, and checks that the pass after recovery answers from the
+index again.
