@@ -65,6 +65,13 @@ export interface FileWideEventSinkOptions {
   readonly lockTimeoutMs?: number;
   readonly maxFiles?: number;
   readonly maxSizeMb?: number;
+  /**
+   * Milliseconds on a clock that only moves forward. The circuit's cool-down is measured on it, so
+   * a wall clock that is stepped back or ahead while the circuit is open neither stretches nor cuts
+   * the cool-down. Defaults to `performance.now()`.
+   */
+  readonly monotonicNowMs?: () => number;
+  /** The wall clock: it names the daily file and spaces the rate-limited warnings. */
   readonly now?: () => Date;
   readonly queueCapacity?: number;
   readonly sweepFiles?: (directory: string, maxFiles: number) => Promise<void>;
@@ -333,6 +340,7 @@ export const createFileWideEventSink = (
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const maxBytes = Math.max(0, (options.maxSizeMb ?? DEFAULT_MAX_SIZE_MB) * 1024 * 1024);
   const queueCapacity = options.queueCapacity ?? DEFAULT_QUEUE_CAPACITY;
+  const monotonicNowMs = options.monotonicNowMs ?? (() => performance.now());
   const now = options.now ?? (() => new Date());
   const warn = options.warn ?? (() => undefined);
   const sweepFiles = options.sweepFiles ?? sweepOldFiles;
@@ -344,7 +352,8 @@ export const createFileWideEventSink = (
   // tried as a probe (half-open). The first append that succeeds closes the circuit; a probe that
   // misses its deadline reopens it with a doubled cool-down.
   let circuit: WideEventCircuitState = 'closed';
-  let circuitRetryAt = 0;
+  // A reading of the monotonic clock, never of the wall clock.
+  let circuitRetryAtMonotonicMs = 0;
   let nextCircuitCooldownMs = circuitCooldownMs;
   let outstanding = 0;
   let resolveIdle: (() => void) | undefined;
@@ -406,7 +415,7 @@ export const createFileWideEventSink = (
     nextCircuitCooldownMs =
       circuit === 'half-open' ? Math.min(nextCircuitCooldownMs * 2, circuitMaxCooldownMs) : circuitCooldownMs;
     circuit = 'open';
-    circuitRetryAt = now().getTime() + nextCircuitCooldownMs;
+    circuitRetryAtMonotonicMs = monotonicNowMs() + nextCircuitCooldownMs;
     warnKind('append-timeout');
     dropPending();
   };
@@ -500,7 +509,7 @@ export const createFileWideEventSink = (
     if (circuit === 'open') {
       // The blocked append may still hold the worker and the lock long after its deadline; a probe
       // behind it would only wait, so the circuit stays open until both conditions hold.
-      if (workerRunning || now().getTime() < circuitRetryAt) {
+      if (workerRunning || monotonicNowMs() < circuitRetryAtMonotonicMs) {
         bump('dropped');
         warnKind('circuit-open');
         return;

@@ -466,6 +466,7 @@ describe('node wide-event sinks', () => {
       appendTimeoutMs: 20,
       circuitCooldownMs: 30_000,
       directory,
+      monotonicNowMs: () => current.getTime(),
       now: () => current,
       warn: (warning) => {
         warnings.push(warning);
@@ -520,6 +521,78 @@ describe('node wide-event sinks', () => {
     await sink.dispose();
   });
 
+  test('measures the cool-down on the monotonic clock: a stepped wall clock neither cuts nor stretches it', async () => {
+    const directory = makeTempDir();
+    let wallClock = new Date('2026-07-21T12:00:00.000Z');
+    let monotonicMs = 5000;
+    let slow = true;
+    const written: string[] = [];
+    const sink = createFileWideEventSink({
+      appendLine: async (_filePath, line, signal) => {
+        if (slow) {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+          return;
+        }
+        written.push((JSON.parse(line) as WideEventSnapshot).eventId);
+      },
+      appendTimeoutMs: 15,
+      circuitCooldownMs: 1000,
+      directory,
+      drainTimeoutMs: 10_000,
+      monotonicNowMs: () => monotonicMs,
+      now: () => wallClock,
+    });
+
+    const submit = async (id: string) => {
+      await Effect.runPromise(sink.submit(sampleEvent(id)));
+      await sink.drain();
+      return { diagnostics: await Effect.runPromise(sink.diagnostics()), written: [...written] };
+    };
+
+    expect(await submit('slow')).toEqual({
+      diagnostics: { accepted: 0, circuit: 'open', dropped: 0, failed: 1 },
+      written: [],
+    });
+    slow = false;
+
+    // The wall clock steps two hours back while the circuit is open. The cool-down still ends one
+    // second after the timeout: not before, and not two hours later.
+    wallClock = new Date('2026-07-21T10:00:00.000Z');
+    monotonicMs = 5999;
+    expect(await submit('inside-cool-down')).toEqual({
+      diagnostics: { accepted: 0, circuit: 'open', dropped: 1, failed: 1 },
+      written: [],
+    });
+    monotonicMs = 6000;
+    expect(await submit('probe-after-step-back')).toEqual({
+      diagnostics: { accepted: 1, circuit: 'closed', dropped: 1, failed: 1 },
+      written: ['probe-after-step-back'],
+    });
+
+    // A wall clock that jumps ahead does not cut the next cool-down short either.
+    slow = true;
+    monotonicMs = 7000;
+    expect(await submit('slow-again')).toEqual({
+      diagnostics: { accepted: 1, circuit: 'open', dropped: 1, failed: 2 },
+      written: ['probe-after-step-back'],
+    });
+    slow = false;
+    wallClock = new Date('2026-07-21T13:00:00.000Z');
+    monotonicMs = 7999;
+    expect(await submit('inside-second-cool-down')).toEqual({
+      diagnostics: { accepted: 1, circuit: 'open', dropped: 2, failed: 2 },
+      written: ['probe-after-step-back'],
+    });
+    monotonicMs = 8000;
+    expect(await submit('probe-after-jump-ahead')).toEqual({
+      diagnostics: { accepted: 2, circuit: 'closed', dropped: 2, failed: 2 },
+      written: ['probe-after-step-back', 'probe-after-jump-ahead'],
+    });
+    await sink.dispose();
+  });
+
   test('a probe that misses its deadline reopens the circuit with a doubled cool-down up to the cap', async () => {
     const directory = makeTempDir();
     const start = Date.parse('2026-07-21T12:00:00.000Z');
@@ -542,6 +615,7 @@ describe('node wide-event sinks', () => {
       circuitCooldownMs: 1000,
       circuitMaxCooldownMs: 3000,
       directory,
+      monotonicNowMs: () => current.getTime(),
       now: () => current,
       warn: ({ kind }) => {
         if (kind === 'append-timeout') {
@@ -611,6 +685,7 @@ describe('node wide-event sinks', () => {
       appendTimeoutMs: 15,
       circuitCooldownMs: 1000,
       directory,
+      monotonicNowMs: () => current.getTime(),
       now: () => current,
       warn: ({ kind }) => {
         if (kind === 'append-timeout') {
@@ -667,6 +742,7 @@ describe('node wide-event sinks', () => {
       appendTimeoutMs: 15,
       circuitCooldownMs: 1000,
       directory,
+      monotonicNowMs: () => current.getTime(),
       now: () => current,
       warn: ({ kind }) => {
         if (kind === 'append-timeout') {
