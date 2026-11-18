@@ -50,22 +50,27 @@ Registration is always an explicit operator action:
 
 ```sh
 bun run mcp:register:codex
+bun run mcp:register:opencode
+bun apps/mcp/src/register.ts opencode /absolute/project/opencode.json
 bun apps/mcp/src/register.ts json /absolute/project/.mcp.json
 ```
 
-Both register the stdio command `<bun executable> <checkout>/apps/mcp/src/main.ts`
+All register the stdio command `<bun executable> <checkout>/apps/mcp/src/main.ts`
 under the server name `ai-usage-memory`. The name is kept from the Memory era
 on purpose: it is the identity existing operator configurations already hold,
 and renaming it would leave the old entry behind and register a duplicate
 (ADR 0084). The server itself reports `ai-usage` in its MCP handshake. A
 hand-written registration may use any name;
 [Delegation](delegation.md#2-register-the-mcp-server-in-your-client) shows
-Claude Code, Codex and generic `mcpServers` examples.
+Claude Code, Codex, OpenCode and generic `mcpServers` examples.
 
 - The JSON mode takes one absolute path whose file name is `.mcp.json` or
   `mcp.json` and writes the `mcpServers` shape (the Claude Code project-scope
-  and Cursor convention). There is no OpenCode mode; other stdio clients are
-  pointed at `bun run mcp` by hand.
+  and Cursor convention). Other stdio clients are pointed at `bun run mcp` by
+  hand.
+- The OpenCode mode writes `mcp.servers.ai-usage-memory` as
+  `{ "type": "local", "command": [<bun executable>, <main.ts>] }`, the entry
+  `opencode mcp add` writes; see [OpenCode registration](#opencode-registration).
 - Codex is changed only through its CLI (`codex mcp list --json`, then
   `codex mcp add`, then a second list to verify the result), never by editing
   `config.toml`. The target is `$CODEX_HOME/config.toml`, else
@@ -76,13 +81,83 @@ Claude Code, Codex and generic `mcpServers` examples.
   regular file, checks that the directory and file did not change between
   inspection and write, and refuses existing files or Codex list output over
   1 MiB.
-- The JSON file is replaced atomically: a temporary file in the same directory
-  (mode `0600` for a new file, the existing mode otherwise) is written, synced
-  and renamed over the target. Unrelated keys and servers are preserved.
+- The JSON or OpenCode file is replaced atomically: a temporary file in the
+  same directory (mode `0600` for a new file, the existing mode otherwise) is
+  written, synced and renamed over the target. Unrelated keys and servers are
+  preserved.
 - It is idempotent: an identical entry answers `unchanged`. A same-name entry
   with different content is unmanaged and answers `refused-unmanaged` (exit
   code 2); it is never overwritten.
 - No credential is written to any configuration.
+
+### OpenCode registration
+
+The shape below was read from OpenCode 2.2.6 (its bundled configuration schema
+and its `opencode mcp add` command) and from the published schema at
+<https://opencode.ai/config.json>. OpenCode reads `opencode.json` and
+`opencode.jsonc`, both with comments and trailing commas allowed, from its
+global configuration directory and from the project. Local servers live under
+`mcp.servers.<name>` with `type: "local"`, a `command` array, and optional
+`environment` and `disabled`. The older `mcp.<name>` form (with `enabled`) is
+deprecated but still merged into `mcp.servers`. This mode writes only
+`mcp.servers` and was not checked against OpenCode releases that predate it.
+
+- Without a path the target is the global configuration directory:
+  `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else
+  `~/.config/opencode` (an empty variable counts as unset, as in OpenCode).
+  The file written is the first of `opencode.json` and `opencode.jsonc` that
+  exists there, else a new `opencode.json`. The directory itself is never
+  created.
+- One absolute path named `opencode.json` or `opencode.jsonc` registers into
+  that file instead, for example a project configuration.
+- OpenCode loads both files of a directory as separate documents, so the one
+  that is not written is read too, in both forms of the command and under the
+  same rules (regular file, 1 MiB, readable JSON or JSONC). It is never
+  written.
+- A same-name entry is unmanaged when it differs from the entry above or sits
+  in the deprecated `mcp.<name>` form. One such entry in either file answers
+  `refused-unmanaged`. Otherwise the managed entry in either file answers
+  `unchanged` and nothing is written.
+- A document that is valid only as JSONC is read but never rewritten: it can
+  answer `unchanged` or `refused-unmanaged`, and any needed write is refused
+  because it would drop the comments.
+- A write parses and re-serializes the whole document with two-space
+  indentation; the original spacing and line layout are not kept. Strings,
+  booleans, `null`, objects and arrays keep their values, except that a
+  repeated key keeps only its last value. Every number is read as a
+  JavaScript number: an integer beyond 2^53 is rounded, a number out of range
+  (for example `1e400`) becomes `null`, and the rest are written in their
+  shortest form (`1.50` becomes `1.5`, `-0` becomes `0`).
+
+When the configuration cannot be inspected or rewritten safely for one of the
+reasons below, nothing is written, the command exits 1, and stderr names the
+reason (with the system error code behind it, when there is one) and prints
+the `mcp.servers` entry to merge by hand. "A file" is the one to write or the
+other of the two names beside it.
+
+| Reason | Meaning |
+| --- | --- |
+| `unsupported-file-name` | the explicit path is not named `opencode.json` or `opencode.jsonc` |
+| `directory-missing` | the configuration directory does not exist |
+| `directory-not-a-directory` | the directory path, or one of its parents, is not a directory |
+| `directory-not-accessible` | the directory cannot be reached or searched (permission denied) |
+| `directory-unsafe` | the directory is a symlink, or is reached through one |
+| `target-not-regular-file` | a file is a symlink (for example a declaratively managed configuration) or not a regular file |
+| `target-not-readable` | a file cannot be read (permission denied) |
+| `target-too-large` | a file is over 1 MiB |
+| `malformed-document` | a file is not a JSON or JSONC object, or its `mcp` or `mcp.servers` is not an object |
+| `jsonc-not-rewritable` | the file to write holds comments or trailing commas |
+| `target-not-writable` | the file to write or its directory is read-only; a read-only file is not replaced through its writable directory |
+
+Every other failure writes the single fixed line described under
+[Failure and redaction rules](#failure-and-redaction-rules) and prints no
+entry: a wrong argument (a relative path, an extra argument, a relative
+configuration directory), a directory or file that changed between inspection
+and write, a lock that could not be taken, and any other system error such as
+a full disk. The temporary file is removed when a write fails. When it cannot
+be removed, the command does not claim that nothing was written: its single
+stderr line says the temporary file was left beside the target, so the
+operator can delete the hidden `.<file name>.<id>.tmp` file by hand.
 
 ## Failure and redaction rules
 
@@ -102,11 +177,15 @@ Claude Code, Codex and generic `mcpServers` examples.
   partial answer.
 - Private paths, bearer tokens and database errors never enter MCP
   diagnostics; a startup or registration failure writes one fixed line to
-  stderr and exits 1.
+  stderr and exits 1. An OpenCode registration refusal adds its reason, a
+  system error code when there is one, and the entry to merge by hand, which
+  names the registered command and no other path; the refusal keeps no system
+  error message.
 - The server process calls no remote service. Harness-specific configuration
   cannot change tool names or schemas.
 
 The adapter's protocol tests run through the SDK's in-memory transport
 (`packages/mcp-adapter/src/index.test.ts`, `delegation.test.ts`); registration
-is covered by `registration.test.ts`, and the process composition by
-`apps/mcp/src/main.test.ts` and `delegation.integration.test.ts`.
+is covered by `registration.test.ts` and `apps/mcp/src/register.test.ts`, and
+the process composition by `apps/mcp/src/main.test.ts` and
+`delegation.integration.test.ts`.

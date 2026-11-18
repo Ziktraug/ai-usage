@@ -56,8 +56,9 @@ and external systems; reuse authorization already granted for the current scope.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)
-- `bun run mcp` / `bun run mcp:register:codex` — local stdio MCP server
-  (`work.context`, delegation tools) and its Codex registration
+- `bun run mcp` / `bun run mcp:register:codex` / `bun run mcp:register:opencode` —
+  local stdio MCP server (`work.context`, delegation tools) and its Codex and
+  OpenCode registrations
 - `bun x ultracite fix` — format and autofix before committing (Biome)
 
 ## Code standards
