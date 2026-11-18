@@ -457,6 +457,25 @@ shutdown summary names the state.
 The measured sessions did not exercise the recovery: no append missed its
 deadline in 26 minutes.
 
+**Known limitation: the append that never settles.** Decision 5 says a slow
+append "must not silence the sink for the rest of the process". That holds for
+an append that misses its deadline and then settles. It does not hold, to the
+letter, for an append that never settles (a hung `appendFile` or
+`handle.close()`, for example on a stuck mount). The timed-out append keeps the
+worker and the interprocess lock until it returns, and no probe is started
+while the worker is busy, so the circuit stays open for the life of the
+process. Other processes writing to the same log directory time out on the lock
+and count each record as failed.
+
+This is accepted and not coded around. Starting a second append while the first
+one may still write would allow interleaved or torn lines in the NDJSON file,
+which is worse than a gap. The loss stays visible: every record is counted as
+dropped, the rate-limited `circuit-open` warning repeats, the diagnostics read
+`circuit: 'open'` and the shutdown summary prints `circuit=open`. Recovery
+needs an engine restart. The test "does not probe while the blocked append
+still holds the worker" pins the behaviour, and ADR 0014's amendment states the
+same limitation.
+
 ### 2026-11-18 — Step 3c, the publication's store side
 
 Write scope for this round: `served-report-store.ts` and its tests, the
@@ -637,3 +656,23 @@ needs a cap, or the schema change above, or both.
   filter keys, and the support with `datasets.providerStatus.generatedAt`
   masked. Capture fingerprints of two separate runs differ because of that
   clock, even with no code change; they compare equal only when it is pinned.
+
+### 2026-11-18 — Adversarial review of Steps 0 to 3c
+
+Six confirmed findings fixed, one accepted. No step of the plan moved: Step 3b
+is still on its sibling branch, Steps 4 and 5 are still pending.
+
+| Finding | What changed |
+| --- | --- |
+| The publication's fingerprint carried its own copy of the reference's clock-stripping step, pinned to it only by the inputs the tests happened to hold. A change of the reference on a member no test carried would have made the writer and the validator of a revision disagree, silently: a failed validation reads as "no reusable manifest". | `report-core` exports the step as `reportCaptureFingerprintInput`; the reference fingerprint and the store's one-pass fingerprint both call it, so there is one definition. A store test replaces the export and checks that the publication follows it. The generated payloads now carry `machineFreshness`, `datasets` and `localContext`. Digests recorded before the change are pinned in a new `report-core` test, and the identity tests pass unchanged. |
+| The test of the cool-down cap gave the same counts with and without the cap. | It now submits one millisecond before and exactly at the end of each cool-down and reads a probe in the append count and the failed counter. With the cap removed it fails at the first capped window. |
+| A failed perf span printed the error message, which can hold the store path or a transcript path. | The line carries identifiers only: `error` (tag or error name), `errorOperation`, `errorReason`, `errorCode`, each printed only when shaped like an identifier; `error=interrupted` for an interruption. Both copies of `perf.ts`. This replaces the `error=<message>` field described under "Spans" above. |
+| The cool-down was measured on the wall clock: a clock stepped back while the circuit was open kept it open longer. | The retry deadline is a reading of `performance.now()` (injectable as `monotonicNowMs`). The wall clock still names the daily file and spaces the rate-limited warnings. |
+| A `summarize` callback that threw turned a successful wrapped operation into a failure when perf was enabled. | The callback is guarded: the line reports the span's own figures and `summaryError=<name>`, and the wrapped work keeps its result. Both copies. |
+| The status row in `plans/README.md` still said Steps 3 to 5 were not started. | Updated. |
+| An append that never settles keeps the circuit open for the life of the process, against the letter of decision 5. | Accepted, not changed: see "Known limitation" under Step 2. |
+
+Not changed, noted for whoever touches the sink next: the rate limit of the
+sink's warnings still reads the wall clock, so a clock stepped back can also
+hold back warnings of a kind for the size of the step. The counters are not
+affected.
