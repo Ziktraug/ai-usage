@@ -1,4 +1,4 @@
-import { Console, Effect, Exit } from 'effect';
+import { Cause, Console, Effect, Exit } from 'effect';
 
 type PerfField = boolean | number | string | null | undefined;
 type PerfSummary = Record<string, PerfField>;
@@ -45,14 +45,51 @@ const resourceSummary = (before: PerfReading): PerfSummary => {
   };
 };
 
-const formatError = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.message;
+const SAFE_TOKEN = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
+
+/** A short identifier (an error tag, an operation name, a reason or errno code), or nothing. */
+const safeToken = (value: unknown): string | undefined =>
+  typeof value === 'string' && SAFE_TOKEN.test(value) ? value : undefined;
+
+/**
+ * Names a failure without printing its message. These lines go to stderr, and a message can hold
+ * the store path or a transcript path: `UsageStoreError.message` starts with the operation and the
+ * database path. Only identifiers are printed, and a value that is not shaped like one is left out.
+ */
+const errorSummary = (failure: unknown): PerfSummary => {
+  try {
+    if (Cause.isCause(failure)) {
+      return Cause.hasInterruptsOnly(failure) ? { error: 'interrupted' } : errorSummary(Cause.squash(failure));
+    }
+    if (typeof failure !== 'object' || failure === null) {
+      return { error: 'unknown' };
+    }
+    const member = (key: string) => safeToken((failure as Record<string, unknown>)[key]);
+    return {
+      error: member('_tag') ?? (failure instanceof Error ? member('name') : undefined) ?? 'unknown',
+      errorOperation: member('operation'),
+      errorReason: member('reason'),
+      errorCode: member('code'),
+    };
+  } catch {
+    // Reading the failure threw. The span still reports its figures, and the failure stays as it is.
+    return { error: 'unknown' };
   }
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    return String((error as { message: unknown }).message);
+};
+
+/**
+ * The caller's own fields. They only decorate the line: when the callback throws, the span still
+ * reports its figures, names the callback's error, and the wrapped work keeps its result.
+ */
+const callerSummary = <A>(value: A, summarize?: (value: A) => PerfSummary): PerfSummary => {
+  if (summarize === undefined) {
+    return {};
   }
-  return String(error);
+  try {
+    return summarize(value);
+  } catch (error) {
+    return { summaryError: errorSummary(error).error };
+  }
 };
 
 const formatSummary = (summary: PerfSummary) =>
@@ -62,10 +99,10 @@ const formatSummary = (summary: PerfSummary) =>
     .join(' ');
 
 const okLine = <A>(label: string, before: PerfReading, value: A, summarize?: (value: A) => PerfSummary) =>
-  `[perf] ${label} ok ${formatSummary({ ...resourceSummary(before), ...(summarize?.(value) ?? {}) })}`;
+  `[perf] ${label} ok ${formatSummary({ ...resourceSummary(before), ...callerSummary(value, summarize) })}`;
 
 const failedLine = (label: string, before: PerfReading, error: unknown) =>
-  `[perf] ${label} failed ${formatSummary({ ...resourceSummary(before), error: formatError(error) })}`;
+  `[perf] ${label} failed ${formatSummary({ ...resourceSummary(before), ...errorSummary(error) })}`;
 
 export const withPerfSpan = <A, E, R>(
   label: string,
