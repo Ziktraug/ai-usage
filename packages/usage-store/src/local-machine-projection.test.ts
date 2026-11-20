@@ -15,8 +15,8 @@ import {
   UsageStoreError,
   usageStorePath,
 } from './reader';
-import { setLocalProjectionReadFaultInjectorForTesting } from './testing';
-import { importLocalRows, importPeerMergeBundle, initializeUsageStore, updateUsageMachineLabel } from './writer';
+import { importPeerMergeBundle, setLocalProjectionReadFaultInjectorForTesting } from './testing';
+import { importLocalRows, initializeUsageStore, updateUsageMachineLabel } from './writer';
 
 const localMachine: UsageMachine = { id: 'machine-local', label: 'Local machine' };
 const temporaryHomes: string[] = [];

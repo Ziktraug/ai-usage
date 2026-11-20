@@ -21,7 +21,7 @@ import {
 import { createInMemoryUsageEngineControlClient } from '@ai-usage/usage-engine-control/testing';
 import { defineUsageEngineRuntimeFactory } from '@ai-usage/usage-engine-runtime';
 import { queryReportRows } from '@ai-usage/usage-store/reader';
-import { createUsageStore, importLocalRows } from '@ai-usage/usage-store/testing';
+import { importLocalRows } from '@ai-usage/usage-store/testing';
 
 const repositoryRoot = path.resolve(import.meta.dir, '..');
 
@@ -79,7 +79,6 @@ describe('usage engine public package exports', () => {
     expect(createInMemoryUsageEngineControlClient).toBeFunction();
     expect(defineUsageEngineRuntimeFactory).toBeFunction();
     expect(queryReportRows).toBeFunction();
-    expect(createUsageStore).toBeFunction();
     expect(importLocalRows).toBeFunction();
     expect(import.meta.resolve('@ai-usage/usage-engine/main')).toContain('/apps/usage-engine/src/main.ts');
   });

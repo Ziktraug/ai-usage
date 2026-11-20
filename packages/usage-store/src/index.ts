@@ -867,37 +867,6 @@ export interface RecordProviderQuotaSourceAttemptInput extends QueryProviderQuot
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 
-export interface UsageStore {
-  confirmPeerMergeBundle: (input: ConfirmPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
-  exportLocalMergeBundle: (input: ExportLocalMergeBundleInput) => Effect.Effect<UsageMergeBundle, UsageStoreError>;
-  importLocalRows: (input: ImportLocalRowsInput) => Effect.Effect<ImportResult, UsageStoreError>;
-  importPeerMergeBundle: (input: ImportPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
-  previewPeerMergeBundle: (
-    input: PreviewPeerMergeBundleInput,
-  ) => Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError>;
-  queryEnrichableUsageRows: (
-    input?: QueryEnrichableUsageRowsInput,
-  ) => Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError>;
-  queryReportRows: (input?: QueryReportRowsInput) => Effect.Effect<QueryRowsResult, UsageStoreError>;
-  queryStoredReportCapture: (
-    input?: QueryStoredReportCaptureInput,
-  ) => Effect.Effect<QueryStoredReportCaptureResult, UsageStoreError>;
-  queryUsageMachineFleet: (
-    input?: QueryUsageMachineFleetInput,
-  ) => Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError>;
-  queryUsageStoreGeneration: (input?: QueryUsageStoreGenerationInput) => Effect.Effect<number, UsageStoreError>;
-  queryUsageStoreGenerations: (
-    input?: QueryUsageStoreGenerationInput,
-  ) => Effect.Effect<UsageStoreGenerations, UsageStoreError>;
-  retireLocalRows: (input: RetireLocalRowsInput) => Effect.Effect<RetireLocalRowsResult, UsageStoreError>;
-  updateUsageMachineLabel: (
-    input: UpdateUsageMachineLabelInput,
-  ) => Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError>;
-  upsertRtkSavingsContributions: (
-    input: UpsertRtkSavingsContributionsInput,
-  ) => Effect.Effect<EnrichmentImportResult, UsageStoreError>;
-}
-
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
   finalize: () => void;
@@ -4073,25 +4042,6 @@ export const exportLocalMergeBundle = (
       }),
     ),
   );
-
-export const createUsageStore = (dbPath: string): UsageStore => ({
-  exportLocalMergeBundle: (input) => exportLocalMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
-  importLocalRows: (input) => importLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
-  importPeerMergeBundle: (input) => importPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
-  previewPeerMergeBundle: (input) => previewPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
-  confirmPeerMergeBundle: (input) => confirmPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
-  queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  queryStoredReportCapture: (input) => queryStoredReportCapture({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  queryEnrichableUsageRows: (input) => queryEnrichableUsageRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  queryUsageMachineFleet: (input) => queryUsageMachineFleet({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  queryUsageStoreGenerations: (input) =>
-    queryUsageStoreGenerations({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  queryUsageStoreGeneration: (input) =>
-    queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
-  retireLocalRows: (input) => retireLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
-  updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
-  upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
-});
 
 export const { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
   usageStoreError,
