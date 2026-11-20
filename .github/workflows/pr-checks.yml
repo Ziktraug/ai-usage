@@ -1,14 +1,14 @@
 name: PR Checks
 
 on:
+  # Documentation-only changes are skipped by the Change Scope job, not by a
+  # trigger-level paths filter: a workflow that never starts leaves required
+  # checks pending forever, while a skipped job reports as passing.
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "plans/**"
-      - ".claude/**"
-      - ".agent-memory/**"
-      - LICENSE
+  # main is checked again after each merge, so a change that reached it
+  # without a passing pull request is still caught.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,9 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request run, but every main commit keeps
+  # its own result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -24,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      code: ${{ steps.scope.outputs.code }}
       browser: ${{ steps.scope.outputs.browser }}
     steps:
       - uses: actions/checkout@v7
@@ -33,32 +36,39 @@ jobs:
           # PR change set. Depth 2 fetches both parents.
           fetch-depth: 2
       - id: scope
-        name: Decide whether the browser jobs have anything to verify
+        name: Decide which jobs have anything to verify
         run: |
           if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
             echo "browser=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Every job is skipped when the change is documentation only.
           # The browser jobs execute apps/web, and through it most of the
           # workspace packages; the demo/production job also boots
           # apps/usage-engine, which pulls in the rest. The only code
           # directory outside that surface is apps/cli, so the filter is
           # inverted: skip the browser jobs only when every changed file is
           # CLI-only or documentation.
+          code=false
           browser=false
           while IFS= read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
-              apps/cli/*|*.md|docs/*|plans/*|.claude/*|.agent-memory/*|LICENSE) ;;
-              *) browser=true ;;
+              *.md|docs/*|plans/*|.claude/*|.agent-memory/*|LICENSE) ;;
+              apps/cli/*) code=true ;;
+              *) code=true; browser=true ;;
             esac
           done <<EOF
           $(git diff --name-only HEAD^1 HEAD)
           EOF
+          echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "browser=$browser" >> "$GITHUB_OUTPUT"
 
   static-types:
     name: Static and Types
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -73,6 +83,8 @@ jobs:
 
   unit-build:
     name: Unit, Build, Client Boundary
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -88,6 +100,8 @@ jobs:
 
   lifecycle:
     name: Production and Lifecycle
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
