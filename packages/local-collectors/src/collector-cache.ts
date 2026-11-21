@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { isSessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { parseSkillObservation, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { isOriginProvenanceKind, isSessionOrigin } from '@ai-usage/report-core/types';
@@ -33,9 +34,6 @@ export const reviveDate = (value: unknown): Date | null => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isNullableDate = (value: unknown): boolean => value === null || reviveDate(value) !== null;
 const isNullableMetric = (value: unknown): boolean => value === null || parseNonNegativeFiniteNumber(value).ok;

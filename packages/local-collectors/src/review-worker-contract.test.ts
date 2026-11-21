@@ -654,6 +654,15 @@ describe('codex review worker specifics', () => {
     expect(codexFailureReason('error', 'tab\there\u0007bell')).toBe('codex error: tab here bell');
     expect(codexFailureReason('error', 42)).toBe('codex error');
   });
+
+  test('reads any non-null object as a failure error, arrays included, but not null or a primitive', () => {
+    const failed = (error: unknown) =>
+      parseCodexExecLine(JSON.stringify({ error, message: 'event', type: 'turn.failed' }));
+    expect(failed({ message: 'object' })).toEqual({ detail: 'object', eventType: 'turn.failed', kind: 'failure' });
+    expect(failed([])).toEqual({ detail: undefined, eventType: 'turn.failed', kind: 'failure' });
+    expect(failed(null)).toEqual({ detail: 'event', eventType: 'turn.failed', kind: 'failure' });
+    expect(failed('text')).toEqual({ detail: 'event', eventType: 'turn.failed', kind: 'failure' });
+  });
 });
 
 describe('final text bounding', () => {
