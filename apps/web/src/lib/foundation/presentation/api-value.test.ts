@@ -5,7 +5,7 @@ import {
   apiValuePresentation,
   PARTIAL_PRICE_HINT,
   UNKNOWN_PRICE_HINT,
-} from './lib/foundation/presentation/report-value';
+} from './report-value';
 
 describe('API value presentation', () => {
   test('distinguishes exact values, known lower bounds, and wholly unknown prices', () => {
