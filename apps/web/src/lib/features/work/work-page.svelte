@@ -42,7 +42,7 @@
   } from './work-attention-model';
   import { createSyntheticWorkAttentionClient } from './work-attention-synthetic';
   import WorkCoverageLine from './work-coverage-line.svelte';
-  import WorkDelegations from './work-delegations.svelte';
+  import WorkDelegations from './delegations/work-delegations.svelte';
   import type { WorkPageData } from './work-load';
   import WorkSession from './work-session.svelte';
   import WorkSources from './work-sources.svelte';

@@ -11,7 +11,7 @@ import type {
   DelegationRecordAcceptanceOutput,
   DelegationSelectionWire,
 } from '@ai-usage/web-contract/delegation';
-import type { DelegationClientResult } from '../../rpc/delegation-client';
+import type { DelegationClientResult } from '../../../rpc/delegation-client';
 
 /**
  * The words of the Work view's Delegations panel. Everything here names a fact the store holds or
