@@ -14,6 +14,7 @@ import {
 import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { canonicalInstantFromDate, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { HARNESS_METADATA } from '@ai-usage/report-core/harness-metadata';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
@@ -3243,6 +3244,122 @@ describe('session source perf spans', () => {
 
       expect(lines).toEqual([]);
       expect(result).toMatchObject({ changed: true, inputCount: 2, outputCount: 2 });
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+});
+
+describe('source run branches (plan 127 characterization)', () => {
+  test('fails a Codex session pass whose request observations the store rejects', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-codex-work-rejected-'));
+    try {
+      // The store parses each observation and counts the one it cannot read as rejected.
+      const malformed = { sessionId: 'not-a-work-observation' } as unknown as CodexWorkObservation;
+      const adapter: HarnessAdapter = {
+        collect: Effect.succeed([]),
+        collectResult: Effect.succeed({ rows: [], warnings: [], workObservations: [malformed] }),
+        metadata: HARNESS_METADATA.codex,
+      };
+      const source = createSessionSource({
+        adapter: () => Effect.succeed(adapter),
+        dbPath: usageStorePath(home),
+        detect: Effect.succeed({ availability: 'detected', reason: { code: 'none' } }),
+        id: 'codex.sessions',
+        label: 'Codex sessions',
+        machine,
+        now: () => new Date('2026-07-16T10:00:00.000Z'),
+        storage: createLocalHistoryStorage(home),
+      });
+      const progress: unknown[] = [];
+      const exit = await Effect.runPromiseExit(source.run(progressContext(progress)));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? exit.cause.reasons.find((reason) => reason._tag === 'Fail') : undefined;
+      expect(failure?._tag === 'Fail' ? failure.error : undefined).toMatchObject({
+        _tag: 'SourceRunError',
+        cause: new Error('Codex request import rejected 1 observations'),
+        message: 'The source failed while reading or persisting local data.',
+        sourceId: 'codex.sessions',
+      });
+      expect(progress).toEqual([
+        { phase: 'reading' },
+        { completed: 0, phase: 'normalizing', total: 0 },
+        { completed: 0, phase: 'importing', total: 0 },
+      ]);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('a pull request source whose gh vanished before the run reports it unavailable without running gh', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-pr-vanished-'));
+    try {
+      const calls: BoundedProcessOptions[] = [];
+      let ghPresent = true;
+      const registry = await createRegistry(home, {
+        ghAvailable: () => ghPresent,
+        workFactProcessRunner: (options) => {
+          calls.push(options);
+          return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: '[]' });
+        },
+      });
+      ghPresent = false;
+      const progress: unknown[] = [];
+      const result = await Effect.runPromise(
+        registry.get('github.pull-requests')?.run(progressContext(progress)) ?? Effect.die('missing'),
+      );
+
+      expect(result).toEqual({
+        changed: false,
+        inputCount: 0,
+        outputCount: 0,
+        unavailable: { code: 'run-unavailable', message: 'The supported local input is no longer available.' },
+        warnings: [],
+      });
+      expect(progress).toEqual([{ phase: 'discovering' }]);
+      expect(calls).toEqual([]);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('a Jira pass whose every detail read found no acli records the run as disabled', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'engine-jira-detail-vanished-'));
+    try {
+      const now = new Date('2026-10-21T21:00:00.000Z');
+      writeClaudeDesktopJiraRegistry(home, now);
+      const calls: BoundedProcessOptions[] = [];
+      const registry = await createRegistry(home, {
+        acliAvailable: () => true,
+        now: () => now,
+        workFactProcessRunner: (options) => {
+          calls.push(options);
+          if (options.command === 'acli' && options.args[2] === 'search') {
+            return Effect.succeed({ durationMs: 1, exitCode: 0, stdout: '[]' });
+          }
+          return Effect.fail(new BoundedProcessError({ kind: 'unavailable', message: 'Bounded process unavailable' }));
+        },
+      });
+      await Effect.runPromise(
+        registry.get('claude.desktop-sessions')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+      const result = await Effect.runPromise(
+        registry.get('jira.issues')?.run(progressContext([])) ?? Effect.die('missing'),
+      );
+
+      expect(result).toMatchObject({ changed: false, inputCount: 3, outputCount: 3 });
+      // The first detail read that finds no acli ends the batch.
+      expect(calls.filter(({ args }) => args[2] === 'view')).toHaveLength(1);
+      const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
+      expect(runs).toContainEqual(
+        expect.objectContaining({
+          disabled: true,
+          message: 'acli not installed',
+          observed: 0,
+          sourceId: 'jira.issues',
+        }),
+      );
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
