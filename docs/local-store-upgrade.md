@@ -38,7 +38,10 @@ Schema versions are the SQLite `user_version` pragma:
 Migrations are forward-only and run inside one transaction, so an interrupted
 upgrade leaves the previous version in place. The engine refuses a store newer
 than it supports with `Usage store schema <n> is newer than supported schema
-<m>` (`packages/usage-store/src/migration.ts`). Read-only readers (Web, CLI, MCP)
+<m>` (`packages/usage-store/src/migration.ts`); its writer open fails with the
+reason `schema-too-new`, and any other failure raised while migrating (an
+incompatible projection, the quota stream budget, an SQL error) with
+`migration-failure`. Read-only readers (Web, CLI, MCP)
 refuse every version but their own (ADR 0075 rule 1): an older store answers
 `schema-too-old` until the engine has migrated it, a newer one
 `schema-too-new`. An older binary therefore cannot reopen a migrated store;

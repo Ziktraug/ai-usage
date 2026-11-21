@@ -9,7 +9,12 @@ import {
   usageStorePreviewReadError,
   usageStoreReadError,
 } from './errors';
-import { hasExactUsageLocalMachineSchema, migrate, USAGE_STORE_SCHEMA_VERSION } from './migration';
+import {
+  hasExactUsageLocalMachineSchema,
+  migrate,
+  USAGE_STORE_SCHEMA_VERSION,
+  UsageStoreSchemaTooNewError,
+} from './migration';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
@@ -57,6 +62,21 @@ const ensureWalJournalMode = (db: SqliteDatabase): void => {
   }
 };
 
+// `migrate()` knows neither the path nor the operation, so its failures are typed here: a newer store is
+// `schema-too-new`, any other failure raised while migrating is `migration-failure`.
+const migrateWriterDatabase = (db: SqliteDatabase, dbPath: string): boolean => {
+  try {
+    return migrate(db);
+  } catch (cause) {
+    throw usageStoreError(
+      'openUsageStoreWriter',
+      dbPath,
+      cause,
+      cause instanceof UsageStoreSchemaTooNewError ? 'schema-too-new' : 'migration-failure',
+    );
+  }
+};
+
 const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -71,7 +91,7 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
         db.exec('PRAGMA synchronous = NORMAL');
         applySortCapacityPragmas(db);
         db.exec('PRAGMA foreign_keys = ON');
-        const schemaChanged = migrate(db);
+        const schemaChanged = migrateWriterDatabase(db, dbPath);
         if (schemaChanged) {
           db.exec('PRAGMA wal_checkpoint(PASSIVE)');
         }
@@ -87,7 +107,10 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
         throw cause;
       }
     },
-    catch: (cause) => usageStoreError('openUsageStoreWriter', dbPath, cause, 'storage-failure'),
+    catch: (cause) =>
+      cause instanceof UsageStoreError
+        ? cause
+        : usageStoreError('openUsageStoreWriter', dbPath, cause, 'storage-failure'),
   });
 
 const assertUsageLocalMachineSchema = (db: SqliteDatabase, dbPath: string, operation: string): void => {

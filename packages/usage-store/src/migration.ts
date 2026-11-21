@@ -24,6 +24,14 @@ import { WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
 
 export const USAGE_STORE_SCHEMA_VERSION = 5;
 
+/**
+ * Raised by `migrate()` when the store was written by a newer schema. The writer open maps it to the
+ * `schema-too-new` reason; every other failure raised inside `migrate()` is a `migration-failure`.
+ */
+export class UsageStoreSchemaTooNewError extends Error {
+  override readonly name = 'UsageStoreSchemaTooNewError';
+}
+
 export interface UsageStoreGenerationRecord {
   value: number;
 }
@@ -53,7 +61,7 @@ export const hasExactUsageLocalMachineSchema = (db: SqliteDatabase): boolean => 
 export const migrate = (db: SqliteDatabase): boolean => {
   const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
   if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
-    throw new Error(
+    throw new UsageStoreSchemaTooNewError(
       `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
     );
   }
