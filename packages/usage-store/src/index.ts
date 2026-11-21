@@ -1,4 +1,3 @@
-// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import type { UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { Effect } from 'effect';
 import { createClaudeDesktopSessionStore } from './claude-desktop-session-store';
