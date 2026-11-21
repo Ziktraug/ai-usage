@@ -28,8 +28,8 @@ export type {
 export { DELEGATION_STORE_BOUNDS } from './delegation-store';
 export type { UsageStoreErrorReason } from './errors';
 export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
+export type { ExecutorAccountBarrier } from './executor-observation-schema';
 export type {
-  ExecutorAccountBarrier,
   QueryExecutorAccountChangesInput,
   QueryExecutorAccountChangesResult,
   QueryLatestExecutorObservationsInput,

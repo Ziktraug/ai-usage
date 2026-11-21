@@ -67,8 +67,8 @@ export {
 } from './enrichment';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
+export type { ExecutorAccountBarrier } from './executor-observation-schema';
 export type {
-  ExecutorAccountBarrier,
   ExecutorObservationImportResult,
   ImportExecutorObservationsInput,
   QueryExecutorAccountChangesInput,

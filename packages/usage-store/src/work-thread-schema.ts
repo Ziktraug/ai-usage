@@ -1,3 +1,5 @@
+// Work thread tables. Imports no store module, so `migration.ts` can import it.
+
 /** Operator-owned state, outside served revisions and collection generations. */
 export const WORK_THREAD_TABLES = [
   'work_threads',

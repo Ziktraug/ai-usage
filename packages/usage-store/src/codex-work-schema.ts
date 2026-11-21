@@ -1,3 +1,5 @@
+// Codex work evidence tables. Imports no store module, so `migration.ts` can import it.
+
 export const CODEX_WORK_TABLES = ['codex_work_observations', 'codex_work_collection_coverage'] as const;
 
 /** Auxiliary local evidence, excluded from report generations and snapshots. */

@@ -2,7 +2,6 @@ import { createClaudeDesktopSessionStore } from './claude-desktop-session-store'
 import { withUsageStoreReader, withUsageStoreWriter } from './connections';
 import { createDelegationStore } from './delegation-store';
 import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from './errors';
-import { createExecutorObservationStore } from './executor-observation-store';
 import { readUsageLocalMachineWithDatabase } from './machine-fleet';
 import { createProviderQuotaStore } from './provider-quota-store';
 import { readUsageStoreGenerations } from './report-rows';
@@ -89,17 +88,12 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
   },
 );
 
-export const {
+export {
   importExecutorObservations,
   queryExecutorAccountChanges,
   queryExecutorObservationHistory,
   queryLatestExecutorObservations,
-} = createExecutorObservationStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
+} from './executor-observation-store';
 export const {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
