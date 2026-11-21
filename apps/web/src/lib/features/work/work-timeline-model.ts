@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { parseWorkThreadLinkKey } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadSituation } from '@ai-usage/report-core/work-thread-situation';
 import {

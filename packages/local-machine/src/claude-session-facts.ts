@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import {
   completeCoverage,

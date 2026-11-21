@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { isRecord } from './datasets';
 import type {
   DelegationAppliedRule,

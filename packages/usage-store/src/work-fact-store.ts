@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';

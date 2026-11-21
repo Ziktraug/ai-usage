@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
 import { parseServedRevision } from './served-revision';

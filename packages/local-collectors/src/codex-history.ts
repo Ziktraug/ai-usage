@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMissingHistoryFileError, type LocalHistoryError } from '@ai-usage/local-machine/errors';

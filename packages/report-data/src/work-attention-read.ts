@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';

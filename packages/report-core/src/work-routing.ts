@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { isCanonicalInstant } from './canonical-instant';
 import { codexQuotaWindowModel, isCodexQuotaAvailabilityWindow } from './provider-quota';
 import {

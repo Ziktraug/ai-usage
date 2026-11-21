@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import { chmod, link, lstat, mkdir, open, opendir, realpath, rename, unlink } from 'node:fs/promises';

@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import path from 'node:path';
 import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';

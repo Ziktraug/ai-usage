@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash, randomUUID } from 'node:crypto';
 import { type CanonicalInstant, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { isRecord } from '@ai-usage/report-core/datasets';

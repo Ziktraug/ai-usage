@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { randomUUID } from 'node:crypto';
 import type {
   DelegationEvaluation,

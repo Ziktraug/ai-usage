@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import {
   type CampaignLabelOverrideMutation,
   MAX_CAMPAIGN_KEY_BYTES,

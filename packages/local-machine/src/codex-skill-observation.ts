@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import {
   MAX_SKILL_OBSERVATION_PATH_LENGTH,
   MAX_SKILL_OBSERVATIONS_PER_SESSION,

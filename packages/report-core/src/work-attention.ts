@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import type { CanonicalInstant } from './canonical-instant';
 import type { CodexWorkRequest } from './codex-work-observation';
 import { isRecord } from './datasets';
