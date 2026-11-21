@@ -8,7 +8,7 @@ import { createServer } from 'vite';
 import {
   createSyntheticWorkThreadStore,
   WORK_THREADS_FIXTURE_IDS,
-} from '../../../server/work-threads-e2e-fixture.server';
+} from '../../../../server/work-threads-e2e-fixture.server';
 import {
   THREAD_BANDS,
   THREAD_LIFECYCLE_STEPS,
@@ -23,7 +23,7 @@ import {
   threadRowMeta,
   threadSituationCopy,
   threadWaitSince,
-} from './work-thread-model';
+} from '../work-thread-model';
 
 const TAG = /<[^>]+>/g;
 const SPACES = /\s+/g;
@@ -53,14 +53,14 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
-  root: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+  root: fileURLToPath(new URL('../../../../../../../', import.meta.url)),
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 afterAll(() => server.close());
 
 const component = async (name: string): Promise<Component> => {
-  const module: unknown = await server.ssrLoadModule(`/apps/web/src/lib/features/work/${name}.svelte`);
+  const module: unknown = await server.ssrLoadModule(`/apps/web/src/lib/features/work/threads/${name}.svelte`);
   if (!(typeof module === 'object' && module !== null && 'default' in module && typeof module.default === 'function')) {
     throw new Error(`Missing ${name} component`);
   }

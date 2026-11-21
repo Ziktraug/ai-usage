@@ -3,7 +3,7 @@ import type { WorkThreadCommand, WorkThreadCommandResult } from '@ai-usage/repor
 import {
   createSyntheticWorkThreadStore,
   WORK_THREADS_FIXTURE_IDS,
-} from '../../../server/work-threads-e2e-fixture.server';
+} from '../../../../server/work-threads-e2e-fixture.server';
 import { captureFollowUndo, createFollowUndo } from './work-thread-follow-undo';
 
 const success = (result: WorkThreadCommandResult) => {

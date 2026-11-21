@@ -5,7 +5,7 @@
   import type { Snippet } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import WorkHarnessGlyph from './work-harness-glyph.svelte';
-  import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
+  import WorkMilestoneGlyph from '../work-milestone-glyph.svelte';
   import {
     type CascadeAxis,
     type CascadeBlock,
@@ -31,7 +31,7 @@
     threadFactEventCopy,
     threadTime,
     threadTimeRange,
-  } from './work-thread-model';
+  } from '../work-thread-model';
 
   /**
    * The sessions of a task as a trace: one row per session on an hour axis, child sessions under

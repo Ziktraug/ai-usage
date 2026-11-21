@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { WorkThreadMarkers } from '@ai-usage/report-core/work-thread-view';
-  import { localCheckoutStatus, localMarkerKey, observedWebUrl, threadDate, threadTime } from './work-thread-model';
+  import { localCheckoutStatus, localMarkerKey, observedWebUrl, threadDate, threadTime } from '../work-thread-model';
 
   let {
     markers,

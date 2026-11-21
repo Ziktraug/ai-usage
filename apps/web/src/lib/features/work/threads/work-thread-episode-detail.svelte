@@ -8,7 +8,7 @@
     episodeSpan,
     episodeTimeRange,
     harnessName,
-  } from './work-thread-model';
+  } from '../work-thread-model';
 
   /** What one session left and how to resume it; shared by the journal and the cascade. */
   let {

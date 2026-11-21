@@ -5,8 +5,8 @@
     WorkThreadCommandResult,
   } from '@ai-usage/report-core/work-thread';
   import type { WorkThreadCombineSuggestion } from '@ai-usage/report-core/work-thread-view';
-  import { createWorkThreadCommandAction, type WorkThreadCommandActionInput } from '../../rpc/work-threads-client';
-  import { observedWebUrl } from './work-thread-model';
+  import { createWorkThreadCommandAction, type WorkThreadCommandActionInput } from '../../../rpc/work-threads-client';
+  import { observedWebUrl } from '../work-thread-model';
 
   let {
     items,

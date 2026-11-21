@@ -7,9 +7,9 @@ import { createServer } from 'vite';
 import {
   createSyntheticWorkThreadStore,
   WORK_THREADS_FIXTURE_IDS,
-} from '../../../server/work-threads-e2e-fixture.server';
+} from '../../../../server/work-threads-e2e-fixture.server';
+import { threadListQuery } from '../work-thread-model';
 import { buildSessionCascade } from './work-session-cascade';
-import { threadListQuery } from './work-thread-model';
 
 const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="exaprint\/Exalibur">Exalibur</;
 const SOURCE_CAPTION_PATTERN = /GitHub · [A-Z][a-z]{2} \d/;
@@ -26,7 +26,7 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
-  root: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+  root: fileURLToPath(new URL('../../../../../../../', import.meta.url)),
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
@@ -51,12 +51,12 @@ const render = renderer.render as (
 ) => { body: string };
 const [List, Detail, Episode, Markers, Sources, Cascade] = await Promise.all(
   [
-    'work-thread-list',
-    'work-thread-detail',
-    'work-thread-episode',
-    'work-thread-markers',
+    'threads/work-thread-list',
+    'threads/work-thread-detail',
+    'threads/work-thread-episode',
+    'threads/work-thread-markers',
     'work-thread-sources',
-    'work-session-cascade',
+    'threads/work-session-cascade',
   ].map(component),
 );
 if (!(List && Detail && Episode && Markers && Sources && Cascade)) {

@@ -11,7 +11,7 @@
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import WorkCombineSuggestions from './work-combine-suggestions.svelte';
-  import WorkJiraIntake from './jira/work-jira-intake.svelte';
+  import WorkJiraIntake from '../jira/work-jira-intake.svelte';
   import WorkThreadCompactRow from './work-thread-compact-row.svelte';
   import {
     groupThreadRowsByBand,
@@ -24,9 +24,9 @@
     threadBandCounts,
     threadSituationCopy,
     threadWaitSince,
-  } from './work-thread-model';
+  } from '../work-thread-model';
   import WorkThreadRail from './work-thread-rail.svelte';
-  import WorkThreadSources from './work-thread-sources.svelte';
+  import WorkThreadSources from '../work-thread-sources.svelte';
   import './work-thread-pilot.css';
 
   /** Ended follow-ups have their own list (the Done button), so they are not a band to filter on. */

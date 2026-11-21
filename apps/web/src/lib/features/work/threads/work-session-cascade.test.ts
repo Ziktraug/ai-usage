@@ -6,6 +6,7 @@ import type {
   WorkThreadFactEventKind,
   WorkThreadNativeRequest,
 } from '@ai-usage/report-core/work-thread-view';
+import { threadTime } from '../work-thread-model';
 import {
   buildSessionCascade,
   CASCADE_BURST_WINDOW_MS,
@@ -26,7 +27,6 @@ import {
   type SessionCascadeInput,
   worstCascadeMark,
 } from './work-session-cascade';
-import { threadTime } from './work-thread-model';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;

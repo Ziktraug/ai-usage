@@ -12,7 +12,7 @@
     episodeSpanContext,
     episodeTimeRange,
     harnessName,
-  } from './work-thread-model';
+  } from '../work-thread-model';
 
   let {
     episode,

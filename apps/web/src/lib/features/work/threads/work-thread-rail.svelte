@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type ThreadLifecycleStep, threadLifecycleSummary } from './work-thread-model';
+  import { type ThreadLifecycleStep, threadLifecycleSummary } from '../work-thread-model';
 
   let { steps }: { steps: readonly ThreadLifecycleStep[] } = $props();
 </script>

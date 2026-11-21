@@ -9,7 +9,7 @@
     pullRequestChecks,
     threadDate,
     threadTime,
-  } from './work-thread-model';
+  } from '../work-thread-model';
 
   let { row, now, timeZone }: { row: WorkThreadRow; now: string; timeZone: string } = $props();
   const freshness = (at: string | undefined, outcome: string | undefined): string => {

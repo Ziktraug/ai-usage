@@ -8,8 +8,8 @@
   } from '@ai-usage/report-core/work-thread';
   import { taskNativeRequests } from '@ai-usage/report-core/work-thread-situation';
   import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
-  import { createWorkThreadCommandAction, type WorkThreadTaskCommandActionInput } from '../../rpc/work-threads-client';
-  import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
+  import { createWorkThreadCommandAction, type WorkThreadTaskCommandActionInput } from '../../../rpc/work-threads-client';
+  import WorkMilestoneGlyph from '../work-milestone-glyph.svelte';
   import { buildSessionCascade, type CascadeHistoryEntry } from './work-session-cascade';
   import WorkSessionCascade from './work-session-cascade.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
@@ -33,8 +33,8 @@
     threadHistory,
     threadSituationCopy,
     threadTime,
-  } from './work-thread-model';
-  import WorkThreadSources from './work-thread-sources.svelte';
+  } from '../work-thread-model';
+  import WorkThreadSources from '../work-thread-sources.svelte';
 
   export interface SessionChoice {
     readonly caption: string;

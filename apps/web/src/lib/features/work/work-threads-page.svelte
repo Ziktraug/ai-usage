@@ -30,8 +30,8 @@
   import WorkDiskView from './disk/work-disk-view.svelte';
   import WorkJiraSync from './jira/work-jira-sync.svelte';
   import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
-  import WorkThreadDetail, { type HistoryLayout } from './work-thread-detail.svelte';
-  import WorkThreadList from './work-thread-list.svelte';
+  import WorkThreadDetail, { type HistoryLayout } from './threads/work-thread-detail.svelte';
+  import WorkThreadList from './threads/work-thread-list.svelte';
   import type { ThreadPageData } from './work-thread-load';
   import {
     harnessName,
@@ -48,12 +48,12 @@
     threadView,
     threadViewUrl,
   } from './work-thread-model';
-  import WorkThreadPilot from './work-thread-pilot.svelte';
-  import { threadListShell, threadSurface } from './work-thread-styles';
+  import WorkThreadPilot from './threads/work-thread-pilot.svelte';
+  import { threadListShell, threadSurface } from './threads/work-thread-styles';
   import WorkTimelineView from './timeline/work-timeline-view.svelte';
-  import './work-threads.css';
-  import './work-task-pane.css';
-  import './work-thread-pilot.css';
+  import './threads/work-threads.css';
+  import './threads/work-task-pane.css';
+  import './threads/work-thread-pilot.css';
 
   // One switcher for the four lenses; a URL without `view` shows the first.
   const VIEWS = [

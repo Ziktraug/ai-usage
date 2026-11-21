@@ -1,5 +1,5 @@
 import type { WorkThreadEpisode } from '@ai-usage/report-core/work-thread-view';
-import { type ThreadHistoryEntry, threadDayKey } from './work-thread-model';
+import { type ThreadHistoryEntry, threadDayKey } from '../work-thread-model';
 
 /**
  * The cascade of a task's sessions: one row per session on an hour axis, child sessions nested

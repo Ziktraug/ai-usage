@@ -11,7 +11,7 @@
     type threadSituationCopy,
     threadWaitSince,
     threadWaitSinceLabel,
-  } from './work-thread-model';
+  } from '../work-thread-model';
   import WorkThreadRail from './work-thread-rail.svelte';
 
   const STRIP_WIDTH = 70;

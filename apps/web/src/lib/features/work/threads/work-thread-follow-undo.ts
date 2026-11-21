@@ -5,7 +5,7 @@ import type {
   WorkThreadWait,
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadDetailDataset } from '@ai-usage/report-core/work-thread-view';
-import { createWorkThreadCommandAction } from '../../rpc/work-threads-client';
+import { createWorkThreadCommandAction } from '../../../rpc/work-threads-client';
 
 export interface FollowUndoSnapshot {
   /** Null means the original closure is outside the served event history. */
