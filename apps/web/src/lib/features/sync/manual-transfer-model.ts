@@ -1,8 +1,8 @@
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
 import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
-import { MACHINE_FLEET_FRESHNESS_WINDOW_DAYS, machineFreshnessIsStale } from './machine-freshness-presentation';
-import type { SourceControlConnectionState } from './source-control-client';
+import { MACHINE_FLEET_FRESHNESS_WINDOW_DAYS, machineFreshnessIsStale } from '../../../machine-freshness-presentation';
+import type { SourceControlConnectionState } from '../../../source-control-client';
 
 export {
   MACHINE_FLEET_STALE_AFTER_MS,
@@ -13,7 +13,7 @@ export {
   machineFreshnessStatusLabel,
   machineLabelPresentation,
   machineLabelPresentationForSnapshot,
-} from './machine-freshness-presentation';
+} from '../../../machine-freshness-presentation';
 
 const BYTES_PER_UNIT = 1024;
 const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;

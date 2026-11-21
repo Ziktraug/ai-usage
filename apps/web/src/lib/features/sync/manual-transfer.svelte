@@ -3,12 +3,12 @@
   import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
   import { onDestroy } from 'svelte';
-  import { formatManualImportSummary, formatTransferBytes } from '../../../manual-transfer-model';
   import {
     createManualTransferClient,
     type ManualTransferOperation,
     type ManualUploadProgress,
   } from './manual-transfer-client';
+  import { formatManualImportSummary, formatTransferBytes } from './manual-transfer-model';
   import ManualTransferProgress from './manual-transfer-progress.svelte';
   import { actionRow, ghostButton, panelHeader, strongCell } from './styles';
 

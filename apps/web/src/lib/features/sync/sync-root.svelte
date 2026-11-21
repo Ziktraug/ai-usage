@@ -3,15 +3,15 @@
   import { page, shell } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/env';
-  import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from '../../../manual-transfer-model';
   import type { SourceControlConnectionState } from '../../../source-control-client';
-  import { buildSyncFleetComparisonRows } from '../../../sync-machine-comparison-model';
   import { invalidateSyncFleet } from '../../query/options/sync';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import MachineFleet from './machine-fleet.svelte';
   import ManualTransfer from './manual-transfer.svelte';
+  import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from './manual-transfer-model';
   import { pageStack, unavailablePanel, unavailableText } from './styles';
   import type { SyncPageData } from './sync-load';
+  import { buildSyncFleetComparisonRows } from './sync-machine-comparison-model';
   import { createHydratedSyncFleetQuery, createSyncMachineRenamer } from './sync-query.svelte';
 
   let { connection = 'connecting', data }: { connection?: SourceControlConnectionState; data: SyncPageData } = $props();

@@ -5,7 +5,7 @@ import {
   type UsageStoreErrorReason,
   usageStoreErrorReasonFrom,
 } from '@ai-usage/usage-store/reader';
-import type { ManualOperationResult } from '../manual-transfer-contract';
+import type { ManualOperationResult } from '../lib/features/sync/manual-transfer-contract';
 import type { UsageReadModel, UsageReadModelCallOptions } from './usage-read-model.server';
 
 export interface ManualMergeExportResult {
