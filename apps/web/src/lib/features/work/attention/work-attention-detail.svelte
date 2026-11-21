@@ -13,14 +13,14 @@
   import type { WorkRoot } from '@ai-usage/report-core/work-attention';
   import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
   import { browser } from '$app/env';
-  import { displayTitle } from '../../foundation/presentation/display-title';
-  import type { RuntimeMode } from '../../foundation/runtime-mode';
-  import { loadNextCampaignPage } from '../../query/options/campaigns';
-  import { optionalSessionLookupQueryOptions } from '../../query/options/session';
-  import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
-  import { workRequest } from '../../query/options/work';
-  import type { SessionClientAdapter } from '../../rpc/session-client';
-  import { sessionRoutePathname } from '../sessions/detail/session-route';
+  import { displayTitle } from '../../../foundation/presentation/display-title';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
+  import { loadNextCampaignPage } from '../../../query/options/campaigns';
+  import { optionalSessionLookupQueryOptions } from '../../../query/options/session';
+  import { sessionCampaignInfiniteOptions } from '../../../query/options/session-window';
+  import { workRequest } from '../../../query/options/work';
+  import type { SessionClientAdapter } from '../../../rpc/session-client';
+  import { sessionRoutePathname } from '../../sessions/detail/session-route';
   import {
     formatExactInstant,
     formatRelativeAge,
@@ -37,8 +37,8 @@
     workRootNextAction,
     workRootObservedActivity,
     workRootStanding,
-  } from './work-attention-model';
-  import WorkRouting from './routing/work-routing.svelte';
+  } from '../work-attention-model';
+  import WorkRouting from '../routing/work-routing.svelte';
   import {
     workButton,
     workCloseButton,
@@ -59,8 +59,8 @@
     workRow,
     workRowTop,
     workStack,
-  } from './work-styles';
-  import WorkThreadIntake from './work-thread-intake.svelte';
+  } from '../work-styles';
+  import WorkThreadIntake from '../work-thread-intake.svelte';
 
   let {
     root,

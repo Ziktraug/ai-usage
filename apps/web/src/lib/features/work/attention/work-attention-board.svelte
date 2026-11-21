@@ -16,7 +16,7 @@
     workHarnessLabel,
     workRootId,
     workSearchCoverage,
-  } from './work-attention-model';
+  } from '../work-attention-model';
   import WorkAttentionRow from './work-attention-row.svelte';
   import {
     workChipButton,
@@ -35,7 +35,7 @@
     workShowMore,
     workStack,
     workSubsectionTitle,
-  } from './work-styles';
+  } from '../work-styles';
 
   let {
     dataset,

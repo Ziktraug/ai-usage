@@ -5,8 +5,8 @@
     formatRelativeAge,
     workCheckoutUnreadSummary,
     workCodexCoverage,
-  } from './work-attention-model';
-  import { workCoverageLine } from './work-styles';
+  } from '../work-attention-model';
+  import { workCoverageLine } from '../work-styles';
 
   let {
     coverage,

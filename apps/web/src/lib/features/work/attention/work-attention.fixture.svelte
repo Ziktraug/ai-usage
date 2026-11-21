@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ComponentProps } from 'svelte';
-  import WebQueryProvider from '../../query/provider.svelte';
+  import WebQueryProvider from '../../../query/provider.svelte';
   import WorkAttentionBoard from './work-attention-board.svelte';
   import WorkAttentionDetail from './work-attention-detail.svelte';
   import WorkCoverageLine from './work-coverage-line.svelte';

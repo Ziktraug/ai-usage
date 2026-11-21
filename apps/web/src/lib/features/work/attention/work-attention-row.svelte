@@ -20,7 +20,7 @@
     workRootRowTitle,
     workRootStanding,
     workUndeclaredSituation,
-  } from './work-attention-model';
+  } from '../work-attention-model';
   import {
     workChip,
     workChipOk,
@@ -37,7 +37,7 @@
     workRowTitle,
     workRowTop,
     workStandingMarker,
-  } from './work-styles';
+  } from '../work-styles';
 
   let {
     root,

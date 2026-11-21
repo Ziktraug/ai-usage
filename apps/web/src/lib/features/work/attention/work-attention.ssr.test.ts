@@ -3,11 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import type { SessionClientAdapter } from '../../rpc/session-client';
-import { EMPTY_WORK_ATTENTION_SEARCH, type WorkAttentionSearch, workRootId } from './work-attention-model';
+import type { SessionClientAdapter } from '../../../rpc/session-client';
+import { EMPTY_WORK_ATTENTION_SEARCH, type WorkAttentionSearch, workRootId } from '../work-attention-model';
+import { WORK_DEMO_REVISION } from '../work-synthetic';
 import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
 import { nativeQuestionRoot } from './work-native.fixture';
-import { WORK_DEMO_REVISION } from './work-synthetic';
 
 interface SvelteServerModule {
   readonly render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -32,17 +32,17 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: {
-    alias: { '$app/env': fileURLToPath(new URL('../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
+    alias: { '$app/env': fileURLToPath(new URL('../../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
     conditions: ['svelte'],
     dedupe: ['svelte'],
   },
-  root: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+  root: fileURLToPath(new URL('../../../../../../../', import.meta.url)),
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 afterAll(() => server.close());
 const [fixtureModule, rendererModule] = await Promise.all([
-  server.ssrLoadModule('/apps/web/src/lib/features/work/work-attention.fixture.svelte'),
+  server.ssrLoadModule('/apps/web/src/lib/features/work/attention/work-attention.fixture.svelte'),
   server.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);

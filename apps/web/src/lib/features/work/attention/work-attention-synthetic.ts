@@ -14,10 +14,10 @@ import type {
   WorkRoot,
   WorkRootSession,
 } from '@ai-usage/report-core/work-attention';
-import { demoReportPayload } from '../../foundation/report-data';
-import { workRequest } from '../../query/options/work';
-import type { WorkAttentionClient } from '../../rpc/work-attention-client';
-import { WORK_DEMO_REVISION, WORK_DEMO_TIME } from './work-synthetic';
+import { demoReportPayload } from '../../../foundation/report-data';
+import { workRequest } from '../../../query/options/work';
+import type { WorkAttentionClient } from '../../../rpc/work-attention-client';
+import { WORK_DEMO_REVISION, WORK_DEMO_TIME } from '../work-synthetic';
 
 /**
  * A synthetic Work attention dataset for the demo runtime. Every root is invented; the only join
