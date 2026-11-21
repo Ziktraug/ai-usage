@@ -16,22 +16,120 @@ import { WORK_THREAD_BOUNDS } from '@ai-usage/report-core/work-thread';
 import { WORK_THREAD_VIEW_BOUNDS } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
 import type { UsageStoreError, UsageStoreErrorReason } from './errors';
-import type {
-  ImportCheckoutStatusObservationsInput,
-  ImportJiraIssueObservationsInput,
-  ImportPullRequestObservationsInput,
-  LatestCheckoutStatusObservations,
-  LatestJiraIssueObservations,
-  LatestPullRequestObservations,
-  QueryLatestCheckoutStatusObservationsInput,
-  QueryLatestJiraIssueObservationsInput,
-  QueryLatestPullRequestObservationsInput,
-  QueryWorkFactRunStatesInput,
-  RecordWorkFactRunInput,
-  WorkFactImportResult,
-  WorkFactRunState,
-  WorkFactRunStates,
-} from './index';
+
+export interface ImportPullRequestObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parsePullRequestObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface ImportCheckoutStatusObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parseCheckoutStatusObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface ImportJiraIssueObservationsInput {
+  readonly dbPath: string;
+  /** Re-validated with `parseJiraIssueObservation`; a row that fails is counted as rejected. */
+  readonly observations: readonly unknown[];
+}
+
+export interface WorkFactImportResult {
+  readonly inserted: number;
+  /** Rows removed by the per-identity retention after this batch. */
+  readonly pruned: number;
+  readonly rejected: number;
+  /** Rows whose identity and observation time were already stored. */
+  readonly unchanged: number;
+}
+
+export interface RecordWorkFactRunInput {
+  readonly dbPath: string;
+  readonly disabled: boolean;
+  readonly failed: number;
+  readonly machineId: string;
+  readonly message: string | null;
+  readonly observed: number;
+  readonly outcomeCode?: 'unauthenticated' | null;
+  readonly ranAt: Date | string;
+  readonly sourceId: WorkFactSourceId;
+}
+
+export interface WorkFactRunState {
+  readonly disabled: boolean;
+  readonly failed: number;
+  readonly machineId: string;
+  readonly message: string | null;
+  readonly observed: number;
+  readonly outcomeCode?: 'unauthenticated' | null;
+  readonly ranAt: PullRequestObservation['observedAt'];
+  readonly sourceId: WorkFactSourceId;
+}
+
+export interface QueryWorkFactRunStatesInput {
+  readonly dbPath: string;
+}
+
+export interface WorkFactRunStates {
+  readonly runs: readonly WorkFactRunState[];
+  readonly skipped: number;
+}
+
+export interface QueryLatestPullRequestObservationsInput {
+  readonly dbPath: string;
+  /** Distinct pull requests returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly links?: readonly { readonly host: string; readonly number: number; readonly repository: string }[];
+  readonly machineId?: string;
+}
+
+/** Per pull request: the latest observation of any outcome, and the latest successful one when it differs. */
+export interface LatestPullRequestObservations {
+  readonly items: readonly {
+    readonly latest: PullRequestObservation;
+    readonly latestObserved: PullRequestObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
+export interface QueryLatestJiraIssueObservationsInput {
+  readonly dbPath: string;
+  /** Issue keys as Jira writes them (`XLB-2090`); no filter means every stored key. */
+  readonly keys?: readonly string[];
+  /** Distinct issues returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly machineId?: string;
+}
+
+/** Per issue: the latest observation of any outcome, and the latest successful one when it differs. */
+export interface LatestJiraIssueObservations {
+  readonly items: readonly {
+    readonly latest: JiraIssueObservation;
+    readonly latestObserved: JiraIssueObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
+
+export interface QueryLatestCheckoutStatusObservationsInput {
+  readonly dbPath: string;
+  /** Distinct checkout paths returned at most. Default 200, maximum 500. */
+  readonly limit?: number;
+  readonly machineId?: string;
+  readonly paths?: readonly string[];
+}
+
+export interface LatestCheckoutStatusObservations {
+  readonly items: readonly {
+    readonly countsChangedAt: CheckoutStatusObservation['observedAt'] | null;
+    readonly latest: CheckoutStatusObservation;
+    readonly latestObserved: CheckoutStatusObservation | null;
+  }[];
+  readonly skipped: number;
+  readonly truncated: boolean;
+}
 
 /**
  * Durable storage for the external and local fact family of the Work view (ADR 0051, ADR 0054):

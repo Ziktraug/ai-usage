@@ -8,23 +8,113 @@ import {
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
-import type {
-  ImportProviderQuotaBatchInput,
-  ProviderQuotaCheckpointUpdate,
-  ProviderQuotaImportItem,
-  ProviderQuotaImportResult,
-  ProviderQuotaSourceState,
-  QueryLatestLocalProviderQuotaObservationsInput,
+import type { ServedRevisionQueryTrace } from './served-revision';
+
+export interface ProviderQuotaCheckpointUpdate {
+  cursor: unknown;
+  cursorKey: string;
+  machineId: string;
+  providerKey: string;
+  sourceKey: string;
+}
+
+export interface ProviderQuotaImportItem {
+  observation: ProviderQuotaObservation;
+  sourceEventKey?: string;
+}
+
+export interface ImportProviderQuotaBatchInput {
+  checkpointUpdates: ProviderQuotaCheckpointUpdate[];
+  dbPath: string;
+  importedAt?: Date;
+  items: ProviderQuotaImportItem[];
+}
+
+export interface ProviderQuotaImportResult {
+  coalesced: number;
+  inserted: number;
+  unchanged: number;
+}
+
+export interface RetainProviderQuotaObservationsInput {
+  dbPath: string;
+  /** Observations older than this window are downsampled; defaults to 30 days. */
+  fullResolutionMs?: number;
+  /** Downsampling keeps the earliest observation per stream and per this bucket; defaults to one hour. */
+  granularityMs?: number;
+  now?: number;
+}
+
+export interface RetainProviderQuotaObservationsResult {
+  deleted: number;
+}
+
+export interface QueryProviderQuotaObservationsInput {
+  accountScope?: string | null;
+  dbPath: string;
+  from: string;
+  machineId?: string;
+  maximumObservations?: number;
+  providerKey?: string;
+  to: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export interface StoredProviderQuotaObservation {
+  firstObservedAt: string;
+  id: number;
+  lastObservedAt: string;
+  observation: ProviderQuotaObservation;
+}
+
+export interface QueryProviderQuotaObservationsResult {
+  observations: StoredProviderQuotaObservation[];
+  skipped: number;
+  truncated: boolean;
+}
+
+export interface QueryProviderQuotaSourceStateInput {
+  cursorKey: string;
+  dbPath: string;
+  machineId: string;
+  providerKey: string;
+  sourceKey: string;
+}
+
+export interface QueryProviderQuotaSourceStatesInput {
+  /** Select a bounded group without loading the source's lifetime checkpoint catalogue. */
+  cursorKeys?: readonly string[];
+  dbPath: string;
+  machineId: string;
+  maximumStates?: number;
+  providerKey: string;
+  sourceKey: string;
+}
+
+export interface QueryLatestProviderQuotaObservationsInput {
+  dbPath: string;
+  machineId?: string;
+  maximumObservations?: number;
+  providerKey?: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export type QueryLatestLocalProviderQuotaObservationsInput = Omit<
   QueryLatestProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsResult,
-  QueryProviderQuotaSourceStateInput,
-  QueryProviderQuotaSourceStatesInput,
-  RecordProviderQuotaSourceAttemptInput,
-  RetainProviderQuotaObservationsInput,
-  RetainProviderQuotaObservationsResult,
-  StoredProviderQuotaObservation,
-} from './index';
+  'machineId'
+>;
+
+export interface ProviderQuotaSourceState extends Omit<QueryProviderQuotaSourceStateInput, 'dbPath'> {
+  cursor: unknown;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  updatedAt: string;
+}
+
+export interface RecordProviderQuotaSourceAttemptInput extends QueryProviderQuotaSourceStateInput {
+  attemptedAt?: Date;
+  succeeded: boolean;
+}
 
 const MAX_PROVIDER_QUOTA_OBSERVATIONS = 10_000;
 const MAX_PROVIDER_QUOTA_SOURCE_STATES = 1000;
