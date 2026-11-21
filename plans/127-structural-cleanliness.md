@@ -31,8 +31,8 @@
 | Packet | Title | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- |
 | P1 | Turn the complexity and file-size limits back on, with the existing debt suppressed in place | S | — | DONE |
-| P2 | Split `packages/usage-store/src/index.ts` into owned modules (move-only) | L | P1 | TODO |
-| P3 | Move the flat `apps/web/src/*.ts` root into `lib/features` and `lib/foundation` | M–L | P1 | TODO |
+| P2 | Split `packages/usage-store/src/index.ts` into owned modules (move-only) | L | P1 | DONE (merged into the integration branch at `8bc3be99`) |
+| P3 | Move the flat `apps/web/src/*.ts` root into `lib/features` and `lib/foundation` | M–L | P1 | DONE (merged into the integration branch at `9bf9a653`) |
 | P4 | Extract the `campaigns-page.svelte` script into tested controller modules | M | P3 | TODO |
 | P5 | Decompose the worst-complexity functions behind their existing tests | L | P1; P2 for any `usage-store` file | TODO |
 
@@ -807,3 +807,307 @@ Ratchet proven: a scratch function with complexity above 20 and a scratch
 1,005-line non-test file under `tools/` made `bun run check` exit 1 with
 exactly those two errors. Both files were then deleted. Final gate:
 `check`, `lint`, `typecheck`, `test` and `build` each exited 0.
+
+### 2026-11-21 — P2 executed (branch `refactor/split-usage-store-index`)
+
+Base `184b1610` (integration branch with P1). No drift in the symbols the plan
+cites; line numbers had moved by the P1 suppression comments only.
+
+Baseline at the base: `(cd packages/usage-store && bun test)` → 466 pass,
+0 fail, 26 files. Fingerprint at the base: 19,975 lines, sha256
+`7cb5bdaa7fd27044…` (differs from the plan's 19,923 / `2a81c42d…` because P1
+added suppression comments).
+
+Method: each step moved whole top-level statements, with their leading
+comments and suppressions, using a TypeScript-AST script that computed the
+new imports and refused any move that would need an import from `index.ts`
+(upward). After every step: Ultracite fix/check on the package,
+`(cd packages/usage-store && bun run check)` (tsc), the fingerprint diff
+(empty for every step through Step 10), and an import-cycle check.
+
+`index.ts`: 4,107 → 305 lines. It now holds the `UsageStore` interface,
+`createUsageStore`, the `createXStore(...)` compositions of the sibling stores
+(they read best next to the dependencies they inject) and the named
+re-exports that the package tests still import from `./index`.
+
+New modules, bottom-up (dependency order):
+
+| Module | Lines | Content |
+| --- | --- | --- |
+| `sqlite-database.ts` | 58 | `SqliteStatement`, `SqliteDatabase`, `RawSqliteDatabase`, `createTrackedSqliteDatabase` |
+| `errors.ts` (existing) | 119 | + `usageStoreError`, `readFailureReason`, `usageStore*ReadError`, `previewStaleError` |
+| `stored-usage-row.ts` | 8 | `StoredUsageRowStatus`, `StoredSourceAuthority`, `StoredRowRecord` |
+| `rtk-savings.ts` | 141 | RTK savings constants, guards, hash, enrichment statements, `upsertRtkContribution` |
+| `machine-fleet-order.ts` | 126 | `fleetMetadataForStoredRow`, `rebuildUsageMachineFleetOrder`, `usageMachineFleetOrderChanged` |
+| `migration.ts` | 711 | `USAGE_STORE_SCHEMA_VERSION`, `usage_local_machine` schema SQL, `migrate` |
+| `connections.ts` | 369 | pragmas, open/close/with helpers, `initializeUsageStore`, `checkpointUsageStore`, `quiesceUsageStoreForShutdown` |
+| `machine-fleet.ts` | 292 | fleet types, `usageStorePath`, fleet/local-machine/sync-fleet queries, local projection fault injector |
+| `local-rows.ts` | 699 | import pipeline, `importLocalRows`, `updateUsageMachineLabel`, `retireLocalRows` |
+| `enrichment.ts` | 254 | enrichable-row queries, `queryLocalRowsWatermark`, `upsertRtkSavingsContributions` |
+| `peer-merge.ts` | 311 | `importPeerMergeBundle`, preview/confirm, bundle validation, `canonicalJson` |
+| `report-rows.ts` | 350 | `readReportRows`, `queryReportRows`, `queryLocalMergeBundle`, generations, `queryStoredReportCapture`, `exportLocalMergeBundle` |
+
+Deviations from the plan's table, all forced by the dependency graph or by
+cohesion, none by behaviour:
+
+- **Bottom-up order is not the plan's.** `openUsageStoreWriterDatabase` calls
+  `migrate`, so `migration.ts` sits below `connections.ts`, not above it.
+- **Three extra low-level modules.** `migrate` uses the fleet-order helpers,
+  the RTK savings helpers and the row status vocabulary, while the fleet and
+  enrichment *queries* need `connections.ts`, which needs `migrate`. Keeping
+  the helpers inside `machine-fleet.ts` / `enrichment.ts` would have created
+  the cycle `connections → migration → machine-fleet → connections`. So the
+  helpers live in `machine-fleet-order.ts`, `rtk-savings.ts` and
+  `stored-usage-row.ts`, below `migration.ts`.
+- **Store lifecycle in `connections.ts`.** `initializeUsageStore`,
+  `checkpointUsageStore` and `quiesceUsageStoreForShutdown` (planned for
+  `local-rows.ts`) are WAL/connection management, not row imports.
+- **`UsageStoreGenerations` owned by `report-rows.ts`**, created in Step 1 with
+  that type alone so `served-report-store.ts` could stop importing `./index`.
+- **`chunkRows` lives in `local-rows.ts`** (its lowest user); `enrichment.ts`
+  and `peer-merge.ts` import it from there.
+
+Step 1 grew three sibling stores that were already over 1,000 `wc -l` lines;
+they were not split, because Step 1 places the types in the store that
+implements them (the `codex-work-store.ts` exemplar): `provider-quota-store.ts`
+1,005 → 1,095 (Biome does not flag it: SQL template lines are not counted, so
+no suppression was needed or added), `work-fact-store.ts` 1,362 → 1,460 and
+`served-report-store.ts` 1,505 → 1,666 (both keep their existing P1
+suppression). `skill-observation-store.ts` is 941.
+
+Final evidence:
+
+- Fingerprint: one differing line, the removed
+  `// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127`
+  of `index.ts` (Step 11). `migrate` body and its leading suppression comment
+  compared byte-identical with the base by AST extraction.
+- `reader.ts`, `writer.ts`, `testing.ts`, `performance-testing.ts`: export
+  lists (runtime `Object.keys` and the TypeScript checker's export list with
+  value/type kinds, 480 entries) identical before and after.
+  `packages/usage-store/package.json` unchanged.
+- Import cycles among the package's 37 non-test modules: none (the base had
+  four: `index.ts` ↔ each of `provider-quota-store`, `served-report-store`,
+  `skill-observation-store`, `work-fact-store`).
+- No test file changed (`git diff --stat 184b1610..HEAD -- 'packages/usage-store/src/*.test.ts'` is empty).
+- Package tests: 466 pass, 0 fail after Step 1, after Step 9 (machine fleet)
+  and at the end.
+- Debt counters: complexity suppressions 271 (unchanged; the six from
+  `index.ts` travelled to `migration.ts` 1, `local-rows.ts` 4,
+  `enrichment.ts` 1); file-length suppressions 34 → 33.
+- Docs: `docs/local-store-upgrade.md` now cites `migration.ts` for the
+  "newer than supported schema" refusal.
+
+Orchestrator review of P2 (2026-11-21): an independent AST comparison of every
+top-level statement in the package's non-test files found 885 statements at
+the base and 885 at the head, with an identical multiset once the `export`
+keyword is ignored. The adversarial review (agent plus Codex) returned no
+confirmed finding: no value import cycle, one fault-injector binding, the
+migration region byte-identical, entry-point name lists identical. The one
+failing test in the implementer's full run
+(`usage-engine-runtime` "a restart with the review still running keeps the
+target reserved") timed out at 30 s while three agents loaded the machine and
+passes alone in about 9 s on both the branch and the main checkout; it is
+recorded as load-related, not caused by the diff.
+
+### 2026-11-21 — P3 executed (branch `refactor/web-src-into-features`)
+
+Written before any move. Base: `refactor/structural-cleanliness` @ 184b1610.
+
+#### Baseline (before any move)
+
+- `ls apps/web/src/*.ts | wc -l` → 96 (52 modules, 44 tests); 94 move, `app.d.ts` and `hooks.server.ts` stay.
+- `(cd apps/web && bun run test)` → 2395 pass, 0 fail, 280 files, exit 0.
+- `from '(../){4,}` climbs in apps/web/src → 173. `from '$lib/` → 0.
+- `bun run build` exit 0; `bun run test:web-bundle` 6 pass exit 0; `bun run test:web-client-manifest` exit 0.
+- Measured initial gzip closure (same computation as `gzipClosureBytes` in `apps/web/bundle/client-bundle.test.ts`): 309,001 B (= `RECORDED_GZIP_CLOSURE_BYTES`).
+
+#### Assignment rule as applied
+
+1. Non-test importers only are counted (tests follow their module, rule 3).
+2. Exactly one feature among the non-test importers → that feature's directory (root of the feature).
+3. Two or more features (or routes + a feature) → `lib/foundation/`.
+4. **Layering closure (added, decision):** at the base no non-test module under `lib/foundation/` imports
+   anything from `lib/features/`. To keep that true, any root module imported by a module bound for
+   `lib/foundation/` (or by an existing `lib/foundation` module) also goes to `lib/foundation/`. Without it
+   the move would create foundation → feature edges (and directory cycles feature → foundation → feature):
+   `session-analysis-target` → `dashboard-model`, `time-range-control-state` → `overview-model`,
+   `lib/foundation/navigation/svelte/skills-url.ts` → `skills-page-model`.
+   `lib/query`, `lib/rpc`, `lib/server` and `src/server` importers are not features and are not counted.
+5. Topic subdirectory only where three or more foundation files share a topic: `foundation/dashboard/`
+   (4 `dashboard-*`), `foundation/session/` (3 `session-*`).
+6. Fixtures: `focused-report-e2e-fixture` has one non-test consumer
+   (`lib/features/report/composition/synthetic-report-destination.svelte`) → next to it.
+   `provider-quota-e2e-fixture` has that same feature consumer plus `src/server/provider-quota-resolver.server.ts`
+   → same directory. `campaign-map-fixture` has non-test consumers in `campaigns` and `observatory` → foundation.
+   `render-test-module` has no importer at all → foundation.
+7. Modules with no feature importer, placed by topic: `browser-runtime-mode` (no importer) → foundation next to
+   `runtime-mode`; `project-skill-directories` (only `src/server/skills-contracts.ts`) → skills;
+   `skill-markdown-editor-model`, `skills-query-operations` (test-only) → skills;
+   `session-neighbor-request-controller` (test-only) → sessions; `source-control-presentation` (test-only) → sources;
+   `shared` (re-export, imported only by tests now in foundation and report) → foundation.
+8. Tests without a same-named module: `campaign-display-label.test` (tests `campaign-label-overrides`) → foundation;
+   `session-analysis.test` (tests `session-analysis-model`) → `foundation/session`; `api-value.test`
+   (tests `lib/foundation/presentation/report-value`) and `provenance-marker.test` (tests the design-system glyph,
+   used by report, sessions and work) → `foundation/presentation`; `report-design-tokens.test` (scans
+   `lib/features/report`) → `features/report` (its `import.meta.dir`-relative paths are re-based, no assertion change).
+
+#### Differences from the plan's hypothesis
+
+| File | Hypothesis | Actual | Why |
+| --- | --- | --- | --- |
+| `dashboard-search`, `dashboard-model`, `dashboard-analytics`, `dashboard-metric-model` | features/report | foundation/dashboard | `dashboard-search`: campaigns+report+shell; the other three are imported by foundation-bound `session-analysis-target` / `overview-model` (closure) |
+| `dashboard-sort` | features/report | features/sessions | only importers are `lib/features/sessions/**` |
+| `overview-model` | features/report | foundation | imported by foundation-bound `time-range-control-state` (closure) |
+| `machine-freshness-presentation` | features/report | foundation | report + sync (`manual-transfer-model`) |
+| `report-data` | features/report | foundation | observatory + report + work |
+| `source-control-client` | features/sources | foundation | report + sources + sync + work |
+| `source-control-presentation-model` | features/sources | foundation | sources + work (`work-sources.svelte`) |
+| `campaign-label-overrides`, `campaign-map-fixture` | features/campaigns | foundation | campaigns + report / campaigns + observatory |
+| `session-analysis-target`, `session-analysis-model`, `session-table-schema` | features/sessions | foundation/session | campaigns+report+sessions / report+sessions / report+sessions |
+| `skills-page-model` | features/skills | foundation | imported by `lib/foundation/navigation/svelte/skills-url.ts` (closure) |
+| `focused-report-e2e-fixture`, `provider-quota-e2e-fixture` | features/report | features/report/composition | rule 4: next to the non-test consumer |
+
+#### Gates and path strings that name a moved file (Step 2)
+
+- `apps/web/bundle/client-bundle.test.ts`: imports `../src/focused-report-e2e-fixture` (keys asserted absent from
+  production scripts) and a comment naming `src/report-data.ts`. Import and comment path updated; number untouched.
+- `apps/web/src/lib/foundation/presentation/presentation-closure.test.ts`: `entryPaths` (src-relative strings) for
+  7 moved modules and `'../../../shared'` resolved from `format.ts`. Updated to new paths.
+- `apps/web/src/lib/foundation/navigation/svelte/dashboard-url.test.ts`: dynamic-import module-ID strings for
+  `dashboard-search`, `dashboard-filter-navigation`, `session-table-schema`. Updated.
+- `tools/measure-usage-runtime-io.ts:2669`: HMR target `src/dashboard-model.ts`. Updated.
+- e2e specs importing `../src/focused-report-e2e-fixture` / `../src/campaign-map-fixture`: rewritten as imports.
+- `docs/adr/0004`, `0005`, `0046` link to root paths: ADRs are history, not edited.
+- `tools/check-*.test.ts` synthetic `apps/web/src/*.ts` inputs: untouched.
+
+#### Mapping table (source → destination; non-test importers at the base)
+
+| File | Destination | Importers at base (all, incl. tests in lib) |
+| --- | --- | --- |
+| `manual-transfer-contract.ts` | `lib/features/sync/` | lib/features/sync/manual-transfer-client.ts, server/manual-merge-upload.server.ts, server/sync-data.server.ts |
+| `manual-transfer-model.ts` | `lib/features/sync/` | lib/features/sync/machine-fleet.svelte, lib/features/sync/manual-transfer-progress.svelte, lib/features/sync/manual-transfer.svelte, lib/features/sync/sync-root.svelte, sync-machine-comparison-model.ts |
+| `manual-transfer-model.test.ts` | `lib/features/sync/` | (none) |
+| `sync-machine-comparison-model.ts` | `lib/features/sync/` | lib/features/sync/sync-root.svelte, manual-transfer-model.test.ts |
+| `source-control-presentation.ts` | `lib/features/sources/` | (none) |
+| `source-control-presentation.test.ts` | `lib/features/sources/` | (none) |
+| `project-skill-directories.ts` | `lib/features/skills/` | server/skills-contracts.ts |
+| `skill-document-inspector-model.ts` | `lib/features/skills/` | lib/features/skills/presentation.ts |
+| `skill-document-inspector-model.test.ts` | `lib/features/skills/` | (none) |
+| `skill-markdown-editor-model.ts` | `lib/features/skills/` | (none) |
+| `skill-markdown-editor-model.test.ts` | `lib/features/skills/` | (none) |
+| `skills-client-contracts.ts` | `lib/features/skills/` | lib/features/skills/management/operation-episode.svelte.ts, lib/features/skills/shell/model.ts, lib/features/skills/shell/snapshot-controller.test.ts, skills-query-operations.ts |
+| `skills-client-contracts.test.ts` | `lib/features/skills/` | (none) |
+| `skills-query-operations.ts` | `lib/features/skills/` | (none) |
+| `skills-query-operations.test.ts` | `lib/features/skills/` | (none) |
+| `dashboard-sort.ts` | `lib/features/sessions/` | lib/features/sessions/detail/session-drawer.svelte, lib/features/sessions/table/session-cell-projection.ts, lib/features/sessions/table/session-columns.ts |
+| `dashboard-sort.test.ts` | `lib/features/sessions/` | (none) |
+| `session-analysis-error.ts` | `lib/features/sessions/` | lib/features/sessions/detail/rounds-reader.svelte, lib/features/sessions/detail/session-analysis.svelte, lib/features/sessions/detail/session-detail-query-slot.svelte, lib/features/sessions/detail/types.ts, lib/rpc/session-client.test.ts |
+| `session-analysis-error.test.ts` | `lib/features/sessions/` | (none) |
+| `session-analysis-presentation.ts` | `lib/features/sessions/` | lib/features/sessions/detail/session-analysis.svelte |
+| `session-analysis-presentation.test.ts` | `lib/features/sessions/` | (none) |
+| `session-list-label.ts` | `lib/features/sessions/` | lib/features/sessions/detail/highlighted-text.svelte, lib/features/sessions/table/session-cell-projection.ts |
+| `session-list-label.test.ts` | `lib/features/sessions/` | (none) |
+| `session-neighbor-request-controller.ts` | `lib/features/sessions/` | (none) |
+| `session-neighbor-request-controller.test.ts` | `lib/features/sessions/` | (none) |
+| `session-row-window.ts` | `lib/features/sessions/` | lib/features/sessions/table/session-table.svelte, lib/features/sessions/table/session-virtualization.ts |
+| `session-row-window.test.ts` | `lib/features/sessions/` | (none) |
+| `session-surface-mode.ts` | `lib/features/sessions/` | lib/features/sessions/table/session-table.fixture.svelte, lib/features/sessions/table/session-table.svelte |
+| `session-surface-mode.test.ts` | `lib/features/sessions/` | (none) |
+| `dashboard-breakdown-export.ts` | `lib/features/report/` | lib/features/report/composition/sessions-destination.ssr.test.ts, lib/features/report/composition/sessions-destination.svelte |
+| `dashboard-breakdown-export.test.ts` | `lib/features/report/` | (none) |
+| `dashboard-filter-navigation.ts` | `lib/features/report/` | lib/features/report/breakdown/navigation.ts |
+| `dashboard-filter-navigation.test.ts` | `lib/features/report/` | (none) |
+| `group-panel-presentation.ts` | `lib/features/report/` | lib/features/report/breakdown/harness-provider-model.ts, lib/features/report/breakdown/model.ts, project-presentation.ts |
+| `group-panel-presentation.test.ts` | `lib/features/report/` | (none) |
+| `project-group-actions.ts` | `lib/features/report/` | lib/features/report/actions/project-group-editor.svelte |
+| `project-group-actions.test.ts` | `lib/features/report/` | (none) |
+| `project-group-control.ts` | `lib/features/report/` | lib/features/report/composition/live-report-destination.svelte |
+| `project-group-control.test.ts` | `lib/features/report/` | (none) |
+| `project-presentation.ts` | `lib/features/report/` | lib/features/report/breakdown/project-summary.svelte, lib/features/report/breakdown/projects-panel.svelte |
+| `project-presentation.test.ts` | `lib/features/report/` | (none) |
+| `provider-quota-history-model.ts` | `lib/features/report/` | lib/features/report/actions/quota-history-owner.svelte, lib/features/report/actions/quota-history-panel.svelte, lib/features/report/actions/quota-history-series.svelte |
+| `provider-quota-history-model.test.ts` | `lib/features/report/` | (none) |
+| `provider-status-model.ts` | `lib/features/report/` | lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/overview/overview-components.test.ts, lib/features/report/overview/overview-page.fixture.svelte, lib/features/report/overview/overview-page.svelte, lib/features/report/overview/provider-status.ssr.test.ts, lib/features/report/overview/provider-status.svelte, provider-status-panel-model.test.ts, provider-status-panel-model.ts, server/usage-read-model.server.test.ts |
+| `provider-status-model.test.ts` | `lib/features/report/` | (none) |
+| `provider-status-panel-model.ts` | `lib/features/report/` | lib/features/report/overview/provider-status.svelte |
+| `provider-status-panel-model.test.ts` | `lib/features/report/` | (none) |
+| `provider-status-progress.ts` | `lib/features/report/` | lib/features/report/overview/provider-status.svelte |
+| `provider-status-progress.test.ts` | `lib/features/report/` | (none) |
+| `report-design-tokens.test.ts` | `lib/features/report/` | (none) |
+| `report-export.ts` | `lib/features/report/` | lib/features/report/actions/sharing.ts |
+| `report-export.test.ts` | `lib/features/report/` | (none) |
+| `web-report-payload.ts` | `lib/features/report/` | focused-report-e2e-fixture.ts, lib/features/report/breakdown/dashboard-breakdown.svelte, lib/features/report/breakdown/projects-panel.svelte, lib/features/report/composition/live-report-destination.svelte, lib/features/report/core/report-bootstrap.ts, lib/features/report/core/report-components.test.ts, lib/features/report/core/report-view-model.test.ts, lib/features/report/core/report-view-model.ts, server/report-payload.server.test.ts, server/report-payload.server.ts, server/revision-query-runner.server.ts |
+| `web-report-payload.test.ts` | `lib/features/report/` | (none) |
+| `focused-report-e2e-fixture.ts` | `lib/features/report/composition/` | bundle/client-bundle.test.ts, e2e/dashboard-presentation.spec.ts, e2e/dashboard.spec.ts, e2e/sources.spec.ts, e2e/time-range.spec.ts, lib/features/report/composition/synthetic-report-destination.svelte |
+| `provider-quota-e2e-fixture.ts` | `lib/features/report/composition/` | lib/features/report/composition/synthetic-report-destination.svelte, server/provider-quota-resolver.server.test.ts, server/provider-quota-resolver.server.ts |
+| `dashboard-analytics.ts` | `lib/foundation/dashboard/` | dashboard-breakdown-export.ts, dashboard-model.ts, lib/features/report/breakdown/dashboard-breakdown.svelte, lib/features/report/breakdown/project-summary.svelte, lib/features/report/breakdown/projects-panel.ssr.test.ts, lib/features/report/breakdown/projects-panel.svelte, project-presentation.test.ts, project-presentation.ts, report-export.test.ts |
+| `dashboard-metric-model.ts` | `lib/foundation/dashboard/` | dashboard-model.ts |
+| `dashboard-model.ts` | `lib/foundation/dashboard/` | lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.test.ts, lib/features/report/overview/executive-overview-model.ts, lib/features/report/overview/overview-result-scope.ts, lib/features/report/overview/period-comparison-presentation.test.ts, lib/features/report/overview/period-comparison-presentation.ts, overview-model.test.ts, overview-model.ts, session-analysis-target.test.ts, session-analysis-target.ts |
+| `dashboard-model.test.ts` | `lib/foundation/dashboard/` | (none) |
+| `dashboard-search.ts` | `lib/foundation/dashboard/` | dashboard-filter-navigation.test.ts, dashboard-filter-navigation.ts, dashboard-model.ts, group-panel-presentation.ts, lib/features/campaigns/campaign-timeline-model.test.ts, lib/features/campaigns/campaign-timeline-model.ts, lib/features/campaigns/campaigns-continuity.test.ts, lib/features/campaigns/campaigns-page.svelte, lib/features/campaigns/campaigns-query.test.ts, lib/features/campaigns/campaigns-query.ts, lib/features/campaigns/campaigns-selection.test.ts, lib/features/report/actions/actions.test.ts, lib/features/report/actions/campaign.ts, lib/features/report/breakdown/active-filters.svelte, lib/features/report/breakdown/dashboard-breakdown.svelte, lib/features/report/breakdown/filter-bar.svelte, lib/features/report/breakdown/harness-provider-model.ts, lib/features/report/breakdown/harness-provider-panel.svelte, lib/features/report/breakdown/model-analysis-table.svelte, lib/features/report/breakdown/model.ts, lib/features/report/breakdown/navigation.test.ts, lib/features/report/breakdown/navigation.ts, lib/features/report/breakdown/origin-filter.svelte, lib/features/report/composition/active-timeline-series.test.ts, lib/features/report/composition/active-timeline-series.ts, lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/report-destination-owner.svelte, lib/features/report/composition/report-search.test.ts, lib/features/report/composition/report-search.ts, lib/features/report/composition/report-tab-target.ts, lib/features/report/composition/sessions-destination.ssr.test.ts, lib/features/report/composition/sessions-destination.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/overview/overview-page.fixture.svelte, lib/features/report/overview/overview-result-scope.test.ts, lib/features/report/overview/overview-result-scope.ts, lib/features/report/range/activity-explorer.svelte, lib/features/report/range/range-brush.svelte, lib/features/report/range/report-period-control.svelte, lib/features/report/range/report-range-model.ts, lib/features/shell/navigation.ts |
+| `dashboard-search.test.ts` | `lib/foundation/dashboard/` | (none) |
+| `session-analysis-model.ts` | `lib/foundation/session/` | lib/features/report/overview/records.svelte, lib/features/sessions/detail/rounds-reader.svelte, lib/features/sessions/detail/session-analysis.svelte, lib/features/sessions/detail/session-drawer.svelte, lib/features/sessions/table/session-cell-projection.ts, session-analysis.test.ts |
+| `session-analysis.test.ts` | `lib/foundation/session/` | (none) |
+| `session-analysis-target.ts` | `lib/foundation/session/` | lib/features/campaigns/campaign-detail-selection.ts, lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/sessions-destination.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/sessions/detail/detail-selection.ts, lib/features/sessions/detail/session-analysis.svelte, lib/features/sessions/detail/session-detail-query-slot.svelte, lib/features/sessions/detail/types.ts, session-analysis-presentation.test.ts, session-analysis-presentation.ts |
+| `session-analysis-target.test.ts` | `lib/foundation/session/` | (none) |
+| `session-table-schema.ts` | `lib/foundation/session/` | dashboard-model.ts, dashboard-search.ts, dashboard-sort.ts, lib/features/report/composition/sessions-destination.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/sessions/table/session-anchor.fixture.svelte, lib/features/sessions/table/session-cell-projection.ts, lib/features/sessions/table/session-cell.svelte, lib/features/sessions/table/session-columns.ts, lib/features/sessions/table/session-table-model.test.ts, lib/features/sessions/table/session-table.fixture.svelte, lib/features/sessions/table/session-table.svelte |
+| `session-table-schema.test.ts` | `lib/foundation/session/` | (none) |
+| `api-value.test.ts` | `lib/foundation/presentation/` | (none) |
+| `provenance-marker.test.ts` | `lib/foundation/presentation/` | (none) |
+| `browser-runtime-mode.ts` | `lib/foundation/` | (none) |
+| `campaign-display-label.test.ts` | `lib/foundation/` | (none) |
+| `campaign-label-overrides.ts` | `lib/foundation/` | campaign-display-label.test.ts, lib/features/campaigns/campaigns-page.svelte, lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.test.ts |
+| `campaign-label-overrides.test.ts` | `lib/foundation/` | (none) |
+| `campaign-map-fixture.ts` | `lib/foundation/` | e2e/campaign-period-continuity.scale.ts, lib/features/campaigns/campaign-detail-selection.test.ts, lib/features/campaigns/campaign-timeline-model.test.ts, lib/features/campaigns/campaigns-load.test.ts, lib/features/campaigns/campaigns-load.ts, lib/features/campaigns/campaigns-page.svelte, lib/features/campaigns/campaigns-query.test.ts, lib/features/campaigns/campaigns-selection.test.ts, lib/features/campaigns/campaigns-synthetic.test.ts, lib/features/campaigns/campaigns-synthetic.ts, lib/features/observatory/observatory-query.ts |
+| `campaign-map-fixture.test.ts` | `lib/foundation/` | (none) |
+| `date-range.ts` | `lib/foundation/` | dashboard-model.test.ts, dashboard-model.ts, dashboard-search.ts, lib/features/campaigns/campaign-timeline-model.test.ts, lib/features/campaigns/campaign-timeline-model.ts, lib/features/report/overview/activity-heatmap.svelte, lib/features/report/overview/executive-overview-model.ts, lib/features/report/overview/overview-components.test.ts, lib/features/report/overview/overview-result-scope.ts, lib/features/report/overview/timeline-window.ts, lib/features/report/range/activity-explorer.svelte, lib/features/report/range/range-brush.svelte, lib/features/report/range/report-period-control.svelte, lib/features/report/range/report-range-model.ts, overview-model.test.ts, overview-model.ts |
+| `date-range.test.ts` | `lib/foundation/` | (none) |
+| `machine-freshness-presentation.ts` | `lib/foundation/` | lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.test.ts, manual-transfer-model.ts |
+| `machine-freshness-presentation.test.ts` | `lib/foundation/` | (none) |
+| `overview-model.ts` | `lib/foundation/` | dashboard-filter-navigation.ts, lib/features/report/breakdown/navigation.ts, lib/features/report/composition/active-timeline-series.ts, lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/report-tab-target.ts, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/overview/activity-heatmap.svelte, lib/features/report/overview/activity-timeline.svelte, lib/features/report/overview/punchcard.svelte, lib/features/report/overview/timeline-model.ts, lib/features/report/overview/timeline-window.ts, lib/features/report/range/activity-explorer.svelte, lib/features/report/range/report-range-model.ts, time-range-control-state.ts |
+| `overview-model.test.ts` | `lib/foundation/` | (none) |
+| `render-test-module.ts` | `lib/foundation/` | (none) |
+| `report-data.ts` | `lib/foundation/` | campaign-label-overrides.test.ts, dashboard-model.test.ts, focused-report-e2e-fixture.ts, lib/features/campaigns/campaigns-load.test.ts, lib/features/observatory/observatory-query.ts, lib/features/report/actions/campaign-session-controls-binding.test.ts, lib/features/report/composition/report-destination.test.ts, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/composition/synthetic-report-destination.test.ts, lib/features/report/core/report-bootstrap.test.ts, lib/features/report/core/report-bootstrap.ts, lib/features/report/core/report-components.test.ts, lib/features/report/core/report-view-model.test.ts, lib/features/report/overview/overview-components.test.ts, lib/features/report/overview/overview-result-scope.test.ts, lib/features/work/work-attention-synthetic.test.ts, lib/features/work/work-attention-synthetic.ts, lib/features/work/work-load.test.ts, lib/features/work/work-synthetic.ts, server/report-payload.server.test.ts, session-analysis-presentation.test.ts, session-analysis-target.test.ts, web-report-payload.test.ts |
+| `runtime-mode.ts` | `lib/foundation/` | app.d.ts, browser-runtime-mode.ts, lib/features/campaigns/campaigns-load.ts, lib/features/observatory/observatory-load.ts, lib/features/observatory/observatory-query.ts, lib/features/report/actions/quota-history-owner.svelte, lib/features/report/actions/report-mutation-availability.ts, lib/features/report/composition/live-report-destination.svelte, lib/features/report/composition/report-destination-owner.svelte, lib/features/report/composition/synthetic-report-destination.svelte, lib/features/report/core/report-bootstrap.ts, lib/features/report/core/report-intent.ts, lib/features/shell/app-navigation.svelte, lib/features/shell/app-shell.svelte, lib/features/shell/demo-policy.server.ts, lib/features/shell/navigation.ts, lib/features/shell/provider-quota-query-rail.svelte, lib/features/shell/provider-quota-query-shell.svelte, lib/features/skills/shell/data.ts, lib/features/skills/shell/skills-shell.svelte, lib/features/sources/endpoint.server.ts, lib/features/sources/source-control-provider.svelte, lib/features/sync/server/manual-merge-endpoints.server.ts, lib/features/work/work-attention-detail.svelte, lib/features/work/work-delegations.svelte, lib/features/work/work-load.ts, lib/features/work/work-routing.svelte, lib/features/work/work-sources.svelte, lib/features/work/work-thread-load.ts, lib/query/observatory-prefetch.ts, lib/server/rpc/context.server.ts, lib/server/rpc/in-process-client.server.ts, lib/server/rpc/request-policy-handler.ts, server/delegation.server.ts, server/demo-boundary.server.ts, server/provider-quota-resolver.server.ts, server/runtime-mode.server.ts, server/sync-upload.server.ts, server/usage-engine-control-resolver.server.ts, server/usage-read-model-resolver.server.ts, server/work-attempts.server.ts, server/work-attention.server.ts, server/work-routing-context.server.ts, server/work-threads.server.ts, source-control-client.ts |
+| `runtime-mode.test.ts` | `lib/foundation/` | (none) |
+| `shared.ts` | `lib/foundation/` | campaign-label-overrides.test.ts, dashboard-model.test.ts, overview-model.test.ts, provider-status-model.test.ts |
+| `skills-page-model.ts` | `lib/foundation/` | lib/features/skills/management/model.ts, lib/features/skills/management/operation-episode.svelte.ts, lib/features/skills/management/skill-diagnostics.svelte, lib/features/skills/management/skills-consolidate.svelte, lib/features/skills/management/skills-health-slot.svelte, lib/features/skills/presentation.ts, lib/features/skills/shell/model.ts, lib/features/skills/worktable/model.ts, lib/features/skills/worktable/skill-drawer.svelte, lib/features/skills/worktable/skills-worktable.svelte, lib/foundation/navigation/svelte/skills-url.test.ts, lib/foundation/navigation/svelte/skills-url.ts |
+| `skills-page-model.test.ts` | `lib/foundation/` | (none) |
+| `source-control-client.ts` | `lib/foundation/` | lib/features/report/actions/report-mutation-availability.ts, lib/features/sources/context.svelte.ts, lib/features/sources/model.ts, lib/features/sources/service.test.ts, lib/features/sources/service.ts, lib/features/sources/source-control-provider.svelte, lib/features/sources/source-control-summary-model.test.ts, lib/features/sources/source-control-summary-model.ts, lib/features/sources/source-controls.fixture.svelte, lib/features/sync/sync-root.svelte, lib/features/work/work-jira-sync-model.test.ts, lib/features/work/work-jira-sync-model.ts, lib/query/options/source-control.test.ts, lib/query/options/source-control.ts, manual-transfer-model.ts |
+| `source-control-client.test.ts` | `lib/foundation/` | (none) |
+| `source-control-presentation-model.ts` | `lib/foundation/` | lib/features/sources/model.ts, lib/features/sources/presentation-model.test.ts, lib/features/sources/presentation.ts, lib/features/sources/source-control-summary-model.ts, lib/features/work/work-sources.svelte, source-control-presentation.test.ts, source-control-presentation.ts |
+| `time-range-control-state.ts` | `lib/foundation/` | lib/features/report/overview/activity-timeline.svelte, lib/features/report/overview/timeline-window.ts, lib/features/report/range/activity-explorer.svelte, lib/features/report/range/range-brush.svelte, lib/features/report/range/report-range-model.ts, lib/features/work/work-timeline-brush.svelte |
+| `time-range-control-state.test.ts` | `lib/foundation/` | (none) |
+
+#### Outcome (after the moves)
+
+- Correction made during execution: `report-design-tokens.test.ts` went to `lib/foundation/presentation/`, not
+  `features/report/`. Inside `features/report` it scanned its own doc comment (`token(colors.x)`) and failed.
+  Its `import.meta.dir` paths were re-based; no assertion changed.
+- `ls apps/web/src/*.ts` → `app.d.ts`, `hooks.server.ts`.
+- Four-or-more-level climbs: 173 → 0. `$lib/` imports: 0 → 0. `import(` count: 104 → 104. `legacy, plan 127`: 34 → 34.
+- Web tests: 2395 pass before and after (280 files).
+- Gzip closure: 309,001 B → 309,003 B (guard tolerance 2%); `RECORDED_GZIP_CLOSURE_BYTES` unchanged.
+- Root check/lint/typecheck/test/build/test:web-bundle/test:web-client-manifest all exit 0; e2e 411 + 3 passed, exit 0.
+- Lib invariant still holds: no non-test `lib/foundation` module imports `lib/features`.
+
+Orchestrator review of P3 (2026-11-21): the diff holds renames only (no file
+added or deleted) and every changed line outside import specifiers is a path
+string in a test, tool or comment. The adversarial review (agent plus Codex)
+returned no code defect. Three points are recorded here on its advice:
+
+- The mapping table was kept out of the plan during execution on purpose,
+  because three packets ran in parallel; it is the table above.
+- Path-only rewrites inside test files were accepted as part of P3 Step 2,
+  including one `expect(...)` argument in `presentation-closure.test.ts`
+  (`'../../../shared'` became `'../shared'`, the same file). Design decision 3
+  stands for every other kind of assertion change.
+- The rule "foundation never imports a feature" covers non-test modules. One
+  test, `lib/foundation/session/session-table-schema.test.ts`, imports
+  `features/sessions/table/session-columns`, as it did from the root.
+- Where the baseline section above says `report-design-tokens.test` goes to
+  `features/report`, the outcome section is the truth: it lives in
+  `lib/foundation/presentation`.
+- ADRs 0004, 0005 and 0046 still link to the old root paths; ADRs are records
+  and were not edited. `browser-runtime-mode.ts` and `render-test-module.ts`
+  have no importer and were moved, not deleted.
