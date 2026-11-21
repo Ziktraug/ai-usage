@@ -145,6 +145,7 @@ export const readWorkThreadNativeRequests = (
   dbPath: string,
   evidence: readonly WorkThreadSessionEvidence[],
 ): Effect.Effect<WorkThreadNativeRequestsRead, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const sessions = new Map(
       evidence.flatMap((item) => item.sessions.map((session) => [keyOf(session), session] as const)),

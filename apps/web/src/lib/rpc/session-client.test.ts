@@ -9,7 +9,7 @@ import {
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
-import { classifySessionAnalysisError } from '../../session-analysis-error';
+import { classifySessionAnalysisError } from '../features/sessions/session-analysis-error';
 import { createSessionClientAdapter, type SessionRpcTransport } from './session-client';
 
 const rawQuery = {

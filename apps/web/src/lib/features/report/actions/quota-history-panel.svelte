@@ -2,12 +2,12 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { Drawer, drawerBody } from '@ai-usage/design-system/svelte';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
+  import { button, buttonStyle, field, list, muted, stack } from '../breakdown/styles';
   import {
     buildProviderQuotaHistoryModel,
     type ProviderQuotaHistoryRange,
     providerQuotaHistoryWindow,
-  } from '../../../../provider-quota-history-model';
-  import { button, buttonStyle, field, list, muted, stack } from '../breakdown/styles';
+  } from '../provider-quota-history-model';
   import QuotaHistorySeries from './quota-history-series.svelte';
 
   const rangeControls = css({

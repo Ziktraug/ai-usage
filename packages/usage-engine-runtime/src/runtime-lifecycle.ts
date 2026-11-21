@@ -75,6 +75,7 @@ export const createRuntimeLifecycle = (dependencies: RuntimeLifecycleDependencie
     if (!releaseWriterLease) {
       releaseWriterLeaseDuringCleanup = false;
     }
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     ownedCleanupPromise ??= (async () => {
       const failures: unknown[] = [];
       try {

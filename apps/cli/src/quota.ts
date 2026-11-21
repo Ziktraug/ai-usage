@@ -233,6 +233,7 @@ export const renderQuotaHistory = (
   points: readonly ProviderQuotaHistoryPoint[],
   range: QuotaHistoryRange,
   options: { readonly partial?: boolean } = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): string => {
   if (points.length === 0) {
     return options.partial

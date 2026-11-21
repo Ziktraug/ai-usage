@@ -96,6 +96,7 @@ export const openCodexAppServer = async (options: CodexAppServerOptions = {}): P
   const write = (message: unknown): void => {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   };
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   child.stdout.on('data', (chunk: Buffer) => {
     if (failure !== null) {
       return;

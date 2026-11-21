@@ -63,6 +63,7 @@ export const scanProjectSkills = async (input: {
   options?: SourceSkillScanOptions;
   projectPaths: readonly string[];
   sourceRepoPath?: string;
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 }): Promise<readonly ProjectSkillInventory[]> => {
   const inventories: ProjectSkillInventory[] = [];
   const options = {

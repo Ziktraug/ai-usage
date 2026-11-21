@@ -244,6 +244,7 @@ const boundedText = (value: unknown, maximum: number): string | undefined =>
   typeof value === 'string' ? value.slice(0, maximum) : undefined;
 
 /** Strict read of `gh pr view --json`: expected keys with expected types, unknown keys ignored. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parsePullRequestView = (stdout: string, link: PullRequestLink): ParsedPullRequest | null => {
   let value: unknown;
   try {
@@ -616,6 +617,7 @@ const observeLink = (
   context: RunContext,
   link: PullRequestLink,
 ): Effect.Effect<{ readonly observation: PullRequestObservation; readonly halt: Classification | null }> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const observedAt = canonicalInstantFromDate(context.now());
     const failure = (classification: Classification) => ({
@@ -754,6 +756,7 @@ const resolveAccountToken = (
  * successful OPEN view adds one bounded review-thread read; its failure never halts later links. Never fails.
  */
 export const observePullRequests = (options: ObservePullRequestsOptions): Effect.Effect<PullRequestObservationBatch> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const maxLinks = options.maxLinks ?? GITHUB_PULL_REQUEST_DEFAULTS.maxLinks;
     const unique = new Map<string, PullRequestLink>();

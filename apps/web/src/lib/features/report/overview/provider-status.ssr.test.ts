@@ -4,7 +4,7 @@ import type { ProviderLimitWindow, ProviderStatusState } from '@ai-usage/report-
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import type { ProviderStatusTone, ProviderStatusView } from '../../../../provider-status-model';
+import type { ProviderStatusTone, ProviderStatusView } from '../provider-status-model';
 
 const SVELTE_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
 const WINDOW_GROUP_PATTERN = /<div class="([^"]*)" data-provider-window-group="">/g;

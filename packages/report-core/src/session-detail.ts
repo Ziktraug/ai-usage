@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
 import { parseServedRevision } from './served-revision';
@@ -893,6 +894,7 @@ const parseCoverage = (value: unknown): SessionDetailCoverage => {
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseSessionDetail = (value: unknown): SessionDetail => {
   if (!isRecord(value)) {
     throw new SessionDetailValidationError('Session detail must be an object');

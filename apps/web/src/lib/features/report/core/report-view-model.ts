@@ -1,7 +1,7 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
-import type { WebReportPayload } from '../../../../web-report-payload';
+import type { WebReportPayload } from '../web-report-payload';
 
 export interface ReportOverviewItem {
   readonly label: string;

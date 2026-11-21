@@ -1,13 +1,13 @@
 import type { SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
 import { createMutation, type QueryClient, useQueryClient } from '@tanstack/svelte-query';
-import { parseSkillReconcileResult, parseSkillSnapshotResult } from '../../../../skills-client-contracts';
-import { describeReconcileActions, type ReconcilePlanSummary } from '../../../../skills-page-model';
+import { describeReconcileActions, type ReconcilePlanSummary } from '../../../foundation/skills-page-model';
 import {
   applySkillsConfigurationSnapshotToCache,
   applySkillsSnapshotToCache,
   type SkillsInventoryQueryClient,
   skillsMutationOptions,
 } from '../../../query/options/skills';
+import { parseSkillReconcileResult, parseSkillSnapshotResult } from '../skills-client-contracts';
 import {
   type SkillsConfigurationOperation,
   type SkillsManagementOperation,

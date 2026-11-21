@@ -3,13 +3,8 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { ghostButton, ghostButtonStyle } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
-  import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
-  import {
-    parseSessionLookupRequest,
-    type SessionPresentationRow,
-    SessionQueryValidationError,
-    sessionQueryFingerprint,
-  } from '@ai-usage/report-core/session-query';
+  import { campaignMapTitle } from '@ai-usage/report-core/campaign-map';
+  import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
   import {
     createInfiniteQuery,
     createQuery,
@@ -17,14 +12,13 @@
     type QueryKey,
     useQueryClient,
   } from '@tanstack/svelte-query';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { browser } from '$app/env';
   import { afterNavigate, beforeNavigate, snapshot } from '$app/navigation';
   import { page } from '$app/state';
-  import { campaignDisplayLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
-  import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
-  import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../../dashboard-search';
-  import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
+  import { campaignDisplayLabelFor, indexCampaignLabelOverrides } from '../../foundation/campaign-label-overrides';
+  import { campaignMapFixtureGeneratedAt } from '../../foundation/campaign-map-fixture';
+  import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
   import { displayTitle } from '../../foundation/presentation/display-title';
   import { fmtCompact } from '../../foundation/presentation/format';
   import {
@@ -37,24 +31,53 @@
   import { optionalSessionLookupQueryOptions } from '../../query/options/session';
   import { SessionRevisionExpiredError, type SessionWindowIntent } from '../../query/options/session-window';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { createReportClient } from '../../rpc/report-client';
-  import { createSessionClientAdapter } from '../../rpc/session-client';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import SessionDetailQuerySlot from '../sessions/detail/session-detail-query-slot.svelte';
-  import { panelOpenedFromReport, sessionPanelHistoryState } from '../sessions/detail/session-route';
-  import type { SessionSelectionInput } from '../sessions/detail/types';
   import { dashboardSearchCodec } from '../shell/navigation';
   import { useShellNavigationOwner } from '../shell/navigation-owner-context';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import CampaignAgentMap from './campaign-agent-map.svelte';
   import { resolveCampaignDetailSelection } from './campaign-detail-selection';
   import CampaignProjectTimeline from './campaign-project-timeline.svelte';
-  import { buildCampaignTimeline, type CampaignTimelineAxis, campaignTimelineRange } from './campaign-timeline-model';
+  import { buildCampaignTimeline, campaignTimelineRange } from './campaign-timeline-model';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
-  import type { CampaignScrollState } from './campaign-virtual-window';
+  import { createCampaignExplorationState } from './campaigns-exploration-state.svelte';
+  import { createCampaignFocusRestoration } from './campaigns-focus-restoration.svelte';
   import type { CampaignsPageData } from './campaigns-load';
+  import { createCampaignNavigationActions } from './campaigns-navigation-actions.svelte';
   import {
-    type CampaignExplorationAnchors,
+    activeCard,
+    activeViewButton,
+    campaignList,
+    card,
+    cardStyle,
+    detail,
+    empty,
+    field,
+    input,
+    layout,
+    mobileBack,
+    muted,
+    notice,
+    title,
+    toolbar,
+    viewControls,
+  } from './campaigns-page.styles';
+  import { campaignPageClientsFor } from './campaigns-page-clients';
+  import {
+    bootstrapCampaignRevision,
+    campaignMapFor,
+    campaignRefreshFor,
+    campaignTimelineContext,
+    detailNavigationRowsFor,
+    inheritedFiltersFor,
+    MULTIPLE_HARNESSES,
+    mergeRowsById,
+    optionalSessionLookupRequest,
+    recordedAt,
+    sessionCount,
+    syntheticCampaignRevision,
+  } from './campaigns-page-model';
+  import {
     type CampaignExplorationData,
     campaignMatchingMembersOptions,
     campaignsExplorationOptions,
@@ -62,29 +85,12 @@
     campaignsRequest,
   } from './campaigns-query';
   import { readCampaignSelection } from './campaigns-selection';
-  import { createSyntheticCampaignClient } from './campaigns-synthetic';
-
-  const MULTIPLE_HARNESSES = 'inherited-harnesses';
 
   let { data }: { data: CampaignsPageData } = $props();
   const queryClient = useQueryClient();
   const shellNavigation = useShellNavigationOwner();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
-  const clients = untrack(() => {
-    const report =
-      browser && rpc
-        ? createReportClient(rpc)
-        : ssrUnavailableClient<ReturnType<typeof createReportClient>>('campaigns report');
-    if (data.mode !== 'live') {
-      return { report, session: createSyntheticCampaignClient() };
-    }
-    const session =
-      browser && rpc
-        ? createSessionClientAdapter(rpc.session)
-        : ssrUnavailableClient<ReturnType<typeof createSessionClientAdapter>>('campaigns session');
-    return { report, session };
-  });
-  let navigationError = $state<string | null>(null);
+  const clients = untrack(() => campaignPageClientsFor({ browser, mode: data.mode, rpc }));
   let replayOpen = $state(false);
   // Loaded on first open. A script-side import keeps Svelte's await-block runtime out of the
   // shared first-load chunk, which the report's gzip budget counts.
@@ -106,30 +112,38 @@
     );
   };
   let previousKey = $state<QueryKey>();
-  let inspected = $state<{ revision: string; generatedAt: string } | null>(null);
-  let topDepth = $state(1);
-  let memberDepths = $state<Record<string, number>>({});
-  let automaticCampaign = $state('');
-  let anchors = $state<CampaignExplorationAnchors>({});
-  let matchingRestoration = $state<{ campaignKey: string; depth: number; rowIds: readonly string[] } | null>(null);
-  let listNavigation = $state<CampaignScrollState>({});
-  let mapNavigation = $state<CampaignScrollState>({});
-  let timelineNavigation = $state<CampaignScrollState>({});
-  let collapsedNodes = $state<ReadonlySet<string>>(new Set());
-  let collapsedProjects = $state<ReadonlySet<string>>(new Set());
-  let expansion = $state<{ key: string; open: boolean } | null>(null);
-  let timelineAxis = $state<{ context: string; axis: CampaignTimelineAxis | null } | null>(null);
-  let mapVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
-  let timelineVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
-  let mobileMap = $state(false);
-  let searchExpanded = $state(false);
-  let searchNavigation = $state<CampaignScrollState>({});
-  let searchVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
-  let pendingFocus = '';
-  let detailOpenerId = $state('');
-  let focusRestoreGeneration = 0;
+  const focusRestoration = createCampaignFocusRestoration({
+    campaignView: () => campaignView,
+    pathname: () => page.url.pathname,
+    searchExpanded: () => explorationState.searchExpanded,
+    selectedSessionId: () => selectedSessionId,
+  });
+  const explorationState = createCampaignExplorationState({ focus: focusRestoration, scope: () => scope });
+  const campaignNavigation = createCampaignNavigationActions({
+    exploration: explorationState,
+    focus: focusRestoration,
+    goto: (url, gotoOptions) => shellNavigation.goto(url, gotoOptions),
+    href: () => page.url.href,
+    latest: () => latest,
+    pageState: () => page.state,
+    pageUrl: () => pageUrl,
+    rowRevisionFor: (rowId) => rowRevisionFor(rowId),
+    search: () => search,
+    selectedKey: () => selectedKey,
+    selectedSessionId: () => selectedSessionId,
+    selectionRowId: () => selection?.row.rowId,
+  });
+  const {
+    applyFilters,
+    changeSelection,
+    clearFilters,
+    clearSelection,
+    openSession,
+    restart,
+    selectCampaign,
+    selectView,
+  } = campaignNavigation;
   let checkedExpiredRevision = '';
-  let previousScope = '';
   const bootstrapQuery = createQuery(() =>
     reportBootstrapQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
   );
@@ -141,36 +155,29 @@
     campaignLabelOverridesQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
   );
   const labels = $derived(indexCampaignLabelOverrides(data.mode === 'live' ? (labelsQuery.data ?? []) : []));
-  const latest = $derived.by(() => {
-    if (data.mode !== 'live') {
-      return { revision: 'synthetic-campaign-map-v1', generatedAt: campaignMapFixtureGeneratedAt };
-    }
-    return bootstrap
-      ? { revision: bootstrap.manifest.revision, generatedAt: bootstrap.bootstrap.support.generatedAt }
-      : null;
-  });
-  const revision = $derived(inspected?.revision ?? latest?.revision);
+  const latest = $derived.by(() =>
+    data.mode === 'live' ? bootstrapCampaignRevision(bootstrap) : syntheticCampaignRevision(),
+  );
+  const revision = $derived(explorationState.inspected?.revision ?? latest?.revision);
   // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
   const pageUrl = $derived(new URL(page.url.href));
   const search = $derived(parseDashboardSearchUrl(pageUrl, dashboardSearchCodec));
   const scope = $derived(JSON.stringify(search));
   const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
   const campaignView = $derived(page.url.searchParams.get('campaignView') === 'timeline' ? 'timeline' : 'list');
-  const inheritedFilters = $derived([
-    ...Object.entries(search.filters).map(([name, value]) => `${name}: ${value}`),
-    ...search.machine.map((value) => `machine: ${value}`),
-    ...search.origin.map((value) => `origin: ${value}`),
-    ...(search.timeCell ? [`local time: ${search.timeCell}`] : []),
-  ]);
+  const inheritedFilters = $derived(inheritedFiltersFor(search));
   const request = $derived(
     campaignsRequest(
       search,
-      inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
+      explorationState.inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
       revision ?? 'pending-campaigns',
     ),
   );
   const requestedTimelineRange = $derived(
-    campaignTimelineRange(search.range, inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt),
+    campaignTimelineRange(
+      search.range,
+      explorationState.inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
+    ),
   );
   const urlSelection = $derived(readCampaignSelection(pageUrl, request));
   let requestedCampaign = $state(
@@ -187,9 +194,11 @@
   );
   const selectedSessionId = $derived(page.url.searchParams.get('selectedSession') ?? '');
   const intent = $derived<SessionWindowIntent>({
-    topLevelDepth: topDepth,
+    topLevelDepth: explorationState.topDepth,
     campaignChildrenDepth: {},
-    campaignSessionsDepth: requestedCampaign ? { [requestedCampaign]: memberDepths[requestedCampaign] ?? 1 } : {},
+    campaignSessionsDepth: requestedCampaign
+      ? { [requestedCampaign]: explorationState.memberDepths[requestedCampaign] ?? 1 }
+      : {},
   });
   const options = $derived(
     campaignsExplorationOptions({
@@ -198,8 +207,8 @@
       request,
       timelineRange: requestedTimelineRange,
       intent,
-      anchors,
-      ...(matchingRestoration ? { matching: matchingRestoration } : {}),
+      anchors: explorationState.anchors,
+      ...(explorationState.matchingRestoration ? { matching: explorationState.matchingRestoration } : {}),
     }),
   );
   const exploration = createQuery(() => ({
@@ -214,7 +223,9 @@
   const items = $derived(listPages.flatMap((entry) => entry.items));
   const virtualCampaigns = $derived(items.map((item) => ({ key: item.campaignKey, item })));
   const selectedKey = $derived(
-    urlSelection.status === 'selected' ? urlSelection.campaignKey : automaticCampaign || items[0]?.campaignKey || '',
+    urlSelection.status === 'selected'
+      ? urlSelection.campaignKey
+      : explorationState.automaticCampaign || items[0]?.campaignKey || '',
   );
   const selectedItem = $derived(items.find((item) => item.campaignKey === selectedKey));
   const visibleRevision = $derived(visible?.request.revision);
@@ -225,29 +236,18 @@
   );
   // Placeholders and the retained Query value carry their own presentation context. Never fit
   // an old response to the newly requested period while its replacement is still being acquired.
-  const timelineContext = $derived(
-    visible ? JSON.stringify([sessionQueryFingerprint(visible.request), visible.timelineRange]) : '',
-  );
+  const timelineContext = $derived(campaignTimelineContext(visible));
   const timeline = $derived(
     buildCampaignTimeline(
       items,
       visible?.timelineRange ?? { from: null, to: null },
-      timelineAxis?.context === timelineContext ? timelineAxis.axis : null,
+      explorationState.timelineAxis?.context === timelineContext ? explorationState.timelineAxis.axis : null,
     ),
   );
   const memberPages = $derived(visible?.members.find((entry) => entry.campaignKey === selectedKey)?.data.pages ?? []);
   const root = $derived(memberPages[0]?.root);
   const mapRevision = $derived(memberPages[0]?.revision);
-  const map = $derived(
-    root
-      ? buildCampaignMap({
-          campaignKey: selectedKey,
-          children: memberPages.flatMap((entry) => entry.items),
-          root,
-          totalCount: (memberPages[0]?.itemCount ?? 0) + 1,
-        })
-      : null,
-  );
+  const map = $derived(root ? campaignMapFor(selectedKey, root, memberPages) : null);
   const rows = $derived(map?.nodes.map((node) => node.row) ?? []);
   const presentedMap = $derived(
     map ? { ...map, title: campaignDisplayLabelFor(labels, selectedKey, map.title) } : null,
@@ -271,13 +271,7 @@
       : [],
   );
   const matchRows = $derived(matchedRows.map((row) => ({ key: row.rowId, row })));
-  const detailRows = $derived.by(() => {
-    const known = new Map(rows.map((row) => [row.rowId, row]));
-    for (const row of matchedRows) {
-      known.set(row.rowId, row);
-    }
-    return [...known.values()];
-  });
+  const detailRows = $derived(mergeRowsById(rows, matchedRows));
   const rowRevisionFor = (rowId: string): string | undefined =>
     matchedRows.some((row) => row.rowId === rowId) ? matching.data?.pages[0]?.revision : mapRevision;
   const localDetailSelection = $derived(
@@ -294,14 +288,7 @@
     if (localDetailSelection.kind !== 'loading' || !visibleRevision) {
       return;
     }
-    try {
-      return parseSessionLookupRequest({ revision: visibleRevision, rowId: selectedSessionId });
-    } catch (cause) {
-      if (cause instanceof SessionQueryValidationError) {
-        return;
-      }
-      throw cause;
-    }
+    return optionalSessionLookupRequest(visibleRevision, selectedSessionId);
   });
   const selectedLookup = createQuery(() =>
     optionalSessionLookupQueryOptions(clients.session, selectedLookupRequest, { browser }),
@@ -322,21 +309,12 @@
     if (!selectionRevision) {
       return [];
     }
-    const compatible = new Map((mapRevision === selectionRevision ? rows : []).map((row) => [row.rowId, row]));
-    if (matching.data?.pages[0]?.revision === selectionRevision) {
-      for (const row of matchedRows) {
-        compatible.set(row.rowId, row);
-      }
-    }
-    return [...compatible.values()];
+    return mergeRowsById(
+      mapRevision === selectionRevision ? rows : [],
+      matching.data?.pages[0]?.revision === selectionRevision ? matchedRows : [],
+    );
   });
-  // A directly looked-up session has no acquired neighbors yet. Do not make
-  // j/k jump from an absent index to the first loaded campaign member.
-  const detailNavigationRows = $derived(
-    selection && !compatibleMemberRows.some((row) => row.rowId === selection.row.rowId)
-      ? [selection.row]
-      : compatibleMemberRows,
-  );
+  const detailNavigationRows = $derived(detailNavigationRowsFor(selection, compatibleMemberRows));
   const detailLookupFailed = $derived(
     detailSelection.kind === 'loading' && (selectedLookup.isError || selectedLookup.data?.ok === false),
   );
@@ -368,38 +346,25 @@
     if (
       browser &&
       window.matchMedia('(min-width: 1024px)').matches &&
-      (mapNavigation.focusKey || (mapNavigation.anchor && mapNavigation.anchor.key !== root?.rowId))
+      (explorationState.mapNavigation.focusKey ||
+        (explorationState.mapNavigation.anchor && explorationState.mapNavigation.anchor.key !== root?.rowId))
     ) {
-      mobileMap = true;
+      explorationState.mobileMap = true;
     }
   });
 
   $effect(() => {
-    if (!inspected && latest) {
-      inspected = latest;
+    if (!explorationState.inspected && latest) {
+      explorationState.inspected = latest;
     }
   });
   $effect(() => {
-    if (previousScope && previousScope !== scope) {
-      automaticCampaign = '';
-      searchExpanded = false;
-      searchNavigation = {};
-      topDepth = 1;
-      memberDepths = {};
-      anchors = {};
-      matchingRestoration = null;
-      listNavigation = {};
-      mapNavigation = {};
-      timelineNavigation = {};
-      collapsedNodes = new Set();
-      collapsedProjects = new Set();
-    }
-    previousScope = scope;
+    explorationState.followScope(scope);
   });
   $effect(() => {
     requestedCampaign = selectedKey;
-    if (!automaticCampaign && listAnswersRequest && items[0]) {
-      automaticCampaign = items[0].campaignKey;
+    if (!explorationState.automaticCampaign && listAnswersRequest && items[0]) {
+      explorationState.automaticCampaign = items[0].campaignKey;
     }
   });
   $effect(() => {
@@ -410,8 +375,11 @@
     ) {
       previousKey = options.queryKey;
       pruneCampaignExplorations(queryClient, options.queryKey);
-      if ((timelineAxis?.context !== timelineContext || !timelineAxis?.axis) && timeline.axis) {
-        timelineAxis = { context: timelineContext, axis: timeline.axis };
+      if (
+        (explorationState.timelineAxis?.context !== timelineContext || !explorationState.timelineAxis?.axis) &&
+        timeline.axis
+      ) {
+        explorationState.timelineAxis = { context: timelineContext, axis: timeline.axis };
       }
     }
   });
@@ -431,233 +399,41 @@
     if (!hasMoreCampaigns || isRefreshing || exploration.error || !listAnswersRequest) {
       return false;
     }
-    topDepth = listPages.length + 1;
+    explorationState.topDepth = listPages.length + 1;
     return true;
   };
   const loadMembers = (): boolean => {
     if (!hasMoreSessions || isRefreshing || exploration.error || !listAnswersRequest) {
       return false;
     }
-    memberDepths = { ...memberDepths, [selectedKey]: memberPages.length + 1 };
+    explorationState.memberDepths = { ...explorationState.memberDepths, [selectedKey]: memberPages.length + 1 };
     return true;
   };
   const refresh = (): void => {
     if (!latest) {
       return;
     }
-    matchingRestoration =
-      search.q && matching.data
-        ? {
-            campaignKey: selectedKey,
-            depth: matching.data.pages.length,
-            rowIds: [searchNavigation.anchor?.key, selectedSessionId].filter(
-              (key): key is string => Boolean(key) && matchedRows.some((row) => row.rowId === key),
-            ),
-          }
-        : null;
-    const campaignAnchor = listNavigation.anchor?.key;
-    const timelineAnchor = timelineNavigation.anchor?.key;
-    let timelineCampaignAnchor: string | undefined;
-    if (timelineAnchor?.startsWith('campaign:')) {
-      timelineCampaignAnchor = timelineAnchor.slice('campaign:'.length);
-    } else if (timelineAnchor?.startsWith('project-continuation:')) {
-      timelineCampaignAnchor = timelineAnchor.slice('project-continuation:'.length);
-    } else if (timelineAnchor?.startsWith('project:')) {
-      timelineCampaignAnchor = items.find(
-        (item) => item.row.projectKey === timelineAnchor.slice('project:'.length),
-      )?.campaignKey;
-    } else if (timelineAnchor && rows.some((row) => row.rowId === timelineAnchor)) {
-      timelineCampaignAnchor = selectedKey;
-    }
-    const memberAnchor = campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key;
-    anchors = {
-      campaignKeys: [...new Set([campaignAnchor, timelineCampaignAnchor].filter((key): key is string => Boolean(key)))],
-      memberRowIds: selectedKey
-        ? {
-            [selectedKey]: [rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined].filter(
-              (key): key is string => Boolean(key),
-            ),
-          }
-        : {},
-    };
-    topDepth = Math.max(topDepth, listPages.length);
-    memberDepths = { ...memberDepths, [selectedKey]: Math.max(memberDepths[selectedKey] ?? 1, memberPages.length) };
-    inspected = latest;
-  };
-  const restart = (): void => {
-    anchors = {};
-    matchingRestoration = null;
-    topDepth = 1;
-    memberDepths = {};
-    listNavigation = {};
-    mapNavigation = {};
-    timelineNavigation = {};
-    timelineAxis = null;
-    inspected = latest;
-    const url = new URL(page.url.href);
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-  const navigate = async (
-    url: URL,
-    navigationOptions: { readonly replace?: boolean; readonly state?: App.PageState } = {},
-  ): Promise<void> => {
-    navigationError = null;
-    try {
-      await shellNavigation.goto(url, { reset: false, ...navigationOptions });
-    } catch (cause) {
-      navigationError = cause instanceof Error ? cause.message : 'Campaign navigation failed.';
-    }
-  };
-  const selectCampaign = (campaignKey: string): void => {
-    const url = new URL(page.url.href);
-    url.searchParams.set('selectedCampaign', campaignKey);
-    if (campaignKey !== selectedKey) {
-      matchingRestoration = null;
-      searchNavigation = {};
-      url.searchParams.delete('selectedSession');
-      mapNavigation = {};
-      collapsedNodes = new Set();
-    }
-    mobileMap = true;
-    navigate(url);
-  };
-  const selectView = (view: 'list' | 'timeline'): void => {
-    const url = new URL(page.url.href);
-    if (view === 'timeline') {
-      url.searchParams.set('campaignView', 'timeline');
-    } else {
-      url.searchParams.delete('campaignView');
-    }
-    navigate(url);
-  };
-  const clearSelection = (): void => {
-    automaticCampaign = '';
-    const url = new URL(page.url.href);
-    url.searchParams.delete('selectedCampaign');
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-  const clearFilters = (): void => {
-    const url = dashboardUrlFor(pageUrl, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
-    url.searchParams.delete('selectedCampaign');
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-  const applyFilters = (event: SubmitEvent): void => {
-    event.preventDefault();
-    if (!(event.currentTarget instanceof HTMLFormElement)) {
-      return;
-    }
-    const form = new FormData(event.currentTarget);
-    const range = form.get('range');
-    const harness = String(form.get('harness') ?? '');
-    let nextHarness = harness ? [harness] : [];
-    if (harness === MULTIPLE_HARNESSES) {
-      nextHarness = search.harness;
-    }
-    const next: DashboardSearch = {
-      ...search,
-      q: String(form.get('q') ?? ''),
-      harness: nextHarness,
-      range:
-        range === 'custom'
-          ? search.range
-          : { mode: range === '7d' || range === '90d' || range === 'all' || range === 'today' ? range : '30d' },
-    };
-    const url = dashboardUrlFor(pageUrl, next, dashboardSearchCodec);
-    url.searchParams.delete('selectedCampaign');
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-
-  const openSession = (row: SessionPresentationRow): void => {
-    const selectedRevision = rowRevisionFor(row.rowId);
-    if (!selectedRevision) {
-      return;
-    }
-    mobileMap = true;
-    if (!selectedSessionId) {
-      detailOpenerId = row.rowId;
-    }
-    const url = new URL(page.url.href);
-    url.searchParams.set('selectedCampaign', selectedKey);
-    url.searchParams.set('selectedSession', row.rowId);
-    const replacing = Boolean(selectedSessionId);
-    navigate(url, {
-      replace: replacing,
-      state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
-    });
-  };
-  const restoreFocus = async (): Promise<void> => {
-    if (!pendingFocus) {
-      return;
-    }
-    const key = pendingFocus;
-    pendingFocus = '';
-    const generation = focusRestoreGeneration;
-    await tick();
-    if (generation !== focusRestoreGeneration || selectedSessionId || page.url.pathname !== '/campaigns') {
-      return;
-    }
-    detailOpenerId = '';
-    let restored = false;
-    if (searchExpanded) {
-      restored = (await searchVirtualList?.focusKey(key)) ?? false;
-    } else {
-      const direct = document.querySelector<HTMLElement>(`[data-matching-row-id="${CSS.escape(key)}"]`);
-      if (direct) {
-        direct.focus({ preventScroll: true });
-        restored = document.activeElement === direct;
-      } else {
-        restored = (await (campaignView === 'timeline' ? timelineVirtualList : mapVirtualList)?.focusKey(key)) ?? false;
-      }
-    }
-    if (restored || generation !== focusRestoreGeneration || selectedSessionId || page.url.pathname !== '/campaigns') {
-      return;
-    }
-    // A direct mobile link can close onto the campaign list while the Map is
-    // hidden. Focus the visible viewport without revealing or acquiring rows.
-    const visibleSurfaces = [...document.querySelectorAll<HTMLElement>('[data-campaign-scroll]')].filter(
-      (element) =>
-        element.getClientRects().length > 0 &&
-        getComputedStyle(element).visibility !== 'hidden' &&
-        !element.closest('[hidden], [inert]'),
+    explorationState.refresh(
+      campaignRefreshFor({
+        campaignView,
+        items,
+        latest,
+        listPageCount: listPages.length,
+        matchedRows,
+        matchingDepth: search.q && matching.data ? matching.data.pages.length : null,
+        memberPageCount: memberPages.length,
+        navigation: explorationState,
+        rows,
+        selectedKey,
+        selectedSessionId,
+      }),
     );
-    if (!visibleSurfaces.some((element) => element === document.activeElement)) {
-      visibleSurfaces[0]?.focus({ preventScroll: true });
-    }
   };
-  beforeNavigate((navigation) => {
-    focusRestoreGeneration += 1;
-    const from = navigation.from?.url;
-    const to = navigation.to?.url;
-    if (from?.pathname === '/campaigns' && to?.pathname === '/campaigns' && !to.searchParams.has('selectedSession')) {
-      pendingFocus = detailOpenerId || from.searchParams.get('selectedSession') || '';
-    }
-  });
+  beforeNavigate(focusRestoration.beforeNavigate);
   afterNavigate(() => {
-    restoreFocus().catch((cause: unknown) => {
-      navigationError = cause instanceof Error ? cause.message : 'Session focus could not be restored.';
-    });
+    focusRestoration.restoreFocus().catch(campaignNavigation.focusFailed);
   });
-  onDestroy(() => {
-    focusRestoreGeneration += 1;
-  });
-  const changeSelection = (next: SessionSelectionInput | null): void => {
-    if (next) {
-      openSession(next.row);
-      return;
-    }
-    pendingFocus = selection?.row.rowId ?? selectedSessionId;
-    if (panelOpenedFromReport(page.state)) {
-      window.history.back();
-      return;
-    }
-    const url = new URL(page.url.href);
-    url.searchParams.delete('selectedSession');
-    navigate(url, { replace: true });
-  };
+  onDestroy(focusRestoration.destroy);
   const retry = async (): Promise<void> => {
     if (recoveryBusy) {
       return;
@@ -673,141 +449,7 @@
   // Back/Forward and a reload return to the exploration the reader left: SvelteKit stores this per
   // history entry and serialises it with the app transport. The id outlives a rebuild, where the
   // default call-site id would change with the chunk hashes.
-  const capture = () => ({
-    scope,
-    anchors,
-    matchingRestoration,
-    inspected,
-    automaticCampaign,
-    topDepth,
-    memberDepths,
-    listNavigation,
-    mapNavigation,
-    timelineNavigation,
-    timelineAxis,
-    collapsedNodes: [...collapsedNodes],
-    collapsedProjects: [...collapsedProjects],
-    expansion,
-    mobileMap,
-    searchExpanded,
-    searchNavigation,
-    detailOpenerId,
-  });
-  const restore = (saved: ReturnType<typeof capture>): void => {
-    previousScope = saved.scope;
-    anchors = saved.anchors;
-    matchingRestoration = saved.matchingRestoration;
-    inspected = saved.inspected;
-    automaticCampaign = saved.automaticCampaign;
-    topDepth = saved.topDepth;
-    memberDepths = saved.memberDepths;
-    listNavigation = saved.listNavigation;
-    mapNavigation = saved.mapNavigation;
-    timelineNavigation = saved.timelineNavigation;
-    timelineAxis = saved.timelineAxis;
-    collapsedNodes = new Set(saved.collapsedNodes);
-    collapsedProjects = new Set(saved.collapsedProjects);
-    expansion = saved.expansion;
-    mobileMap = saved.mobileMap;
-    searchExpanded = saved.searchExpanded;
-    searchNavigation = saved.searchNavigation;
-    detailOpenerId = saved.detailOpenerId;
-  };
-  snapshot({ capture, id: 'campaigns-page', restore });
-
-  const recordedAt = (row: SessionPresentationRow): string => {
-    const value = row.activeDate ?? row.endDate ?? row.date;
-    const date = new Date(value ?? '');
-    if (!Number.isFinite(date.getTime())) {
-      return 'Time not recorded';
-    }
-    const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][
-      date.getUTCMonth()
-    ];
-    const clock = date.toISOString().slice(11, 16);
-    return `${date.getUTCDate()} ${month} ${date.getUTCFullYear()}, ${clock} UTC`;
-  };
-  const sessionCount = (row: SessionPresentationRow): string => {
-    const total = row.campaignTotalCount ?? 1;
-    const visibleCount = row.campaignVisibleCount ?? total;
-    if (visibleCount !== total) {
-      return `${visibleCount} of ${total} sessions`;
-    }
-    return `${total} ${total === 1 ? 'session' : 'sessions'}`;
-  };
-
-  const toolbar = css({ display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: '12px', mb: '24px' });
-  const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mt: '2px', mb: '20px' });
-  const activeViewButton = css.raw({ bg: 'accentTint', borderColor: 'accent', color: 'ink' });
-  const field = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '11px' });
-  const input = css({
-    minH: '40px',
-    px: '12px',
-    py: '7px',
-    border: '1px solid token(colors.lineStrong)',
-    borderRadius: 'sm',
-    bg: 'surface',
-    color: 'ink',
-    fontSize: '12px',
-    maxW: 'full',
-    _focusVisible: { outline: '2px solid token(colors.accent)' },
-  });
-  const layout = css({
-    display: 'grid',
-    gridTemplateColumns: { base: 'minmax(0, 1fr)', lg: 'minmax(230px, 0.38fr) minmax(0, 1fr)' },
-    alignItems: 'start',
-    gap: '24px',
-    '&[data-mobile-map=true] > section': { display: { base: 'none', lg: 'block' } },
-    '&[data-mobile-map=false] > div': { display: { base: 'none', lg: 'grid' } },
-    minW: 0,
-  });
-  const mobileBack = css({ display: { base: 'block', lg: 'none' }, p: '12px', color: 'accent', cursor: 'pointer' });
-  const campaignList = css({
-    display: 'grid',
-    gap: '6px',
-    minW: 0,
-    '& [data-campaign-scroll]': { h: { base: '65dvh', lg: 'calc(100dvh - 330px)' } },
-    pr: '4px',
-  });
-  const cardStyle = css.raw({
-    display: 'grid',
-    gap: '7px',
-    p: '14px',
-    textAlign: 'left',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
-    color: 'ink',
-    cursor: 'pointer',
-    minW: 0,
-    w: 'full',
-    _hover: { bg: 'accentTint' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
-  });
-  const card = css(cardStyle);
-  const activeCard = css.raw({ bg: 'accentTint', borderColor: 'accent' });
-  const title = css({ fontSize: '13px', fontWeight: 600, lineHeight: 1.45, overflowWrap: 'anywhere' });
-  const muted = css({ color: 'muted', fontSize: '11px', lineHeight: 1.55 });
-  const detail = css({
-    display: 'grid',
-    gap: '16px',
-    minW: 0,
-    border: '1px solid token(colors.line)',
-    borderRadius: 'lg',
-    p: { base: '16px', md: '24px' },
-    bg: 'surface',
-  });
-  const empty = css({
-    display: 'grid',
-    gap: '12px',
-    p: '24px',
-    border: '1px dashed token(colors.lineStrong)',
-    borderRadius: 'md',
-    color: 'muted',
-    fontSize: '13px',
-    lineHeight: 1.7,
-  });
-  const notice = css({ color: 'muted', fontSize: '12px', lineHeight: 1.6, mb: '12px' });
+  snapshot({ capture: explorationState.capture, id: 'campaigns-page', restore: explorationState.restore });
 </script>
 
 <svelte:head><title>Campaigns · ai-usage</title></svelte:head>
@@ -883,8 +525,8 @@
     {#if data.mode !== 'live'}
       <p class={notice}>Synthetic demonstration · no local history is read.</p>
     {/if}
-    {#if navigationError}
-      <p class={notice} role="alert">{navigationError}</p>
+    {#if campaignNavigation.navigationError}
+      <p class={notice} role="alert">{campaignNavigation.navigationError}</p>
     {/if}
     {#if detailSelection.kind === 'missing' || invalidSessionLink}
       <p class={notice} data-session-route-status="missing" role="status">
@@ -980,16 +622,20 @@
           {matching.data?.pages[0]?.itemCount ?? 0}
           matching sessions in the selected campaign · search covers all its stored sessions.
         </p>
-        {#if !searchExpanded}
+        {#if !explorationState.searchExpanded}
           {#each matchedRows.slice(0, 3) as row (row.rowId)}
             <button class={ghostButton} data-matching-row-id={row.rowId} onclick={() => openSession(row)} type="button">
               Open matching session {displayTitle(row.name || row.sessionLabel)}
             </button>
           {/each}
         {/if}
-        {#if matchedRows.length > 3 || matching.hasNextPage || searchExpanded}
-          <button class={ghostButton} onclick={() => (searchExpanded = !searchExpanded)} type="button">
-            {searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
+        {#if matchedRows.length > 3 || matching.hasNextPage || explorationState.searchExpanded}
+          <button
+            class={ghostButton}
+            onclick={() => (explorationState.searchExpanded = !explorationState.searchExpanded)}
+            type="button"
+          >
+            {explorationState.searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
           </button>
         {/if}
       </section>
@@ -999,15 +645,15 @@
         <button class={ghostButton} onclick={() => matching.refetch()} type="button">Retry search</button>
       </p>
     {/if}
-    {#if searchExpanded && search.q}
+    {#if explorationState.searchExpanded && search.q}
       <CampaignVirtualList
         estimate={90}
         label="Matching session results"
         onNearEnd={loadMatches}
         rows={matchRows}
         surface="search"
-        bind:this={searchVirtualList}
-        bind:navigation={searchNavigation}
+        bind:this={focusRestoration.searchVirtualList}
+        bind:navigation={explorationState.searchNavigation}
       >
         {#snippet children(
           _entry,
@@ -1039,7 +685,7 @@
         <button
           class={ghostButton}
           onclick={() =>
-            (timelineAxis = {
+            (explorationState.timelineAxis = {
               context: timelineContext,
               axis: buildCampaignTimeline(items, visible.timelineRange).axis,
             })}
@@ -1068,10 +714,10 @@
         onSelectCampaign={selectCampaign}
         selectedCampaignKey={selectedKey}
         {timeline}
-        bind:collapsedProjects
-        bind:expansion
-        bind:navigation={timelineNavigation}
-        bind:virtualList={timelineVirtualList}
+        bind:collapsedProjects={explorationState.collapsedProjects}
+        bind:expansion={explorationState.expansion}
+        bind:navigation={explorationState.timelineNavigation}
+        bind:virtualList={focusRestoration.timelineVirtualList}
       />
       <p class={notice}>
         {items.length}
@@ -1091,10 +737,14 @@
         </p>
       {/if}
     {:else}
-      <button class={mobileBack} onclick={() => (mobileMap = !mobileMap)} type="button">
-        {mobileMap ? 'Back to campaigns' : 'View selected campaign'}
+      <button
+        class={mobileBack}
+        onclick={() => (explorationState.mobileMap = !explorationState.mobileMap)}
+        type="button"
+      >
+        {explorationState.mobileMap ? 'Back to campaigns' : 'View selected campaign'}
       </button>
-      <div class={layout} data-mobile-map={mobileMap ? 'true' : 'false'}>
+      <div class={layout} data-mobile-map={explorationState.mobileMap ? 'true' : 'false'}>
         <section aria-label="Recent campaigns" class={campaignList} data-campaign-list>
           <p class={muted}>{items.length} of {listPages[0]?.itemCount ?? 0} campaigns · most recent first</p>
           <CampaignVirtualList
@@ -1104,7 +754,7 @@
             onNearEnd={loadCampaigns}
             rows={virtualCampaigns}
             surface="list"
-            bind:navigation={listNavigation}
+            bind:navigation={explorationState.listNavigation}
           >
             {#snippet children(
               _entry,
@@ -1147,9 +797,9 @@
               map={presentedMap}
               onNearEnd={loadMembers}
               onOpen={openSession}
-              bind:collapsed={collapsedNodes}
-              bind:navigation={mapNavigation}
-              bind:virtualList={mapVirtualList}
+              bind:collapsed={explorationState.collapsedNodes}
+              bind:navigation={explorationState.mapNavigation}
+              bind:virtualList={focusRestoration.mapVirtualList}
             />
           {:else if isRefreshing}
             <p role="status">Loading campaign hierarchy…</p>

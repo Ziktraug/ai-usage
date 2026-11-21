@@ -3,7 +3,7 @@ import {
   sessionAnalysisTargetForOverviewRow,
   sessionAnalysisTargetForPageItem,
   sessionAnalysisTargetForSession,
-} from '../../../../session-analysis-target';
+} from '../../../foundation/session/session-analysis-target';
 import { campaignSessionSelectionQuery } from '../../report/actions/campaign-session-controls-binding';
 import type { SessionRoute } from './session-route';
 import type { SessionSelectionInput } from './types';
@@ -96,6 +96,7 @@ const campaignSelectionFor = (
  * or from an exact lookup at the served revision. Nothing here fetches: the
  * owner runs the lookups this function asks for through `loading`.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const resolveDetailSelection = (input: DetailSelectionInput): DetailSelectionState => {
   const { route } = input;
   if (route === null) {

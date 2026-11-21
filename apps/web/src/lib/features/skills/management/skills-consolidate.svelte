@@ -13,7 +13,7 @@
     strongCell,
   } from '@ai-usage/design-system/report';
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
-  import { count, type UnmanagedGroup } from '../../../../skills-page-model';
+  import { count, type UnmanagedGroup } from '../../../foundation/skills-page-model';
 
   const body = css({ display: 'grid', gap: '12px', p: '0 16px 16px' });
   const groupRow = css({ borderTop: '1px solid token(colors.line)' });

@@ -9,7 +9,7 @@ import type {
   SkillToggleInput,
 } from '@ai-usage/skills';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
-import type { ProjectRuntimeDirId } from '../project-skill-directories';
+import type { ProjectRuntimeDirId } from '../lib/features/skills/project-skill-directories';
 
 export type SkillsServerResult<T> =
   | { ok: true; data: T }

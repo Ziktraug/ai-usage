@@ -1,9 +1,8 @@
 import { parseSessionQueryRequest } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
-import { demoReportPayload } from '../../../../report-data';
-import type { RuntimeMode } from '../../../../runtime-mode';
-import { toWebReportPayload, type WebReportPayload } from '../../../../web-report-payload';
 import { parseDashboardSearchUrl } from '../../../foundation/navigation/svelte/dashboard-url';
+import { demoReportPayload } from '../../../foundation/report-data';
+import type { RuntimeMode } from '../../../foundation/runtime-mode';
 import type { WebQueryHydrationState } from '../../../query/client';
 import type { WebQueryRuntime, WebQueryRuntimeOptions } from '../../../query/composition';
 import type { ReportQueryClient } from '../../../query/options/report';
@@ -22,6 +21,7 @@ import { dashboardSearchCodec } from '../../shell/navigation';
 import { reportUnexpectedPrefetchFailure } from '../../shell/prefetch-errors';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
 import { campaignSessionSelectionQuery } from '../actions/campaign-session-controls-binding';
+import { toWebReportPayload, type WebReportPayload } from '../web-report-payload';
 import { ReportBootstrapUnavailableError, SyntheticReportUnavailableError } from './report-errors';
 
 export { ReportBootstrapUnavailableError, SyntheticReportUnavailableError } from './report-errors';

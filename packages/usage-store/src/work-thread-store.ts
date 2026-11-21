@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash, randomUUID } from 'node:crypto';
 import { type CanonicalInstant, parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { isRecord } from '@ai-usage/report-core/datasets';
@@ -488,6 +489,7 @@ const waitEvidence = (
   candidate: WorkThreadWaitCandidate,
   facts: readonly WorkThreadWaitFact[],
   now: CanonicalInstant,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): { readonly reason: string | null; readonly unproven: boolean } => {
   const wait = candidate.waitingOn;
   const known: WorkThreadWaitFact[] = [];
@@ -980,6 +982,7 @@ const executeCommand = (
   db: SqliteDatabase,
   input: ApplyWorkThreadCommandInput,
   now: CanonicalInstant,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): WorkThreadCommandResult | WorkIntakeCommandResult => {
   let normalized: unknown = input.command;
   if (input.command.op === 'create' && Array.isArray(input.command.links)) {
@@ -1582,6 +1585,7 @@ const openBranchHolder = (db: SqliteDatabase, branchKey: string): WorkThread | n
 };
 
 /** Reuse only an unambiguous, operator-linked session task with no prior PR association. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const reconciliationCandidates = (db: SqliteDatabase, input: SeedWorkThreadsInput): Map<string, WorkThread | null> => {
   const result = new Map<string, WorkThread | null>();
   const declarations = input.declarations ?? [];
@@ -1759,6 +1763,7 @@ const rebuildSessionBranches = (
   revision: string,
   aliases: Readonly<Record<string, string>>,
   now: CanonicalInstant,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): boolean => {
   const aliasesJson = JSON.stringify(Object.entries(aliases).sort(([left], [right]) => left.localeCompare(right)));
   const built = db.query('SELECT aliases_json FROM work_session_branch_builds WHERE revision = ?').get(revision);
@@ -1997,6 +2002,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   }
 
   const seedWorkThreads = (input: SeedWorkThreadsInput): Effect.Effect<SeedWorkThreadsResult, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     write(input.dbPath, 'seedWorkThreads', (db) => {
       const now = instant(input.now);
       let created = 0;
@@ -2139,6 +2145,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   const reconcileWorkBranches = (
     input: ReconcileWorkBranchesInput,
   ): Effect.Effect<ReconcileWorkBranchesResult, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     write(input.dbPath, 'reconcileWorkBranches', (db) => {
       const now = instant(input.now);
       const aliases: Record<string, string> = {};
@@ -2346,6 +2353,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   const attachDeclaredWorkThreadSessions = (
     input: AttachDeclaredWorkThreadSessionsInput,
   ): Effect.Effect<AttachDeclaredWorkThreadSessionsResult, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     write(input.dbPath, 'attachDeclaredWorkThreadSessions', (db) => {
       const now = instant(input.now);
       const declarations = new Map<string, DeclaredWorkThreadSession>();
@@ -2490,6 +2498,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   const applyWorkThreadWaitObservations = (
     input: ApplyWorkThreadWaitObservationsInput,
   ): Effect.Effect<ApplyWorkThreadWaitObservationsResult, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     write(input.dbPath, 'applyWorkThreadWaitObservations', (db) => {
       const now = instant(input.now);
       if (
@@ -2662,6 +2671,7 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
   const queryActiveWorkThreadLinks = (
     input: QueryActiveWorkThreadLinksInput,
   ): Effect.Effect<QueryActiveWorkThreadLinksResult, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     read(input.dbPath, 'queryActiveWorkThreadLinks', (db) => {
       if (
         !input.machineId ||
@@ -3047,6 +3057,7 @@ const groupEvidenceRecords = (values: readonly unknown[]): Map<string, Record<st
 const readSessionEvidencePage = (
   db: SqliteDatabase,
   scopes: readonly Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>[],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): SessionEvidencePage => {
   for (const input of scopes) {
     if (
@@ -3299,6 +3310,7 @@ const readSessionEvidencePage = (
 const readThreadSessionEvidence = (
   page: SessionEvidencePage,
   input: Omit<QueryWorkThreadSessionEvidenceInput, 'dbPath'>,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Omit<WorkThreadSessionEvidence, 'branchSessionLinks'> => {
   const { revision, generatedAt } = page;
   const sessions = new Map<string, WorkThreadSessionEvidence['sessions'][number]>();

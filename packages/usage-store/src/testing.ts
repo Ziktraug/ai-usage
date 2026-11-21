@@ -1,3 +1,4 @@
+export { initializeUsageStore, quiesceUsageStoreForShutdown } from './connections';
 export type { NewDelegationJob } from './delegation-store';
 export {
   attachDeclaredWorkThreadSessions,
@@ -5,12 +6,9 @@ export {
   importClaudeDesktopSessions,
   importCodexWorkObservations,
   importJiraIssueObservations,
-  importLocalRows,
-  importPeerMergeBundle,
   importProviderQuotaBatch,
   importPullRequestObservations,
   importSkillObservations,
-  initializeUsageStore,
   markReviewAttemptsLost,
   publishServedReportRevision,
   queryClaudeDesktopSessions,
@@ -19,7 +17,6 @@ export {
   queryCurrentServedReportRevision,
   queryLatestExecutorObservations,
   queryLatestProviderQuotaObservations,
-  queryReportRows,
   queryReviewAttempts,
   queryReviewTargetResolution,
   querySkillObservations,
@@ -27,22 +24,25 @@ export {
   queryWorkThreadById,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
-  quiesceUsageStoreForShutdown,
   reconcileWorkBranches,
   recordDelegationEvaluation,
   recordWorkFactRun,
   requestDelegationJob,
   requestReviewAttempt,
-  retireLocalRows,
-  setLocalProjectionReadFaultInjectorForTesting,
   setServedReportPublicationFaultInjectorForTesting,
   setServedReportReadFaultInjectorForTesting,
   transitionDelegationJob,
   transitionReviewAttempt,
+} from './index';
+export {
+  importLocalRows,
+  retireLocalRows,
   USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   updateUsageMachineLabel,
-  usageStorePath,
-} from './index';
+} from './local-rows';
+export { setLocalProjectionReadFaultInjectorForTesting, usageStorePath } from './machine-fleet';
+export { importPeerMergeBundle } from './peer-merge';
+export { queryReportRows } from './report-rows';
 export { createServedRevisionQueryDatabase } from './served-revision';
 export {
   assertSessionQueryDatabase,

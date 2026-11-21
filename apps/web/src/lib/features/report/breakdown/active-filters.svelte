@@ -5,7 +5,7 @@
     type DashboardSearch,
     dashboardTimeCellLabel,
     hasActiveDashboardFilters,
-  } from '../../../../dashboard-search';
+  } from '../../../foundation/dashboard/dashboard-search';
   import { fmtNum } from '../../../foundation/presentation/format';
   import type { BreakdownNavigation } from './navigation';
   import { activeFieldFilters, selectedTimeCell } from './navigation';

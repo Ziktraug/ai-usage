@@ -16,8 +16,8 @@
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/env';
-  import type { RuntimeMode } from '../../../runtime-mode';
   import { displayTitle } from '../../foundation/presentation/display-title';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import { workAttemptsKey, workAttemptsQueryOptions } from '../../query/options/work-attempts';
   import { workRoutingContextKey, workRoutingContextQueryOptions } from '../../query/options/work-routing';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';

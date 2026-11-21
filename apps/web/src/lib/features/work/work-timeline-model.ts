@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { parseWorkThreadLinkKey } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadSituation } from '@ai-usage/report-core/work-thread-situation';
 import {
@@ -604,6 +605,7 @@ const pullRequestDraft = (
   marker: WorkThreadPullRequestMarker,
   scale: TimelineScale,
   now: string,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): PullRequestDraft | 'undated' | 'outside' => {
   const current = marker.latest?.outcome === 'observed';
   const observation = current ? marker.latest : marker.latestSuccessful;

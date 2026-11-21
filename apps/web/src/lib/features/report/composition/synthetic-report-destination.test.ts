@@ -9,13 +9,13 @@ import {
   presentCampaignTimelineSeries,
   presentFocusedOverviewSessionItem,
   presentServedCampaignDisplayRow,
-} from '../../../../campaign-label-overrides';
-import { buildCampaignTableRows } from '../../../../dashboard-model';
+} from '../../../foundation/campaign-label-overrides';
+import { buildCampaignTableRows } from '../../../foundation/dashboard/dashboard-model';
 import {
   machineFreshnessSnapshotFromFocused,
   machineLabelPresentationForSnapshot,
-} from '../../../../machine-freshness-presentation';
-import { demoReportPayload } from '../../../../report-data';
+} from '../../../foundation/machine-freshness-presentation';
+import { demoReportPayload } from '../../../foundation/report-data';
 import type { SessionSelectionInput } from '../../sessions/detail/types';
 
 describe('synthetic report campaign presentation', () => {

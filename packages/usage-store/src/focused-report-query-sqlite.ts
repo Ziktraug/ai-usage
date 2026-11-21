@@ -197,6 +197,7 @@ const priceMeasurementFromSql = (
     knownCost,
   });
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const summaryFromRecord = (record: SummaryRecord | null): FocusedReportSummary => {
   const pricedSessions = record?.priced_sessions ?? 0;
   const totalCost = record?.total_cost ?? 0;

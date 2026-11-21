@@ -238,10 +238,10 @@
   import type { SessionDetailUnavailableReason } from '@ai-usage/report-core/session-detail';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { tick } from 'svelte';
-  import type { SessionAnalysisError } from '../../../../session-analysis-error';
-  import { formatSessionDuration } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  import { formatSessionDuration } from '../../../foundation/session/session-analysis-model';
+  import type { SessionAnalysisError } from '../session-analysis-error';
   import {
     type ChildView,
     type InteractionView,

@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import { type FileHandle, lstat, mkdir, open, opendir, realpath, rename, unlink } from 'node:fs/promises';
@@ -252,6 +253,7 @@ const removeIfUnchanged = async (filePath: string, identity: FileIdentity): Prom
 export const readUsageEngineInput = async (
   input: UsageEngineFileInput,
   options: UsageEngineInputOptions,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<OpenedUsageEngineInput> => {
   if (!(Number.isSafeInteger(options.maximumBytes) && options.maximumBytes > 0)) {
     throw new Error('Usage engine input byte limit is invalid.');

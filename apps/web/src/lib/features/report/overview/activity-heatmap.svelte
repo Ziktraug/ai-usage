@@ -27,8 +27,8 @@
 
 <script lang="ts">
   import type { FocusedCalendarHeatmap, FocusedHeatDay } from '@ai-usage/report-core/focused-report-query';
-  import { toDateInputValue } from '../../../../date-range';
-  import { nextHeatmapFocusIndex } from '../../../../overview-model';
+  import { toDateInputValue } from '../../../foundation/date-range';
+  import { nextHeatmapFocusIndex } from '../../../foundation/overview-model';
   import { fmtDateOnly, fmtNum } from '../../../foundation/presentation/format';
   import {
     aggregateApiPriceProvenance,

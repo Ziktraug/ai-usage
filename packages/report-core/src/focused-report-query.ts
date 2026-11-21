@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import {
   type AnalyticsGroup,
   type AnalyticsRowInput,
@@ -751,6 +752,7 @@ const addTimelineGap = (
 export const buildFocusedTimelineFromAggregates = (
   aggregates: readonly FocusedTimelineAggregate[],
   options: FocusedOverviewRequest['timeline'],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): FocusedTimelineData | null => {
   if (aggregates.length === 0) {
     return null;
@@ -1078,6 +1080,7 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
 export const buildFocusedHeatmapFromAggregates = (
   aggregates: readonly FocusedDayAggregate[],
   now = new Date(),
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): FocusedCalendarHeatmap | null => {
   const byDay = new Map<string, Omit<FocusedDayAggregate, 'time'>>();
   let minTime = Number.POSITIVE_INFINITY;
@@ -1579,6 +1582,7 @@ export const projectFocusedSupport = (
   filterOptions: FocusedSupportResult['filterOptions'],
   input: FocusedRevisionRequest,
   options: FocusedSupportProjectionOptions = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): FocusedSupportResult => {
   const request = parseFocusedRevisionRequest(input);
   const { dateDomain = null, providerRows = [], sourceOmissions = {} } = options;

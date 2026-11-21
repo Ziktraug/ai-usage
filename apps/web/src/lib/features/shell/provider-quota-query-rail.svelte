@@ -3,7 +3,7 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/env';
-  import type { RuntimeMode } from '../../../runtime-mode';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import { type QuotaQueryClient, quotaRailQueryOptions } from '../../query/options/quota';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import { createReportClient } from '../../rpc/report-client';

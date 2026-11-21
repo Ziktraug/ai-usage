@@ -1,14 +1,14 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import type { UsageReportProjectGroup } from '@ai-usage/report-core/report-data';
-  import type { ProjectGroup } from '../../../../dashboard-analytics';
+  import type { ProjectGroup } from '../../../foundation/dashboard/dashboard-analytics';
+  import { fmtCompact, fmtNum } from '../../../foundation/presentation/format';
+  import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import {
     projectDataQualityLabel,
     projectIdentityPresentation,
     projectLinesPresentation,
-  } from '../../../../project-presentation';
-  import { fmtCompact, fmtNum } from '../../../foundation/presentation/format';
-  import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  } from '../project-presentation';
   import {
     modelEmpty,
     modelNameButton,

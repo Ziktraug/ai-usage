@@ -268,6 +268,7 @@ const observeOne = (
   base: Pick<BoundedProcessOptions, 'maximumOutputBytes' | 'signal' | 'timeoutMs'>,
   checkoutPath: string,
 ): Effect.Effect<CheckoutStatusObservation> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const observedAt = canonicalInstantFromDate(options.now());
     const empty = (outcome: CheckoutStatusOutcome) =>

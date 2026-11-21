@@ -402,6 +402,7 @@ export interface InsertProjectionResult {
 export const insertServedReportProjection = (
   database: ServedRevisionWriteDatabase,
   input: InsertProjectionInput,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): InsertProjectionResult => {
   if (input.rows.length !== input.sourceAuthorities.length) {
     throw new Error('Served report rows and source authorities must have the same length');

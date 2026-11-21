@@ -13,7 +13,7 @@
     strongCell,
   } from '@ai-usage/design-system/svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { canReconcileAll } from '../../../../skills-page-model';
+  import { canReconcileAll } from '../../../foundation/skills-page-model';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     previewReconcileOperation,

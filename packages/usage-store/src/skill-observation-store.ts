@@ -7,6 +7,7 @@ import {
   SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
+  type SkillObservationTier,
 } from '@ai-usage/report-core/skill-observation';
 import {
   isSkillObservationTier,
@@ -19,15 +20,135 @@ import {
 } from '@ai-usage/report-core/skill-observation-evidence';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
-import type {
-  ImportSkillObservationsInput,
-  QuerySkillObservationsInput,
-  QuerySkillObservationsResult,
-  RetainSkillObservationsInput,
-  RetainSkillObservationsResult,
-  SkillObservationImportResult,
-  StoredSkillObservation,
-} from './index';
+import type { ServedRevisionQueryTrace } from './served-revision';
+
+export interface ImportSkillObservationsInput {
+  /**
+   * Producer completeness for this observable harness sweep. Persisted even
+   * when `observations` is empty so a truncated empty sweep cannot masquerade
+   * as an ordinary empty result.
+   */
+  collection?: {
+    completeness: SkillObservationCollectionCompleteness;
+    harnessKey: string;
+  };
+  dbPath: string;
+  importedAt?: Date;
+  /** The machine that observed these; the observations themselves are machine-agnostic. */
+  machineId: string;
+  /** Optional inclusive cutoff used by rescans to avoid resurrecting retained exposure rows. */
+  minimumExposureObservedAt?: string;
+  observations: readonly unknown[];
+}
+
+export interface SkillObservationImportResult {
+  inserted: number;
+  /** Observations that failed validation. Counted, so a broken collector is visible. */
+  rejected: number;
+  /** The durable producer-completeness answer changed. */
+  stateChanged: boolean;
+  /** Re-imports whose content matched the stored row exactly. */
+  unchanged: number;
+  /**
+   * Re-imports under an existing identity whose content differed, so the
+   * durable row was rewritten. Advances the store generation.
+   */
+  updated: number;
+}
+
+export interface QuerySkillObservationsInput {
+  dbPath: string;
+  /**
+   * Observable harnesses expected to have completed collection in this read's
+   * machine scope. The store does not derive this roster from observation rows
+   * or own source-policy configuration; its composition caller supplies it. A
+   * non-empty roster requires `machineId`, because completeness is persisted
+   * per machine and harness.
+   */
+  expectedProducerHarnessKeys?: readonly string[];
+  from?: string;
+  harnessKey?: string;
+  /**
+   * Expected producers that cannot currently publish a collection answer (for
+   * example because their source is disabled). A previous successful sweep is
+   * not reusable while a producer is in this set.
+   */
+  incompleteProducerHarnessKeys?: readonly string[];
+  machineId?: string;
+  maximumObservations?: number;
+  /** Oldest producer collection answer accepted as current for this read. */
+  minimumProducerCollectedAt?: string;
+  skillName?: string;
+  /**
+   * Filters to one observation tier. Omitting it returns every tier, each row
+   * still carrying its own — a caller must never add them together (ADR 0022).
+   */
+  tier?: SkillObservationTier;
+  to?: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export interface StoredSkillObservation {
+  firstObservedAt: string;
+  id: number;
+  lastObservedAt: string;
+  machineId: string;
+  observation: SkillObservation;
+}
+
+export interface QuerySkillObservationsResult {
+  /** Producer-side exposure collection was incomplete for at least one expected producer. */
+  collectionExposureIncomplete: boolean;
+  /**
+   * The harnesses that particular incompleteness belongs to.
+   *
+   * Reported beside the global boolean rather than instead of it: a count that belongs to one
+   * harness must not be hedged by another harness's rejection, while a claim about *every*
+   * harness still needs the global answer. Missing producer state cannot be attributed to one
+   * producer, so it lists every expected harness.
+   */
+  collectionExposureIncompleteHarnessKeys: readonly string[];
+  /** Producer-side invocation collection was incomplete for at least one expected producer. */
+  collectionInvocationIncomplete: boolean;
+  /** The harnesses that particular incompleteness belongs to; see the exposure field. */
+  collectionInvocationIncompleteHarnessKeys: readonly string[];
+  /**
+   * The `declared`/`inferred` read reached *its own* budget, so invocation
+   * evidence is incomplete.
+   *
+   * Reported apart from `truncated` because the two support different claims. A
+   * read can legitimately truncate the exposure catalogue — which is per-session
+   * boilerplate — while carrying every invocation ever recorded; in that case no
+   * absence verdict is weakened. Only this flag says the evidence behind
+   * "never invoked" was itself cut short.
+   */
+  invocationTruncated: boolean;
+  observations: StoredSkillObservation[];
+  /** At least one expected producer lacks usable current state (missing, stale, disabled, or omitted). */
+  producerCompletenessMissing: boolean;
+  /**
+   * End-to-end expiry of the producer proof accepted by this read. Derived from
+   * `minimumProducerCollectedAt`, never from when later folding or joins finish. `null` means this
+   * read had no time-bounded producer proof.
+   */
+  producerProofValidUntil: string | null;
+  /** Re-validation refusals split by the claim their stored tier could have supported. */
+  refusedRows: SkillObservationRefusalCounts;
+  /** Persisted rows that no longer pass validation. Never silently omitted. */
+  skipped: number;
+  truncated: boolean;
+}
+
+export interface RetainSkillObservationsInput {
+  dbPath: string;
+  /** Exposure observations older than this window are deleted whole; defaults to 400 days. */
+  exposureRetentionMs?: number;
+  now?: number;
+}
+
+export interface RetainSkillObservationsResult {
+  deleted: number;
+}
 
 /**
  * Durable storage for the skill-observation fact family (ADR 0022), modelled on
@@ -258,6 +379,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result: SkillObservationImportResult = {
             inserted: 0,
@@ -452,6 +574,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
   ): Effect.Effect<QuerySkillObservationsResult, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const maximum = input.maximumObservations ?? MAX_SKILL_OBSERVATION_READ;
           const expectedProducerHarnessKeys = input.expectedProducerHarnessKeys?.map((harnessKey) => harnessKey.trim());

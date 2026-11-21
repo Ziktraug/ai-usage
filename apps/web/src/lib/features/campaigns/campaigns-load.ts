@@ -3,9 +3,9 @@ import {
   type SessionLookupRequest,
   SessionQueryValidationError,
 } from '@ai-usage/report-core/session-query';
-import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
-import type { RuntimeMode } from '../../../runtime-mode';
+import { campaignMapFixtureGeneratedAt } from '../../foundation/campaign-map-fixture';
 import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
 import type { WebQueryRuntime } from '../../query/composition';
 import { campaignLabelOverridesQueryOptions, reportBootstrapQueryOptions } from '../../query/options/report';

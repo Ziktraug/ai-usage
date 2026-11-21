@@ -64,6 +64,7 @@ export const createSourceSnapshotBroker = (): SourceSnapshotBroker => {
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const publish = (snapshot: SourceControlView): void => {
     if (latestSnapshot && snapshot.generation <= latestSnapshot.generation) {
       return;

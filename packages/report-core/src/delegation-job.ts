@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { isRecord } from './datasets';
 import type {
   DelegationEvaluation,
@@ -769,6 +770,7 @@ const EVALUATION_INPUT_KEYS: ReadonlySet<string> = new Set(['checks', 'kind', 'n
 export const parseDelegationEvaluationInput = (
   value: unknown,
   edge: { readonly author: DelegationEvaluationAuthor; readonly authorLabel: string | null },
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): DelegationEvaluationInputResult => {
   if (!isRecord(value)) {
     return { issues: ['evaluation must be an object with kind and verdict'], kind: 'invalid' };
@@ -1282,6 +1284,7 @@ export const projectDelegationJobView = (
     );
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const build = (trim: ViewTrim): DelegationJobView => {
     let characters = 0;
     const prose = (text: string): string => {

@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../../../runtime-mode';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { rpcProcedureRequestPolicies } from '../../server/rpc/request-policy';
 import { isManagementPath } from './navigation';
 

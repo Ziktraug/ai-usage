@@ -5,7 +5,7 @@ import {
   parseSessionLookupServerResult,
   sessionRowIdentity,
 } from '@ai-usage/report-core/session-query';
-import { campaignMapFixtureRows } from '../../../campaign-map-fixture';
+import { campaignMapFixtureRows } from '../../foundation/campaign-map-fixture';
 import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
 describe('synthetic campaign session lookup', () => {

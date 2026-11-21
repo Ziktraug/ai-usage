@@ -6,13 +6,13 @@ import {
   type PrimaryDashboardTab,
   primaryDashboardTabFor,
   validateDashboardSearch,
-} from '../../../dashboard-search';
-import type { RuntimeMode } from '../../../runtime-mode';
+} from '../../foundation/dashboard/dashboard-search';
 import {
   type DashboardSearchCodec,
   dashboardUrlFor,
   parseDashboardSearchUrl,
 } from '../../foundation/navigation/svelte/dashboard-url';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { isReportPathname } from '../sessions/detail/session-route';
 
 export type ShellIconName =

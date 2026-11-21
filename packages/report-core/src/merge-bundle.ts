@@ -252,6 +252,7 @@ export const parseSerializedMergeRow = (value: unknown): SerializedMergeRow => {
   return value;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => {
   if (!isRecord(value)) {
     throw new Error('Usage merge bundle must be an object');

@@ -22,6 +22,7 @@ const features = Object.fromEntries(
 );
 let buffer = '';
 process.stdin.setEncoding('utf8');
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 process.stdin.on('data', (chunk: string) => {
   buffer += chunk;
   let end = buffer.indexOf('\n');

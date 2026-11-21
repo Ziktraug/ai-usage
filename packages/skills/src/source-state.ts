@@ -12,6 +12,7 @@ const maxSkillSourceStateBytes = 1_048_576;
 const parseSkillSourceState = (
   value: unknown,
   statePath?: string,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): { diagnostics: readonly SkillDiagnostic[]; state?: SkillSourceState } => {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.skillEnabledByName)) {
     return { diagnostics: [] };

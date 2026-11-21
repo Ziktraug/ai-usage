@@ -1,14 +1,14 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import MachineLabelEditor from './machine-label-editor.svelte';
   import {
     formatFleetAge,
     INVALID_STORED_ROWS_EXPLANATION,
     invalidStoredRowsSummary,
     STALE_MACHINE_COLLECTION_GUIDANCE,
     type SyncFleetMachineView,
-  } from '../../../manual-transfer-model';
-  import MachineLabelEditor from './machine-label-editor.svelte';
+  } from './manual-transfer-model';
   import { actionRow, panelHeader, statusPill, statusPillInfo, statusPillOk, statusPillWarn } from './styles';
 
   let {

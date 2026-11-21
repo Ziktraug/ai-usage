@@ -60,6 +60,7 @@ export const createFollowUndo = (
   let pending: WorkThreadTaskCommand | null = null;
   let terminal: FollowUndoResult | null = null;
   return {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     run: async () => {
       if (snapshot.state === 'done' && snapshot.acknowledgedRemainders === null) {
         return { status: 'history-unavailable' };

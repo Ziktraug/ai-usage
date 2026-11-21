@@ -292,6 +292,7 @@ const journalReadIsUnchanged = async (
   );
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const recoverSkillMarkdownWrite = async (paths: SkillMarkdownRecoveryPaths): Promise<'blocked' | 'ready'> => {
   const journalRead = await readSkillMarkdownWriteJournal(paths.journalPath);
   if (journalRead.kind === 'invalid') {
@@ -474,6 +475,7 @@ export const writeSkillMarkdownWithHooks = async (
     return { ok: false, reason: 'not-found' };
   }
   const recoveryPaths = recoveryPathsForMarkdown(location.markdownPath);
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   return await withSerializedFileMutation(location.markdownPath, async () => {
     if ((await recoverSkillMarkdownWrite(recoveryPaths)) === 'blocked') {
       return { ok: false, reason: 'conflict' };

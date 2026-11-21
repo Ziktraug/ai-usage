@@ -1,8 +1,8 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { panelSub } from '@ai-usage/design-system/svelte';
-  import { formatTransferBytes } from '../../../manual-transfer-model';
   import type { ManualTransferOperation, ManualUploadProgress } from './manual-transfer-client';
+  import { formatTransferBytes } from './manual-transfer-model';
 
   let {
     now,

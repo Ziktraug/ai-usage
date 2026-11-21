@@ -231,6 +231,7 @@ const targetImportReason = (
   relativeFile: string,
   specifier: string,
   applicationPackages: ReadonlySet<string>,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): string | undefined => {
   if (isPackageOrSubpath(specifier, mcpSdkPackage) && packageName !== mcpAdapterPackage) {
     return 'Only mcp-adapter may import the MCP protocol SDK directly.';
@@ -562,6 +563,7 @@ const resolveRelativeModule = async (packageDirectory: string, importer: string,
 const collectPortableReportClosureViolations = async (
   root: string,
   packages: Map<string, PackageInfo>,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<PackageBoundaryViolation[]> => {
   const packageInfo = packages.get(reportDataPackage);
   if (!packageInfo) {
@@ -662,6 +664,7 @@ const collectProductionWorkspaceImportEdges = async (
 const collectApplicationProductionClosureViolations = async (
   root: string,
   packages: ReadonlyMap<string, PackageInfo>,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<PackageBoundaryViolation[]> => {
   const forbiddenPackages = new Set(['@ai-usage/local-collectors', engineRuntimePackage]);
   const violations: PackageBoundaryViolation[] = [];

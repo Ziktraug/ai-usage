@@ -137,6 +137,7 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   assertPortableUsageByteLength(text, 'Snapshot');
   const value = JSON.parse(text) as unknown;
@@ -245,6 +246,7 @@ const isUsageSnapshotDatasets = (value: unknown): value is ReportDatasets => {
   return value.providerStatus === undefined || parseProviderStatusDataset(value.providerStatus) !== null;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeResult => {
   const byKey = new Map<string, { snapshot: UsageSnapshot; row: SnapshotUsageRow }>();
   const warnings: SnapshotMergeWarning[] = [];

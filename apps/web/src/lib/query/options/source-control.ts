@@ -1,6 +1,6 @@
 import type { SourceControlCommand } from '@ai-usage/report-core/source-control';
 import { type QueryClient, queryOptions } from '@tanstack/svelte-query';
-import type { SourceControlClientState } from '../../../source-control-client';
+import type { SourceControlClientState } from '../../foundation/source-control-client';
 import { controlPlaneKey } from '../keys';
 import { webQueryPolicies } from '../policies';
 

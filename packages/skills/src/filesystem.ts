@@ -228,6 +228,7 @@ const runFileLockHeartbeat = async (
   }
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const withFileSystemLock = async <Result>(lockPath: string, mutation: () => Promise<Result>): Promise<Result> => {
   const deadline = Date.now() + fileLockAcquireTimeoutMs;
   const createdAt = new Date().toISOString();

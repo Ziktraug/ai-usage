@@ -213,6 +213,7 @@ const methodNotAllowed = (): Response => new Response(null, { headers: { allow: 
 
 export const createManualMergeDownloadHandler =
   (dependencies: Pick<ManualMergeExplicitDependencies, 'canonicalizeExport' | 'exportBundle'>) =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   async (request: Request): Promise<Response> => {
     if (request.method !== 'POST') {
       return methodNotAllowed();

@@ -2,7 +2,7 @@ import {
   type CampaignLabelOverrideMutation,
   parseCampaignLabelOverrideMutation,
 } from '@ai-usage/report-core/campaign-label';
-import type { DashboardSearch } from '../../../../dashboard-search';
+import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
 
 export const campaignRenameMutation = (campaignKey: string, label: string): CampaignLabelOverrideMutation =>
   parseCampaignLabelOverrideMutation({ campaignKey, label });

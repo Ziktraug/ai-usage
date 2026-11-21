@@ -271,6 +271,7 @@ const readOpenCodeDatabaseFacts = (
   dbPath: string,
   source: 'live' | 'stable',
 ): Effect.Effect<OpenCodeDatabaseFacts, LocalHistoryError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const schemaRows = yield* withPerfSpan(
       'aiUsage.collect.opencode.db.query.schema',
@@ -358,6 +359,7 @@ const readOpenCodeDatabaseFacts = (
       }));
       yield* withPerfSpan(
         'aiUsage.collect.opencode.parse.messages',
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         Effect.sync(() => {
           let tokenRows = 0;
           let skippedRows = 0;
@@ -522,6 +524,7 @@ const collectFromDb = (
       const { meta, toolCount, turnCount } = facts;
       let { rejectedMetricRecords } = facts;
 
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       const provLabel = (providerId: string, cost: number, costKnown: boolean) => {
         if (providerId === 'openai') {
           if (!costKnown) {
@@ -549,6 +552,7 @@ const collectFromDb = (
       const retiredSourceSessionIds: string[] = [];
       const sessions = yield* withPerfSpan(
         'aiUsage.collect.opencode.mapSessions',
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         Effect.sync(() => {
           const mappedSessions: CollectedSession[] = [];
           const vcsByDirectory = new Map<string, SessionVcsContext | undefined>();

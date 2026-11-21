@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { isRecord } from './datasets';
 import {
   clampPercent,
@@ -204,6 +205,7 @@ export const assessCodexReviewCapacity = (input: {
   readonly result: unknown;
   readonly model: string;
   readonly now: number;
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 }): CodexReviewCapacity => {
   const unavailable = (reason: CodexCapacityRefusal): CodexReviewCapacity => ({ kind: 'unavailable', reason });
   if (
@@ -494,6 +496,7 @@ const claudeModelScopedWindows = (raw: unknown): ProviderLimitWindow[] => {
  */
 export const normalizeClaudeAgentSdkQuotaObservation = (
   input: NormalizeClaudeAgentSdkQuotaInput,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ProviderQuotaObservation | null => {
   const observedAt = normalizeIsoTimestamp(input.observedAt);
   if (!(observedAt && nonEmptyString(input.machineId))) {

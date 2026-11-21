@@ -273,6 +273,7 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
   };
   const runServe = async (
     options: RunUsageEngineProcessOptions & { readonly mode: { readonly mode: 'serve'; readonly port: number } },
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ) => {
     const instanceId = dependencies.createInstanceId();
     const token = dependencies.createToken();

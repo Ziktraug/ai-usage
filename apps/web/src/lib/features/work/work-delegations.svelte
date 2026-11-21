@@ -7,7 +7,7 @@
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/env';
-  import type { RuntimeMode } from '../../../runtime-mode';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import { createDelegationMutations, delegationJobsQueryOptions } from '../../query/options/delegation';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
   import {

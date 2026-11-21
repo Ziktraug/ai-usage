@@ -373,6 +373,7 @@ const parseCommit = (value: unknown): SessionVcsCommit => {
   return { hash, observedAt, provenance, webUrl: normalizedWebUrl };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseSessionVcsContext = (value: unknown): SessionVcsContext => {
   if (!(isRecord(value) && hasOnlyKeys(value, CONTEXT_KEYS))) {
     throw new Error('Session VCS context is invalid');

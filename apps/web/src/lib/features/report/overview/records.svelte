@@ -19,9 +19,9 @@
   } from '@ai-usage/design-system/report';
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
-  import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCount, fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  import { sessionDurationSemantics } from '../../../foundation/session/session-analysis-model';
 
   const recordActionLabel = css({
     display: 'flex',

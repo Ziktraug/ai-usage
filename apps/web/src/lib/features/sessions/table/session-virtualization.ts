@@ -1,4 +1,4 @@
-import { calculateSessionRowWindow } from '../../../../session-row-window';
+import { calculateSessionRowWindow } from '../session-row-window';
 
 export const sessionVirtualBudgets = {
   desktop: { maxRows: 300, overscanRows: 4, prefetchRows: 12, rowHeight: 43 },

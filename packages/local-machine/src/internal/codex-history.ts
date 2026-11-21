@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import path from 'node:path';
 import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
@@ -1043,6 +1044,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     addDetailTokens(bucket, delta);
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const finishUnanchoredTokens = (startedAt: Date | null, completedAt: Date | null): void => {
     if (!unanchoredTokens) {
       return;
@@ -1081,6 +1083,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const recordChildTokens = (snapshot: CodexTokenSnapshot, lastUsage: CodexTokenSnapshot | null, at: Date): void => {
     const baseline = previousTokens;
     previousTokens = snapshot;
@@ -1153,6 +1156,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const recordTokens = (payload: Record<string, unknown>, at: Date): void => {
     const hasRateLimits = isRecord(payload.rate_limits);
     if (hasRateLimits) {
@@ -1249,163 +1253,154 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     return Boolean(task?.hasContext && !task.replayed);
   };
 
-  const visit = (line: string): void => {
-    if (!line) {
-      return;
+  const recordUnparseableLine = (prefix: string, skillCatalogueLine: boolean): void => {
+    session.malformedLines++;
+    // The prefix gate in `visit` serves the usage-row parser, so passing it is
+    // not evidence that this line could have carried a skill observation. A line
+    // admitted only by `shouldParseCodexPrefix` — token_count, session_meta,
+    // turn_context, a message, a reasoning block — cannot carry one at all,
+    // and calling its loss lost skill evidence would be false rather than
+    // merely uncertain. Only the two shapes that could have carried a signal
+    // fail closed, each on its own channel: a tool call could have been an
+    // exec reading a SKILL.md, and a developer message whose heading is still
+    // readable could have been the catalogue. A truncation that cut the
+    // heading away cannot be claimed as a catalogue, so it counts for
+    // nothing — the same direction of error the rest of this module takes.
+    if (isCodexToolCallPrefix(prefix)) {
+      unreadableInvocationLines++;
     }
-    lines++;
-    const prefix = codexLinePrefix(line);
-    const skillCatalogueLine = isCodexSkillCatalogueLine(prefix, line);
-    // A line the cheap prefix gate rejects is dropped without paying for a JSON
-    // parse: on a full history sweep that parse is the dominant cost, and a
-    // rejected line is not skill evidence to begin with. What a line that is
-    // admitted and then fails to parse costs, and to which channel, is decided
-    // below by shape rather than by admission.
-    if (
-      !(
-        shouldParseCodexPrefix(prefix) ||
-        isCodexToolCallPrefix(prefix) ||
-        skillCatalogueLine ||
-        workObserver.acceptsOutput(prefix)
-      )
-    ) {
-      skippedLines++;
-      return;
+    if (skillCatalogueLine) {
+      unreadableExposureLines++;
     }
-    parsedLines++;
-    const event = safeJSON(line);
-    if (!event) {
-      session.malformedLines++;
-      // The prefix gate above serves the usage-row parser, so passing it is not
-      // evidence that this line could have carried a skill observation. A line
-      // admitted only by `shouldParseCodexPrefix` — token_count, session_meta,
-      // turn_context, a message, a reasoning block — cannot carry one at all,
-      // and calling its loss lost skill evidence would be false rather than
-      // merely uncertain. Only the two shapes that could have carried a signal
-      // fail closed, each on its own channel: a tool call could have been an
-      // exec reading a SKILL.md, and a developer message whose heading is still
-      // readable could have been the catalogue. A truncation that cut the
-      // heading away cannot be claimed as a catalogue, so it counts for
-      // nothing — the same direction of error the rest of this module takes.
-      if (isCodexToolCallPrefix(prefix)) {
-        unreadableInvocationLines++;
-      }
-      if (skillCatalogueLine) {
-        unreadableExposureLines++;
-      }
-      return;
+  };
+
+  const recordUndatedEvent = (
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    prefix: string,
+    skillCatalogueLine: boolean,
+  ): void => {
+    session.malformedLines++;
+    workObserver.rejectUndated(event, ownsWorkEvent(payload));
+    if (isCodexToolCallPrefix(prefix) && isCodexExecToolCall(payload)) {
+      unplacedInvocationSignals += matchCodexSkillDocuments(codexToolCallCommandBlob(payload)).length;
     }
-    const payload = isRecord(event.payload) ? event.payload : {};
-    const timestamp =
-      typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
-    const date = new Date(timestamp);
-    if (!Number.isFinite(date.getTime())) {
-      session.malformedLines++;
-      workObserver.rejectUndated(event, ownsWorkEvent(payload));
-      if (isCodexToolCallPrefix(prefix) && isCodexExecToolCall(payload)) {
-        unplacedInvocationSignals += matchCodexSkillDocuments(codexToolCallCommandBlob(payload)).length;
-      }
-      if (skillCatalogueLine) {
-        unplacedExposureSignals += extractCodexSkillCatalogue(codexDeveloperMessageText(payload)).length;
-      }
-      return;
+    if (skillCatalogueLine) {
+      unplacedExposureSignals += extractCodexSkillCatalogue(codexDeveloperMessageText(payload)).length;
     }
+  };
+
+  const extendSessionSpan = (date: Date): void => {
     if (!session.start || date < session.start) {
       session.start = date;
     }
     if (!session.end || date > session.end) {
       session.end = date;
     }
+  };
 
-    if (isCodexToolCallPrefix(prefix)) {
-      const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
-        ? payload.internal_chat_message_metadata_passthrough
-        : null;
-      const turnId = nonEmpty(metadata?.turn_id);
-      const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
-      if (task?.hasContext) {
-        observeTask(task, date);
-        session.tools++;
-        task.tools++;
-      }
-      if (!evidenceOnly) {
-        observeCodexSkillExec(payload, date);
-      }
+  const observeToolCall = (payload: Record<string, unknown>, date: Date): void => {
+    const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+      ? payload.internal_chat_message_metadata_passthrough
+      : null;
+    const turnId = nonEmpty(metadata?.turn_id);
+    const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+    if (task?.hasContext) {
+      observeTask(task, date);
+      session.tools++;
+      task.tools++;
     }
-    if (skillCatalogueLine && !evidenceOnly) {
-      observeCodexSkillCatalogue(codexDeveloperMessageText(payload), date);
+    if (!evidenceOnly) {
+      observeCodexSkillExec(payload, date);
     }
-    const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
-    if (sessionMetaId && !session.id) {
-      session.id = sessionMetaId;
-      childRollout = Boolean(
-        codexSubagentFromSource(payload.source) ||
-          payload.thread_source === 'subagent' ||
-          nonEmpty(payload.parent_thread_id) ||
-          nonEmpty(payload.forked_from_id) ||
-          nonEmpty(payload.forked_from) ||
-          nonEmpty(payload.forked_from_thread_id),
-      );
-      inheritedHistory = Boolean(
+  };
+
+  const applySessionMeta = (sessionMetaId: string, payload: Record<string, unknown>, date: Date): void => {
+    session.id = sessionMetaId;
+    childRollout = Boolean(
+      codexSubagentFromSource(payload.source) ||
+        payload.thread_source === 'subagent' ||
+        nonEmpty(payload.parent_thread_id) ||
         nonEmpty(payload.forked_from_id) ||
-          nonEmpty(payload.forked_from) ||
-          nonEmpty(payload.forked_from_thread_id) ||
-          typeof payload.subagent_history_start_ordinal === 'number',
-      );
-      const declaredBirth = typeof payload.timestamp === 'string' ? new Date(payload.timestamp) : null;
-      childBirth = declaredBirth && Number.isFinite(declaredBirth.getTime()) ? declaredBirth : date;
-      session.cwd = typeof payload.cwd === 'string' ? payload.cwd : session.cwd;
-      const sessionVcs = codexVcsFromSessionMeta(payload, date);
-      if (sessionVcs) {
-        session.vcs = sessionVcs;
-      }
-      session.threadSource = typeof payload.thread_source === 'string' ? payload.thread_source : session.threadSource;
-      session.launchSource = typeof payload.source === 'string' ? payload.source : session.launchSource;
-      const subagent = codexSubagentFromSource(payload.source);
-      if (subagent) {
-        session.subagentKind = subagent.kind;
-      }
-      if (subagent?.kind === 'thread-spawn') {
-        session.parent = nonEmpty(subagent.threadSpawn.parent_thread_id) ?? session.parent;
-        session.agentNickname =
-          nonEmpty(subagent.threadSpawn.agent_nickname) ??
-          nonEmpty(subagent.threadSpawn.agent_role) ??
-          session.agentNickname;
-      } else if (subagent?.kind === 'guardian' || subagent?.kind === 'review') {
-        session.classifierParent = nonEmpty(payload.parent_thread_id) ?? session.classifierParent;
-      }
+        nonEmpty(payload.forked_from) ||
+        nonEmpty(payload.forked_from_thread_id),
+    );
+    inheritedHistory = Boolean(
+      nonEmpty(payload.forked_from_id) ||
+        nonEmpty(payload.forked_from) ||
+        nonEmpty(payload.forked_from_thread_id) ||
+        typeof payload.subagent_history_start_ordinal === 'number',
+    );
+    const declaredBirth = typeof payload.timestamp === 'string' ? new Date(payload.timestamp) : null;
+    childBirth = declaredBirth && Number.isFinite(declaredBirth.getTime()) ? declaredBirth : date;
+    session.cwd = typeof payload.cwd === 'string' ? payload.cwd : session.cwd;
+    const sessionVcs = codexVcsFromSessionMeta(payload, date);
+    if (sessionVcs) {
+      session.vcs = sessionVcs;
     }
-    if (event.type === 'turn_context' && typeof payload.model === 'string') {
-      const turnId = nonEmpty(payload.turn_id);
-      const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
-      if (childRollout) {
-        childTokenTurnId = turnId ?? task?.turnId ?? null;
-        if (!task && turnId) {
-          if (unanchoredTokens?.turnId !== turnId) {
-            finishUnanchoredTokens(null, null);
-            unanchoredTokens = { turnId, buckets: [] };
-          }
-          currentModel = payload.model;
-          currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
+    session.threadSource = typeof payload.thread_source === 'string' ? payload.thread_source : session.threadSource;
+    session.launchSource = typeof payload.source === 'string' ? payload.source : session.launchSource;
+    applySessionSubagent(payload);
+  };
+
+  const applySessionSubagent = (payload: Record<string, unknown>): void => {
+    const subagent = codexSubagentFromSource(payload.source);
+    if (subagent) {
+      session.subagentKind = subagent.kind;
+    }
+    if (subagent?.kind === 'thread-spawn') {
+      session.parent = nonEmpty(subagent.threadSpawn.parent_thread_id) ?? session.parent;
+      session.agentNickname =
+        nonEmpty(subagent.threadSpawn.agent_nickname) ??
+        nonEmpty(subagent.threadSpawn.agent_role) ??
+        session.agentNickname;
+    } else if (subagent?.kind === 'guardian' || subagent?.kind === 'review') {
+      session.classifierParent = nonEmpty(payload.parent_thread_id) ?? session.classifierParent;
+    }
+  };
+
+  const applyChildTurnContext = (
+    payload: Record<string, unknown>,
+    model: string,
+    turnId: string | null,
+    task: MutableCodexTask | null,
+  ): void => {
+    childTokenTurnId = turnId ?? task?.turnId ?? null;
+    if (!task && turnId) {
+      if (unanchoredTokens?.turnId !== turnId) {
+        finishUnanchoredTokens(null, null);
+        unanchoredTokens = { turnId, buckets: [] };
+      }
+      currentModel = model;
+      currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
+    }
+  };
+
+  const applyTurnContext = (payload: Record<string, unknown>, model: string, date: Date): void => {
+    const turnId = nonEmpty(payload.turn_id);
+    const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+    if (childRollout) {
+      applyChildTurnContext(payload, model, turnId, task);
+    }
+    if (task && !task.replayed) {
+      currentModel = model;
+      currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
+      addModel(currentModel);
+      if (!task.hasContext) {
+        task.hasContext = true;
+        session.turns++;
+        if (!taskObservedStart || task.start < taskObservedStart) {
+          taskObservedStart = task.start;
         }
       }
-      if (task && !task.replayed) {
-        currentModel = payload.model;
-        currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
-        addModel(currentModel);
-        if (!task.hasContext) {
-          task.hasContext = true;
-          session.turns++;
-          if (!taskObservedStart || task.start < taskObservedStart) {
-            taskObservedStart = task.start;
-          }
-        }
-        observeTask(task, date);
-        task.model = currentModel;
-        task.effort = currentEffort;
-        ensurePhase(date);
-      }
+      observeTask(task, date);
+      task.model = currentModel;
+      task.effort = currentEffort;
+      ensurePhase(date);
     }
+  };
+
+  const visitWorkAndPrompt = (event: Record<string, unknown>, payload: Record<string, unknown>, date: Date): void => {
     const userText = userTextFromPayload(payload);
     workObserver.visit(event, date, ownsWorkEvent(payload));
     if (userText) {
@@ -1420,115 +1415,231 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
       const promptTask = promptTurnId ? (openTasks.get(promptTurnId) ?? null) : latestOpenTask();
       recordPrompt(promptTask, userText, date, canonical);
     }
-    if (payload.type === 'task_started') {
-      const turnId = nonEmpty(payload.turn_id) ?? `turn-${lines}`;
-      if (CODEX_EXTERNAL_IMPORT_TASK_ID.test(turnId)) {
-        // Another harness's turn: counted so the rollout can be classified,
-        // never opened, so neither its prompts nor the zero-usage token_count
-        // that follows it become Codex evidence or mark the session partial.
-        session.importedTasks += 1;
+  };
+
+  const isReplayedTaskStart = (
+    syntheticChildTask: boolean,
+    ambiguousChildTask: boolean,
+    recordedTaskStart: Date | null,
+    recordedStartPredatesRollout: boolean,
+    rolloutStart: Date | null,
+    date: Date,
+  ): boolean =>
+    syntheticChildTask ||
+    ambiguousChildTask ||
+    Boolean(
+      recordedTaskStart &&
+        recordedStartPredatesRollout &&
+        (childRollout && rolloutStart ? rolloutStart.getTime() : date.getTime()) - recordedTaskStart.getTime() >
+          CODEX_REPLAYED_TASK_EVENT_LAG_MS,
+    );
+
+  const startTask = (payload: Record<string, unknown>, date: Date): void => {
+    const turnId = nonEmpty(payload.turn_id) ?? `turn-${lines}`;
+    if (CODEX_EXTERNAL_IMPORT_TASK_ID.test(turnId)) {
+      // Another harness's turn: counted so the rollout can be classified,
+      // never opened, so neither its prompts nor the zero-usage token_count
+      // that follows it become Codex evidence or mark the session partial.
+      session.importedTasks += 1;
+      return;
+    }
+    const recordedTaskStart = unixDate(payload.started_at);
+    const taskStart = recordedTaskStart ?? date;
+    const replayed = classifyStartedTask(turnId, recordedTaskStart, date);
+    openStartedTask(turnId, replayed, taskStart, date);
+  };
+
+  /** Settles child-token ownership and replay for a started task; returns whether it is a replay. */
+  const classifyStartedTask = (turnId: string, recordedTaskStart: Date | null, date: Date): boolean => {
+    const rolloutStart = childRollout ? childBirth : session.start;
+    const recordedStartPredatesRollout = Boolean(recordedTaskStart && rolloutStart && recordedTaskStart < rolloutStart);
+    const syntheticChildTask = childRollout && CODEX_SYNTHETIC_TASK_ID.test(turnId);
+    if (childRollout && !syntheticChildTask) {
+      finishUnanchoredTokens(turnId === unanchoredTokens?.turnId ? recordedTaskStart : null, null);
+      childTokenTurnId = turnId;
+    }
+    const ambiguousChildTask = childRollout && inheritedHistory && !recordedTaskStart;
+    if (ambiguousChildTask) {
+      session.reportPartial = true;
+    }
+    const replayed = isReplayedTaskStart(
+      syntheticChildTask,
+      ambiguousChildTask,
+      recordedTaskStart,
+      recordedStartPredatesRollout,
+      rolloutStart,
+      date,
+    );
+    if (childRollout && replayed) {
+      inheritedHistory = true;
+    }
+    const hasReplayLineage = session.parent !== null || session.threadSource === 'subagent';
+    if (replayed && !hasReplayLineage) {
+      session.durationPartial = true;
+      session.reportPartial = true;
+    }
+    return replayed;
+  };
+
+  /** Opens the task unless the bounded open-task map is full of tasks that already have context. */
+  const openStartedTask = (turnId: string, replayed: boolean, taskStart: Date, date: Date): void => {
+    if (!(openTasks.has(turnId) || openTasks.size < CODEX_DETAIL_MAX_TURNS)) {
+      const oldestUnanchored = [...openTasks].find(([, task]) => !task.hasContext)?.[0];
+      if (!oldestUnanchored) {
         return;
       }
-      const recordedTaskStart = unixDate(payload.started_at);
-      const taskStart = recordedTaskStart ?? date;
-      const rolloutStart = childRollout ? childBirth : session.start;
-      const recordedStartPredatesRollout = Boolean(
-        recordedTaskStart && rolloutStart && recordedTaskStart < rolloutStart,
-      );
-      const syntheticChildTask = childRollout && CODEX_SYNTHETIC_TASK_ID.test(turnId);
-      if (childRollout && !syntheticChildTask) {
-        finishUnanchoredTokens(turnId === unanchoredTokens?.turnId ? recordedTaskStart : null, null);
-        childTokenTurnId = turnId;
-      }
-      const ambiguousChildTask = childRollout && inheritedHistory && !recordedTaskStart;
-      if (ambiguousChildTask) {
-        session.reportPartial = true;
-      }
-      const replayed =
-        syntheticChildTask ||
-        ambiguousChildTask ||
-        Boolean(
-          recordedTaskStart &&
-            recordedStartPredatesRollout &&
-            (childRollout && rolloutStart ? rolloutStart.getTime() : date.getTime()) - recordedTaskStart.getTime() >
-              CODEX_REPLAYED_TASK_EVENT_LAG_MS,
-        );
-      if (childRollout && replayed) {
-        inheritedHistory = true;
-      }
-      const hasReplayLineage = session.parent !== null || session.threadSource === 'subagent';
-      if (replayed && !hasReplayLineage) {
-        session.durationPartial = true;
-        session.reportPartial = true;
-      }
-      if (!(openTasks.has(turnId) || openTasks.size < CODEX_DETAIL_MAX_TURNS)) {
-        const oldestUnanchored = [...openTasks].find(([, task]) => !task.hasContext)?.[0];
-        if (!oldestUnanchored) {
-          return;
-        }
-        openTasks.delete(oldestUnanchored);
-      }
-      openTasks.set(turnId, {
-        canonicalPromptSeen: false,
-        effort: currentEffort,
-        hasContext: false,
-        lastPromptAt: null,
-        lastPromptNormalized: null,
-        model: currentModel,
-        modelTokens: new Map(),
-        observedEnd: date < taskStart ? taskStart : date,
-        pendingResponsePrompt: null,
-        promptIds: [],
-        replayed,
-        start: taskStart,
-        tokens: emptyDetailTokens(),
-        tools: 0,
-        turnId,
+      openTasks.delete(oldestUnanchored);
+    }
+    openTasks.set(turnId, {
+      canonicalPromptSeen: false,
+      effort: currentEffort,
+      hasContext: false,
+      lastPromptAt: null,
+      lastPromptNormalized: null,
+      model: currentModel,
+      modelTokens: new Map(),
+      observedEnd: date < taskStart ? taskStart : date,
+      pendingResponsePrompt: null,
+      promptIds: [],
+      replayed,
+      start: taskStart,
+      tokens: emptyDetailTokens(),
+      tools: 0,
+      turnId,
+    });
+  };
+
+  const releaseChildTurn = (payload: Record<string, unknown>, turnId: string | null): void => {
+    if (turnId === unanchoredTokens?.turnId) {
+      const completedAt = unixDate(payload.completed_at);
+      const duration = parseNonNegativeSafeInteger(payload.duration_ms);
+      const startedAt =
+        unixDate(payload.started_at) ??
+        (completedAt && duration.ok ? new Date(completedAt.getTime() - duration.value) : null);
+      finishUnanchoredTokens(startedAt, completedAt);
+    }
+    if (turnId === childTokenTurnId) {
+      childTokenTurnId = null;
+    }
+  };
+
+  const closeContextualTask = (task: MutableCodexTask, taskEnd: Date, payload: Record<string, unknown>): void => {
+    flushResponsePrompt(task);
+    const parsedDuration = parseNonNegativeSafeInteger(payload.duration_ms);
+    const recordedDurationMs = parsedDuration.ok ? parsedDuration.value : taskEnd.getTime() - task.start.getTime();
+    const turnEnd = new Date(Math.min(taskEnd.getTime(), task.start.getTime() + recordedDurationMs));
+    const durationMs = turnEnd.getTime() - task.start.getTime();
+    if (!evidenceOnly) {
+      observedTaskIntervals.push({
+        endMs: turnEnd.getTime(),
+        startMs: task.start.getTime(),
       });
     }
+    anchoredTaskCount += 1;
+    if (captureDetail && completedTasks.length < CODEX_DETAIL_MAX_TURNS) {
+      completedTasks.push({ ...task, durationMs, end: turnEnd });
+    }
+    taskObservedEnd = !taskObservedEnd || taskEnd > taskObservedEnd ? taskEnd : taskObservedEnd;
+    ensurePhase(taskEnd);
+  };
+
+  const completeTask = (payload: Record<string, unknown>, date: Date): void => {
+    const turnId = nonEmpty(payload.turn_id);
+    if (childRollout) {
+      releaseChildTurn(payload, turnId);
+    }
+    const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+    const taskEnd = unixDate(payload.completed_at) ?? date;
+    if (task && taskEnd >= task.start) {
+      openTasks.delete(task.turnId);
+      if (task.hasContext) {
+        closeContextualTask(task, taskEnd, payload);
+      }
+    }
+  };
+
+  const visitEvent = (event: Record<string, unknown>, prefix: string, skillCatalogueLine: boolean): void => {
+    const payload = isRecord(event.payload) ? event.payload : {};
+    const timestamp =
+      typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) {
+      recordUndatedEvent(event, payload, prefix, skillCatalogueLine);
+      return;
+    }
+    visitDatedEvent(event, payload, date, prefix, skillCatalogueLine);
+  };
+
+  const visitDatedEvent = (
+    event: Record<string, unknown>,
+    payload: Record<string, unknown>,
+    date: Date,
+    prefix: string,
+    skillCatalogueLine: boolean,
+  ): void => {
+    extendSessionSpan(date);
+
+    if (isCodexToolCallPrefix(prefix)) {
+      observeToolCall(payload, date);
+    }
+    if (skillCatalogueLine && !evidenceOnly) {
+      observeCodexSkillCatalogue(codexDeveloperMessageText(payload), date);
+    }
+    const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
+    if (sessionMetaId && !session.id) {
+      applySessionMeta(sessionMetaId, payload, date);
+    }
+    if (event.type === 'turn_context' && typeof payload.model === 'string') {
+      applyTurnContext(payload, payload.model, date);
+    }
+    visitWorkAndPrompt(event, payload, date);
+    visitTaskRecord(payload, date);
+  };
+
+  const visitTaskRecord = (payload: Record<string, unknown>, date: Date): void => {
+    // `startTask` returns early for an imported or unadmitted task; the record
+    // types tested after it cannot match a task_started payload either way.
+    if (payload.type === 'task_started') {
+      startTask(payload, date);
+    }
     if (payload.type === 'task_complete' || payload.type === 'turn_aborted') {
-      const turnId = nonEmpty(payload.turn_id);
-      if (childRollout && turnId === unanchoredTokens?.turnId) {
-        const completedAt = unixDate(payload.completed_at);
-        const duration = parseNonNegativeSafeInteger(payload.duration_ms);
-        const startedAt =
-          unixDate(payload.started_at) ??
-          (completedAt && duration.ok ? new Date(completedAt.getTime() - duration.value) : null);
-        finishUnanchoredTokens(startedAt, completedAt);
-      }
-      if (childRollout && turnId === childTokenTurnId) {
-        childTokenTurnId = null;
-      }
-      const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
-      const taskEnd = unixDate(payload.completed_at) ?? date;
-      if (task && taskEnd >= task.start) {
-        openTasks.delete(task.turnId);
-        if (task.hasContext) {
-          flushResponsePrompt(task);
-          const parsedDuration = parseNonNegativeSafeInteger(payload.duration_ms);
-          const recordedDurationMs = parsedDuration.ok
-            ? parsedDuration.value
-            : taskEnd.getTime() - task.start.getTime();
-          const turnEnd = new Date(Math.min(taskEnd.getTime(), task.start.getTime() + recordedDurationMs));
-          const durationMs = turnEnd.getTime() - task.start.getTime();
-          if (!evidenceOnly) {
-            observedTaskIntervals.push({
-              endMs: turnEnd.getTime(),
-              startMs: task.start.getTime(),
-            });
-          }
-          anchoredTaskCount += 1;
-          if (captureDetail && completedTasks.length < CODEX_DETAIL_MAX_TURNS) {
-            completedTasks.push({ ...task, durationMs, end: turnEnd });
-          }
-          taskObservedEnd = !taskObservedEnd || taskEnd > taskObservedEnd ? taskEnd : taskObservedEnd;
-          ensurePhase(taskEnd);
-        }
-      }
+      completeTask(payload, date);
     }
     if (payload.type === 'token_count' && !evidenceOnly) {
       recordTokens(payload, date);
     }
+  };
+
+  const visit = (line: string): void => {
+    if (!line) {
+      return;
+    }
+    lines++;
+    const prefix = codexLinePrefix(line);
+    const skillCatalogueLine = isCodexSkillCatalogueLine(prefix, line);
+    // A line the cheap prefix gate rejects is dropped without paying for a JSON
+    // parse: on a full history sweep that parse is the dominant cost, and a
+    // rejected line is not skill evidence to begin with. What a line that is
+    // admitted and then fails to parse costs, and to which channel, is decided
+    // by shape rather than by admission (`recordUnparseableLine`).
+    if (
+      !(
+        shouldParseCodexPrefix(prefix) ||
+        isCodexToolCallPrefix(prefix) ||
+        skillCatalogueLine ||
+        workObserver.acceptsOutput(prefix)
+      )
+    ) {
+      skippedLines++;
+      return;
+    }
+    parsedLines++;
+    const event = safeJSON(line);
+    if (!event) {
+      recordUnparseableLine(prefix, skillCatalogueLine);
+      return;
+    }
+    visitEvent(event, prefix, skillCatalogueLine);
   };
 
   const observeCodexSkillExec = (payload: Record<string, unknown>, at: Date): void => {
@@ -1568,6 +1679,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
    * that never declared an id cannot key an observation, so its signals are
    * dropped here — the same rule the usage-row path applies to such a session.
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const materializeSkillObservations = (): void => {
     const sessionId = session.id;
     if (!sessionId) {
@@ -1646,6 +1758,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     };
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const finalize = (): void => {
     if (finalized) {
       return;
@@ -1743,6 +1856,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
   };
 
   const detailTurns = (): SessionDetailTurn[] => {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     return detailTasks().map((task, index) => {
       const model = task.model === 'codex' ? session.model : task.model;
       // Same pricing convention as the phases above: each model in effect
@@ -1778,6 +1892,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     });
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const detail = (links: CodexChildLinks = codexChildLinksWithoutDatabase()): SessionDetail | null => {
     if (!(captureDetail && session.id && session.start && session.end)) {
       return null;

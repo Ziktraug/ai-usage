@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import {
   type CanonicalInstant,
   canonicalInstantFromDate,
@@ -1076,6 +1077,7 @@ export const createSyntheticWorkThreadStore = (
     appendEvent(record, { kind: 'link-added', linkKey: input.key });
     return true;
   };
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const apply = (command: WorkThreadCommand): WorkThreadCommandResult | WorkIntakeCommandResult => {
     if (command.op === 'dismiss-intake') {
       const applied = dismissedIntake.has(command.key) !== command.dismissed;

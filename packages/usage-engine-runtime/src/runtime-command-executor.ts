@@ -59,6 +59,7 @@ export const createRuntimeCommandExecutor = (
   const runWithoutObservation = async (
     command: UsageEngineCommand,
     signal: AbortSignal,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ): Promise<UsageEngineCommandOutput> => {
     const runSourceSoftly = async (sourceId: CollectionSourceId): Promise<SourceControlView> => {
       try {

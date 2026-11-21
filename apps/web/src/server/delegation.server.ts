@@ -57,9 +57,9 @@ import {
   parseDelegationSettingsView,
 } from '@ai-usage/web-contract/delegation';
 import { Effect } from 'effect';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import type { DelegationFailure, DelegationOutcome } from '../lib/server/rpc/delegation';
 import { delegationOk } from '../lib/server/rpc/delegation';
-import type { RuntimeMode } from '../runtime-mode';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { getServerRuntimeMode } from './runtime-mode.server';
 import {

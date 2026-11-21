@@ -276,6 +276,7 @@ export const createUsageEngineControlHandler = ({
   const createEventStream = async (request: Request, deadline: RequestDeadline): Promise<Response> =>
     await eventHub.createResponse(request, async () => await deadline.run(runtime.status));
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const handle = async (request: Request, peerAddress: string | null): Promise<Response> => {
     const rejected = authorize(request, peerAddress);
     if (rejected) {

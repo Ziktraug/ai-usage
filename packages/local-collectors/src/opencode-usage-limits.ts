@@ -99,6 +99,7 @@ export const createOpenCodeUsageLimitsBatchSource = (
   const command = options.command ?? 'opencode';
   return {
     collect: (request) =>
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       Effect.gen(function* () {
         if (command.includes('/') && !path.isAbsolute(command)) {
           return yield* collectionError('unsupported', 'The OpenCode executable must be absolute or a name on PATH.');

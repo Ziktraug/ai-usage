@@ -280,6 +280,7 @@ const isWaitingAttention = (attention: WorkRoot['attention']): attention is Work
   attention === 'human-request' || attention === 'external-wait';
 
 /** Validates and normalizes a scope; returns the problem as a path-free sentence when it is not usable. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const normalizeWorkContextScope = (scope: WorkContextScope): WorkContextAppliedScope | string => {
   if (scope.kind === 'checkouts') {
     if (scope.checkoutPaths.length === 0 || scope.checkoutPaths.length > WORK_CONTEXT_BOUNDS.maxScopeCheckouts) {

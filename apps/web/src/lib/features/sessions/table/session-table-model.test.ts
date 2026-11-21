@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { USAGE_UNAVAILABLE_HINT } from '../../../foundation/presentation/report-value';
 import {
   columnVisibilityForSessionPreset,
   sessionColumnPresets,
   sessionColumnSchema,
-} from '../../../../session-table-schema';
-import { USAGE_UNAVAILABLE_HINT } from '../../../foundation/presentation/report-value';
+} from '../../../foundation/session/session-table-schema';
 import {
   applySessionFieldFilter,
   projectSessionCell,

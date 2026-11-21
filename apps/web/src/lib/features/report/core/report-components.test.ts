@@ -5,12 +5,12 @@ import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/repor
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import { demoReportPayload } from '../../../../report-data';
-import { toWebReportPayload } from '../../../../web-report-payload';
+import { demoReportPayload } from '../../../foundation/report-data';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
 import { createWebRpcClient } from '../../../rpc/client';
+import { toWebReportPayload } from '../web-report-payload';
 import { acquireLiveReportQueryState } from './report-bootstrap';
 
 const REPORT_FRESHNESS_PATTERN = /Data as of Jun 11, \d{2}:\d{2}/;

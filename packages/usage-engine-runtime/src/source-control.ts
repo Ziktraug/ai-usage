@@ -382,6 +382,7 @@ const runSourceJobBody = (
   source: ScheduledSource,
   decision: { readonly rtkTargetGeneration: number; readonly startedAt: number },
 ): Effect.Effect<SourceExecutionCompletion, never, WideEventResourceService | WideEventService | WideEventSink> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const controller = new AbortController();
     const sourceExecution = withPerfSpan(

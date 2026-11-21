@@ -231,7 +231,6 @@
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
   import type { SessionDetailPhase, SessionDetailResponse } from '@ai-usage/report-core/session-detail';
-  import type { SessionAnalysisError } from '../../../../session-analysis-error';
   import {
     buildSessionTimelineRows,
     buildTimelineScale,
@@ -245,9 +244,10 @@
     sessionDurationSemantics,
     type TimelineScaleMode,
     timelineHasCompressibleGaps,
-  } from '../../../../session-analysis-model';
-  import { buildSessionAnalysisPresentation } from '../../../../session-analysis-presentation';
-  import type { SessionAnalysisTarget } from '../../../../session-analysis-target';
+  } from '../../../foundation/session/session-analysis-model';
+  import type { SessionAnalysisTarget } from '../../../foundation/session/session-analysis-target';
+  import type { SessionAnalysisError } from '../session-analysis-error';
+  import { buildSessionAnalysisPresentation } from '../session-analysis-presentation';
 
   let {
     error: analysisError = null,

@@ -171,6 +171,7 @@ const resolveParent = (
 };
 
 /** Each edge is visited once; malformed chains never recurse or loop. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const detachCycles = (nodes: readonly CampaignMapNode[]): void => {
   const byId = new Map(nodes.map((node) => [node.row.rowId, node]));
   const visited = new Set<string>();
@@ -284,6 +285,7 @@ const observedConcurrency = (nodes: readonly CampaignMapNode[]): number => {
  * omitted parents remain explicit and partial metrics never become exact totals.
  * The model retains only existing published rows and does not alter their facts.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const buildCampaignMap = (input: CampaignMapInput): CampaignMap => {
   const rows = [input.root, ...input.children];
   if (!Number.isSafeInteger(input.totalCount) || input.totalCount < rows.length) {

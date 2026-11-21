@@ -8,23 +8,113 @@ import {
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
-import type {
-  ImportProviderQuotaBatchInput,
-  ProviderQuotaCheckpointUpdate,
-  ProviderQuotaImportItem,
-  ProviderQuotaImportResult,
-  ProviderQuotaSourceState,
-  QueryLatestLocalProviderQuotaObservationsInput,
+import type { ServedRevisionQueryTrace } from './served-revision';
+
+export interface ProviderQuotaCheckpointUpdate {
+  cursor: unknown;
+  cursorKey: string;
+  machineId: string;
+  providerKey: string;
+  sourceKey: string;
+}
+
+export interface ProviderQuotaImportItem {
+  observation: ProviderQuotaObservation;
+  sourceEventKey?: string;
+}
+
+export interface ImportProviderQuotaBatchInput {
+  checkpointUpdates: ProviderQuotaCheckpointUpdate[];
+  dbPath: string;
+  importedAt?: Date;
+  items: ProviderQuotaImportItem[];
+}
+
+export interface ProviderQuotaImportResult {
+  coalesced: number;
+  inserted: number;
+  unchanged: number;
+}
+
+export interface RetainProviderQuotaObservationsInput {
+  dbPath: string;
+  /** Observations older than this window are downsampled; defaults to 30 days. */
+  fullResolutionMs?: number;
+  /** Downsampling keeps the earliest observation per stream and per this bucket; defaults to one hour. */
+  granularityMs?: number;
+  now?: number;
+}
+
+export interface RetainProviderQuotaObservationsResult {
+  deleted: number;
+}
+
+export interface QueryProviderQuotaObservationsInput {
+  accountScope?: string | null;
+  dbPath: string;
+  from: string;
+  machineId?: string;
+  maximumObservations?: number;
+  providerKey?: string;
+  to: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export interface StoredProviderQuotaObservation {
+  firstObservedAt: string;
+  id: number;
+  lastObservedAt: string;
+  observation: ProviderQuotaObservation;
+}
+
+export interface QueryProviderQuotaObservationsResult {
+  observations: StoredProviderQuotaObservation[];
+  skipped: number;
+  truncated: boolean;
+}
+
+export interface QueryProviderQuotaSourceStateInput {
+  cursorKey: string;
+  dbPath: string;
+  machineId: string;
+  providerKey: string;
+  sourceKey: string;
+}
+
+export interface QueryProviderQuotaSourceStatesInput {
+  /** Select a bounded group without loading the source's lifetime checkpoint catalogue. */
+  cursorKeys?: readonly string[];
+  dbPath: string;
+  machineId: string;
+  maximumStates?: number;
+  providerKey: string;
+  sourceKey: string;
+}
+
+export interface QueryLatestProviderQuotaObservationsInput {
+  dbPath: string;
+  machineId?: string;
+  maximumObservations?: number;
+  providerKey?: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export type QueryLatestLocalProviderQuotaObservationsInput = Omit<
   QueryLatestProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsResult,
-  QueryProviderQuotaSourceStateInput,
-  QueryProviderQuotaSourceStatesInput,
-  RecordProviderQuotaSourceAttemptInput,
-  RetainProviderQuotaObservationsInput,
-  RetainProviderQuotaObservationsResult,
-  StoredProviderQuotaObservation,
-} from './index';
+  'machineId'
+>;
+
+export interface ProviderQuotaSourceState extends Omit<QueryProviderQuotaSourceStateInput, 'dbPath'> {
+  cursor: unknown;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  updatedAt: string;
+}
+
+export interface RecordProviderQuotaSourceAttemptInput extends QueryProviderQuotaSourceStateInput {
+  attemptedAt?: Date;
+  succeeded: boolean;
+}
 
 const MAX_PROVIDER_QUOTA_OBSERVATIONS = 10_000;
 const MAX_PROVIDER_QUOTA_SOURCE_STATES = 1000;
@@ -307,6 +397,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result: ProviderQuotaImportResult = { coalesced: 0, inserted: 0, unchanged: 0 };
           const updatedAt = (input.importedAt ?? new Date()).toISOString();
@@ -519,6 +610,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
   ): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const maximum = input.maximumObservations ?? MAX_PROVIDER_QUOTA_OBSERVATIONS;
           if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_PROVIDER_QUOTA_OBSERVATIONS)) {
@@ -657,6 +749,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
   ): Effect.Effect<ProviderQuotaSourceState[], UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const maximumStates = input.maximumStates ?? MAX_PROVIDER_QUOTA_SOURCE_STATES;
           const cursorKeys = input.cursorKeys;
@@ -719,6 +812,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     db: SqliteDatabase,
     input: QueryLatestProviderQuotaObservationsInput,
     operation: string,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ): QueryProviderQuotaObservationsResult => {
     const maximum = input.maximumObservations ?? MAX_PROVIDER_QUOTA_OBSERVATIONS;
     if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_PROVIDER_QUOTA_OBSERVATIONS)) {
@@ -919,6 +1013,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
   ): Effect.Effect<RetainProviderQuotaObservationsResult, UsageStoreError> =>
     withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const now = input.now ?? Date.now();
           const fullResolutionMs = input.fullResolutionMs ?? DEFAULT_PROVIDER_QUOTA_FULL_RESOLUTION_MS;

@@ -480,6 +480,7 @@ const registryDocument = (
   input: { readonly epochMs: number; readonly repository: string },
   ordinal: number,
   earlier: DocumentTurn | null = null,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Record<string, unknown> => {
   const lastActivityAt = input.epochMs - (earlier?.turn.ageHours ?? spec.ageHours) * HOUR_MS;
   const createdAt = input.epochMs - (spec.createdHoursAgo ?? spec.ageHours + 2) * HOUR_MS;

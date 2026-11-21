@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import {
   type CanonicalInstant,
   canonicalInstantFromDate,
@@ -13,7 +14,7 @@ import type {
   WorkRoot,
   WorkRootSession,
 } from '@ai-usage/report-core/work-attention';
-import { demoReportPayload } from '../../../report-data';
+import { demoReportPayload } from '../../foundation/report-data';
 import { workRequest } from '../../query/options/work';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
 import { WORK_DEMO_REVISION, WORK_DEMO_TIME } from './work-synthetic';

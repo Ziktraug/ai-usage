@@ -248,6 +248,7 @@ const renderReport = (args: Args, report: Awaited<ReturnType<typeof readServedUs
     ? renderUsagePayloadForCli(report.payload)
     : renderUsageReportForCli(report.rows, args, undefined, report.warnings);
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
   const command = yield* parseCommand(runtime.argv);

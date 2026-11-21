@@ -154,6 +154,7 @@
   };
   // Closing a detail restores focus without shifting a row that is already partly visible.
   export const focusKey = (key: string): Promise<boolean> => focusRow(key, false, false);
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const keydown = (event: KeyboardEvent): void => {
     if (!(event.target instanceof HTMLElement) || event.altKey || event.ctrlKey || event.metaKey) {
       return;
@@ -243,6 +244,7 @@
       previousKeys = currentKeys;
     }
     previousOffsets = layout;
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     tick().then(() => {
       if (version !== layoutVersion || !visible(host)) {
         return;

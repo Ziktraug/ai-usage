@@ -465,6 +465,7 @@ export const createFileWideEventSink = (
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const drainQueue = async (): Promise<void> => {
     workerRunning = true;
     while (!(circuit === 'open' || disposed)) {

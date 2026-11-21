@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash, randomUUID } from 'node:crypto';
 import {
   type FocusedReportSupport,
@@ -22,34 +23,11 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { parseWorkThreadLinkKey, pullRequestLinkKey, sessionLinkKey } from '@ai-usage/report-core/work-thread';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
-import type {
-  CurrentServedLocalProjectSources,
-  PublishServedReportRevisionCapture,
-  PublishServedReportRevisionInput,
-  PublishServedReportRevisionResult,
-  QueryServedReportRevisionInput,
-  QueryServedReportRevisionLocalSnapshotInput,
-  QueryServedRevisionDataInput,
-  QueryServedSessionPullRequestLinksInput,
-  RetainServedReportRevisionsInput,
-  RetainServedReportRevisionsResult,
-  ServedLocalProjectSource,
-  ServedReportPublicationPhase,
-  ServedReportReadPhase,
-  ServedReportRevisionBootstrap,
-  ServedReportRevisionLocalSnapshot,
-  ServedReportRevisionManifest,
-  ServedReportRevisionPortableConfig,
-  ServedReportRevisionRows,
-  ServedReportRevisionSlices,
-  ServedReportRevisionSupport,
-  ServedSessionPullRequestLink,
-  ServedSessionPullRequestLinks,
-  UsageStoreGenerations,
-} from './index';
+import type { UsageStoreGenerations } from './report-rows';
 import {
   executeServedRevisionQuery,
   parseServedRevisionQuery,
+  type ServedRevisionQueryKind,
   type ServedRevisionQueryResult,
   validateServedRevisionQueryCatalog,
 } from './served-query-catalog';
@@ -58,9 +36,193 @@ import {
   insertServedReportProjection,
   SERVED_REPORT_PROJECTION_SCHEMA_VERSION,
   SERVED_REPORT_REVISION_PATTERN,
+  type ServedRevisionQueryTrace,
   type ServedRevisionReadDatabase,
 } from './served-revision';
 import type { DeclaredWorkThreadSession } from './work-thread-store';
+
+export interface ServedReportRevisionManifest {
+  readonly captureFingerprint: string;
+  readonly expiresAt: number;
+  readonly generatedAt: string;
+  readonly machineFleetGeneration: number;
+  readonly projectionBytes: number;
+  readonly publishedAt: number;
+  readonly revision: string;
+  readonly rowCount: number;
+  readonly rowsBytes: number;
+  readonly supportBytes: number;
+  readonly usageStoreGeneration: number;
+}
+
+export interface PublishServedReportRevisionCapture {
+  readonly configFingerprint: string;
+  readonly generatedAt: string;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
+  readonly rows: readonly SerializedRow[];
+  readonly sourceAuthorities: readonly SessionDetailSourceAuthority[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface PublishServedReportRevisionContext {
+  readonly generations: UsageStoreGenerations;
+}
+
+export interface PublishServedRevisionValidationCache {
+  revision: string | null;
+}
+
+export interface PublishServedReportRevisionInput {
+  readonly assemble: (
+    context: PublishServedReportRevisionContext,
+  ) => Promise<PublishServedReportRevisionCapture> | PublishServedReportRevisionCapture;
+  readonly dbPath: string;
+  readonly expiresAt?: number;
+  readonly now?: number;
+  readonly renewalWindowMs?: number;
+  readonly revision: string;
+  /** A revision validated once by this process stays trusted; it is immutable once staged. */
+  readonly revisionValidationCache?: PublishServedRevisionValidationCache;
+  readonly ttlMs?: number;
+  /**
+   * Config fingerprint observed by the caller just before publishing. When it and both store
+   * generations match the current revision, the publication renews without assembling a capture.
+   */
+  readonly unchangedConfigFingerprint?: string;
+}
+
+export interface PublishServedReportRevisionResult {
+  readonly changed: boolean;
+  readonly manifest: ServedReportRevisionManifest;
+  readonly renewed: boolean;
+}
+
+export interface QueryServedReportRevisionInput {
+  readonly dbPath: string;
+  readonly now?: number;
+  readonly revision?: string;
+  readonly trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export interface QueryServedRevisionDataInput extends QueryServedReportRevisionInput {
+  readonly kind: ServedRevisionQueryKind;
+  readonly request: unknown;
+  readonly revision: string;
+}
+
+export interface ServedReportRevisionSlices {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionRows {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+}
+
+export interface ServedReportRevisionSupport {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionBootstrap {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly support: FocusedSupportResult;
+}
+
+export interface QueryServedReportRevisionLocalSnapshotInput extends QueryServedReportRevisionInput {
+  readonly revision: string;
+}
+
+export interface ServedReportRevisionLocalSnapshot {
+  readonly machine: UsageMachine;
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionPortableConfig {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
+}
+
+export interface ServedLocalProjectSource {
+  readonly label: string;
+  readonly machineId: string;
+  readonly machineLabel: string;
+  readonly project: string;
+  /**
+   * The published rows' `projectSourceId` (first row of the group), which a
+   * linked worktree inherits from its parent repository; null when the rows
+   * carry none. `sourcePath` stays the physical working-tree path.
+   */
+  readonly projectSourceId: string | null;
+  readonly sessions: number;
+  readonly sourcePath: string;
+}
+
+export interface CurrentServedLocalProjectSources {
+  readonly revision: string;
+  readonly sources: readonly ServedLocalProjectSource[];
+}
+
+/** A pull request a local Session explicitly recorded (`source.vcs.pullRequests`), never inferred. */
+export interface ServedSessionPullRequestLink {
+  readonly host: string;
+  readonly number: number;
+  /** `owner/name` as read from the pull request URL. */
+  readonly repository: string;
+  readonly url: string;
+}
+
+export interface QueryServedSessionPullRequestLinksInput extends Omit<QueryServedReportRevisionInput, 'revision'> {
+  /** Distinct links returned at most; more sets `truncated`. Default 200, maximum 500. */
+  readonly limit?: number;
+  /** Restrict identities before applying bounds; an engine only attaches its own machine's sessions. */
+  readonly machineId?: string;
+  /** Only Sessions active within this many days before `now`. Default 14, maximum 365. */
+  readonly sinceDays?: number;
+}
+
+export interface ServedSessionPullRequestLinks {
+  /** Exact declaring session/PR pairs, independently bounded to 500 per read. */
+  readonly declarations: readonly import('./work-thread-store').DeclaredWorkThreadSession[];
+  readonly links: readonly ServedSessionPullRequestLink[];
+  readonly revision: string;
+  readonly scannedRows: number;
+  readonly truncated: boolean;
+}
+
+export interface RetainServedReportRevisionsInput {
+  readonly abandonedAfterMs?: number;
+  readonly dbPath: string;
+  readonly maximumBytes?: number;
+  readonly maximumRevisions?: number;
+  readonly maximumRows?: number;
+  readonly now?: number;
+}
+
+export interface RetainServedReportRevisionsResult {
+  readonly deletedBytes: number;
+  readonly deletedRevisions: number;
+  readonly deletedRows: number;
+  readonly expiredRevisions: number;
+}
+
+export type ServedReportPublicationPhase =
+  | 'after-commit'
+  | 'after-complete'
+  | 'after-generation-read'
+  | 'after-metadata'
+  | 'after-pointer'
+  | 'after-projection'
+  | 'after-support'
+  | 'after-validation';
+
+export type ServedReportReadPhase = 'after-resolve';
 
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
@@ -579,6 +741,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
   ): Effect.Effect<Result, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (database) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           database.exec('BEGIN');
           try {
@@ -683,6 +846,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
   const queryCurrentServedLocalProjectSources = (
     input: Omit<QueryServedReportRevisionInput, 'revision'>,
   ): Effect.Effect<CurrentServedLocalProjectSources, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     readServedReportRevision(input, ({ database, revision }) => {
       const records = database.query(`
           SELECT source_row_json
@@ -786,6 +950,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
         ),
       );
     }
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     return readServedReportRevision(input, ({ database, revision }) => {
       const since = (input.now ?? Date.now()) - sinceDays * MILLISECONDS_PER_DAY;
       const records = database.query(`
@@ -1156,6 +1321,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
       Effect.flatMap((options) =>
         withUsageStoreWriter(input.dbPath, (database) =>
           Effect.tryPromise({
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             try: async () => {
               let expectedCommittedResult: PublishServedReportRevisionResult | undefined;
               database.exec('BEGIN IMMEDIATE');

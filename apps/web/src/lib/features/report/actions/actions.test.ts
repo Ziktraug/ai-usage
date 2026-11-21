@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dashboardSearchDefaultsFor } from '../../../../dashboard-search';
+import { dashboardSearchDefaultsFor } from '../../../foundation/dashboard/dashboard-search';
 import { campaignRenameMutation, campaignResetMutation, preserveCampaignFilterIdentity } from './campaign';
 import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from './project';
 import { copyExactBreakdownUrl, exportVisibleBreakdown, type SharingEnvironment } from './sharing';

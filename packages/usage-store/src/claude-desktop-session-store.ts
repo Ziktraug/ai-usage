@@ -511,6 +511,7 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result = { inserted: 0, skipped: 0, unchanged: 0, updated: 0 };
           const importedAt = (input.collectedAt ?? new Date()).toISOString();
@@ -614,6 +615,7 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
              * counts it as refused, and this sweep's own observation replaces it only when it names
              * the same declaration.
              */
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             const recordDeclarationHistory = (observation: ClaudeDesktopSessionObservation): void => {
               const records = sessionDeclarations.all(
                 observation.machineId,
@@ -783,6 +785,7 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
   ): Effect.Effect<QueryClaudeDesktopSessionsResult, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const limit = input.limit ?? MAX_CLAUDE_DESKTOP_SESSION_READ;
           const since =
@@ -878,6 +881,7 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
   ): Effect.Effect<QueryClaudeDesktopTurnDeclarationsResult, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const ids = input.desktopSessionIds;
           if (
@@ -952,6 +956,7 @@ export const createClaudeDesktopSessionStore = (dependencies: ClaudeDesktopSessi
   }): Effect.Effect<number, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           if (input.scope !== undefined && !validWorkSessionReadScope(input.scope)) {
             throw usageStoreError('countClaudeDesktopSessions', input.dbPath, 'Invalid Work scope', 'invalid-input');

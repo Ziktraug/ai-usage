@@ -6,7 +6,7 @@ import type {
   FocusedTimelineSeries,
 } from '@ai-usage/report-core/focused-report-query';
 import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
-import type { ResolvedTimelineMetric, TimelineValue } from '../../../../overview-model';
+import type { ResolvedTimelineMetric, TimelineValue } from '../../../foundation/overview-model';
 import { fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   aggregateApiPriceProvenance,

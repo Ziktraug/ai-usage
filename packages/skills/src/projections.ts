@@ -259,6 +259,7 @@ export const planProjection = (
   skill: SourceSkill,
   target: SkillTarget,
   projection: Projection | undefined,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ProjectionAction => {
   const expectedPath = projection?.expectedPath ?? path.join(target.path, skill.name);
   if (projection === undefined) {

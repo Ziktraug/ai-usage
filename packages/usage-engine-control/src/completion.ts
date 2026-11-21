@@ -45,6 +45,7 @@ export const executeUsageEngineCommandToCompletion = async (
   control: UsageEngineControlClient,
   command: UsageEngineCommand,
   options: ExecuteUsageEngineCommandOptions,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<UsageEngineCommandCompletion> => {
   const commandId = parseUsageEngineCommandId(options.commandId ?? randomUUID());
   const timeoutMs = options.timeoutMs ?? USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS;

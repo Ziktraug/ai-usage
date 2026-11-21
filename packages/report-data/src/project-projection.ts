@@ -335,6 +335,7 @@ export const buildProjectProjection = (
   candidates: readonly AuthorizedSourceRow[],
   groups: readonly ProjectGroupConfig[] = [],
   legacyAliases: readonly ProjectAliasEntry[] = [],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ProjectProjection => {
   const resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(defaultReadGitFile);
   const sources = collectProjectSources(candidates, false, defaultReadGitFile, resolveCanonicalProjectSource);

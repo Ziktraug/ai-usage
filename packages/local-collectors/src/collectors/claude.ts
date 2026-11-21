@@ -354,6 +354,7 @@ const readClaudeHistoryFallbacks = (
     }
 
     const sessions = new Map<string, ClaudeHistoryFallback>();
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     yield* storage.readLines(historyFile, (line) => {
       if (!line) {
         return;
@@ -492,6 +493,7 @@ const parseClaudeFile = (
   resolveRepository: ClaudeRepositoryResolver,
   resolveProjectRoot: ClaudeProjectRootResolver,
 ): Effect.Effect<{ lines: number; result: ClaudeFileResult }, LocalHistoryError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const sourceSessionId = path.basename(filePath, '.jsonl');
     const isAgentFile = path.basename(filePath).startsWith('agent-');
@@ -620,6 +622,7 @@ const reconcileClaudeLineage = (
     CollectorRow,
     Pick<ClaudeFileResult, 'declaredChildSourceSessionIds' | 'lineageIncomplete'>
   >,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): { rows: CollectorRow[]; warnings: LocalHistoryWarning[] } => {
   const byIdentity = new Map<string, CollectorRow[]>();
   for (const row of rows) {
@@ -841,6 +844,7 @@ export const collectClaudeResult = Effect.gen(function* () {
 
   const parsedFiles = yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.gen(function* () {
       let lines = 0;
       let parsed = 0;

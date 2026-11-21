@@ -5,7 +5,7 @@ import {
   projectSessionNeighbors,
   projectSessionPage,
 } from '@ai-usage/report-core/session-query';
-import { demoReportPayload } from '../../../../report-data';
+import { demoReportPayload } from '../../../foundation/report-data';
 import { syntheticCampaignRow, syntheticSessionRow } from '../../sessions/table/session-table.fixtures';
 import {
   type CampaignSessionControlsBinding,

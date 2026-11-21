@@ -8,7 +8,7 @@ import {
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { StandardRPCJsonSerializer, StandardRPCSerializer } from '@orpc/client/standard';
 import { InfiniteQueryObserver, keepPreviousData, QueryObserver } from '@tanstack/svelte-query';
-import { demoReportPayload } from '../../../report-data';
+import { demoReportPayload } from '../../foundation/report-data';
 import { createHydratedWebQueryClient } from '../../query/client';
 import { createWebQueryRuntime } from '../../query/composition';
 import { retainedCampaignOptions } from '../../query/options/campaigns';

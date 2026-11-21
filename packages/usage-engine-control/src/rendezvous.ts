@@ -155,6 +155,7 @@ export const usageEngineLoopbackOrigin = (rendezvous: UsageEngineRendezvous): Us
   parseUsageEngineLoopbackOrigin(`http://127.0.0.1:${rendezvous.port}`);
 
 /** Reads the rendezvous JSON through the owner-only, no-symlink, single-link, bounded file checks. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const readRendezvousDocument = async (filePath: string): Promise<unknown> => {
   const absolutePath = path.resolve(filePath);
   const parentPath = path.dirname(absolutePath);

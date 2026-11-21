@@ -11,8 +11,8 @@ import {
   processedTokensReading,
   resolvePeriodBaseline,
   totalApiValueReading,
-} from '../../../../dashboard-model';
-import type { DateBounds, DateRangeMode } from '../../../../date-range';
+} from '../../../foundation/dashboard/dashboard-model';
+import type { DateBounds, DateRangeMode } from '../../../foundation/date-range';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   type ApiValuePresentation,

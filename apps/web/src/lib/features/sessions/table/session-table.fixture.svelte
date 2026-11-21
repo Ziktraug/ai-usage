@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { TitleSource } from '@ai-usage/report-core/types';
-  import type { SessionSurfaceMode } from '../../../../session-surface-mode';
-  import { columnVisibilityForSessionPreset, type SessionColumnPresetId } from '../../../../session-table-schema';
+  import {
+    columnVisibilityForSessionPreset,
+    type SessionColumnPresetId,
+  } from '../../../foundation/session/session-table-schema';
+  import type { SessionSurfaceMode } from '../session-surface-mode';
   import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
   import SessionTable from './session-table.svelte';
 

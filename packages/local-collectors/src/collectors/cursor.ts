@@ -225,6 +225,7 @@ const matchFailure =
  * product of the failure, not of the databases, and must not be cached against the state database.
  */
 const readCursorWorkspaceProjects = (storage: LocalHistoryStorageService, workspaceStorageDir: string | null) =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const projects = new Map<string, string>();
     const warnings: LocalHistoryWarning[] = [];
@@ -325,6 +326,7 @@ const collectCursorSessionsFromDb = (
           );
           yield* withPerfSpan(
             'aiUsage.collect.cursor.parse.composers',
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             Effect.sync(() => {
               for (const row of composerRows) {
                 const id = row.key.slice('composerData:'.length);
@@ -367,6 +369,7 @@ const collectCursorSessionsFromDb = (
           );
           yield* withPerfSpan(
             'aiUsage.collect.cursor.parse.tokens',
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             Effect.sync(() => {
               for (const row of tokenRows) {
                 const parts = String(row.key).split(':');
@@ -425,6 +428,7 @@ const collectCursorSessionsFromDb = (
           );
           yield* withPerfSpan(
             'aiUsage.collect.cursor.parse.userBubbles',
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             Effect.sync(() => {
               for (const row of userRows) {
                 const composerId = String(row.key).split(':')[1];
@@ -457,6 +461,7 @@ const collectCursorSessionsFromDb = (
 
     const sessions = yield* withPerfSpan(
       'aiUsage.collect.cursor.mapSessions',
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       Effect.sync(() => {
         const mappedSessions: CollectedSession[] = [];
         for (const [composerId, current] of agg) {

@@ -1,5 +1,5 @@
 import { parseSessionQueryRequest, type SessionQueryRequest } from '@ai-usage/report-core/session-query';
-import type { DashboardSearch } from '../../../dashboard-search';
+import type { DashboardSearch } from '../../foundation/dashboard/dashboard-search';
 import { CAMPAIGN_PAGE_SIZE } from '../../query/options/campaigns';
 import { INITIAL_REPORT_TIMELINE } from '../report/composition/report-destination';
 import { reportDestinationForSearch } from '../report/composition/report-search';

@@ -4,7 +4,7 @@ import {
   type SourceControlEntryView,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
-import type { SourceControlClientState, SourceControlConnectionState } from '../../../source-control-client';
+import type { SourceControlClientState, SourceControlConnectionState } from '../../foundation/source-control-client';
 import { summarizeSourceControlStatus } from './source-control-summary-model';
 
 const definition = collectionSourceDefinitions[0];

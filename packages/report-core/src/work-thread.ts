@@ -589,6 +589,7 @@ const parseLinkInput = (value: unknown): WorkThreadLinkInput | null => {
 };
 
 /** Validates a command from the wire. Returns `null` for any unknown field or invalid value. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseWorkThreadCommand = (value: unknown): WorkThreadCommand | null => {
   if (!(isRecord(value) && isWorkThreadId(value.commandId))) {
     return null;

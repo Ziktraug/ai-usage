@@ -1,6 +1,6 @@
 import type { SessionPageItem, SessionQueryRange } from '@ai-usage/report-core/session-query';
-import type { DashboardDateRangeSearch } from '../../../dashboard-search';
-import { endOfDay } from '../../../date-range';
+import type { DashboardDateRangeSearch } from '../../foundation/dashboard/dashboard-search';
+import { endOfDay } from '../../foundation/date-range';
 import { rangeBounds } from '../report/range/report-range-model';
 
 /** Presentation closes presets at the revision's calendar day; filtering keeps its existing bounds. */

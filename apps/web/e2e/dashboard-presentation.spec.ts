@@ -3,7 +3,7 @@ import {
   FOCUSED_REPORT_E2E_MODEL_TAIL_KEY,
   FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY,
   FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY,
-} from '../src/focused-report-e2e-fixture';
+} from '../src/lib/features/report/composition/focused-report-e2e-fixture';
 import {
   expect,
   openHydratedReport,

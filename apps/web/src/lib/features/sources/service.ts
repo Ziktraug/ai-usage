@@ -1,5 +1,5 @@
 import type { SourceControlCommand } from '@ai-usage/report-core/source-control';
-import type { SourceControlClient, SourceControlClientState } from '../../../source-control-client';
+import type { SourceControlClient, SourceControlClientState } from '../../foundation/source-control-client';
 import { type PublicationInvalidatedQueryKey, publicationInvalidatedKeys } from '../../query/publication';
 
 /**

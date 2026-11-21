@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { type CanonicalInstant, canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import { normalizeIsoTimestamp } from '@ai-usage/report-core/provider-status';
 import type {
@@ -95,6 +96,7 @@ const episodeOf = (
   session: WorkThreadSessionEvidence['sessions'][number],
   parent: WorkThreadSessionEvidence['sessions'][number] | undefined,
   attestedDelegation = false,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): WorkThreadEpisode | null => {
   const { member, desktop, harness } = session;
   const startedAt = desktop?.createdAt ?? normalizeIsoTimestamp(member.startedAt);
@@ -159,6 +161,7 @@ const episodeOf = (
 const episodesOf = (
   evidence: WorkThreadSessionEvidence,
   links: readonly WorkThreadLink[],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): { episodes: WorkThreadEpisode[]; omitted: boolean; delegatedKeys: ReadonlySet<string> } => {
   const linked = new Set(links.filter((link) => link.kind === 'session').map((link) => link.key));
   const sessions = new Map(evidence.sessions.map((session) => [keyOf(session), session]));
@@ -476,6 +479,7 @@ interface RowFacts {
 }
 
 const readFacts = (dbPath: string, scopes: readonly RowScope[]): Effect.Effect<RowFacts, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const pullRequests = new Map<
       string,
@@ -683,6 +687,7 @@ const readRow = (
   factsRead: RowFacts,
   now: CanonicalInstant,
   storedActivity?: CanonicalInstant,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): RowRead => {
   const active = links.filter((link) => link.detachedAt === null);
   // Sessions read through the task's branch count as linked; the row still lists stored links only.
@@ -922,6 +927,7 @@ const sourcesOf = (
   machineId: string,
   runRowsSkipped: number,
 ): WorkThreadSourceStatus[] => {
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const sources = (Object.keys(SOURCE_IDS) as (keyof typeof SOURCE_IDS)[]).map((source): WorkThreadSourceStatus => {
     const run = runs.find(
       (candidate) => candidate.machineId === machineId && candidate.sourceId === SOURCE_IDS[source],

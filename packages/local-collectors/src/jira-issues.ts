@@ -329,6 +329,7 @@ export interface ParsedJiraIssue {
  * Tolerant read of the assumed `acli jira workitem view --json` body: unknown keys are ignored,
  * the keys used must have the expected types, and a `key` that names another issue is refused.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseJiraIssueView = (stdout: string, key: string): ParsedJiraIssue | null => {
   let value: unknown;
   try {
@@ -486,6 +487,7 @@ const observeKey = (
   context: RunContext,
   key: string,
 ): Effect.Effect<{ readonly observation: JiraIssueObservation; readonly halt: Classification | null }> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const observedAt = canonicalInstantFromDate(context.now());
     const failure = (classification: Classification) => ({

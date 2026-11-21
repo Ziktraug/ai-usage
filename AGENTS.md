@@ -83,6 +83,9 @@ style. What Biome cannot check, and reviews here care about:
   Playwright stack (ADR 0006). No `.only`/`.skip` committed. Assert behaviour
   through a model, store, HTTP or browser seam, never by reading a source file
   and matching its text.
+- Biome caps cognitive complexity at 20 and non-test files at 1,000 lines.
+  `legacy, plan 127` suppressions mark existing debt: remove one when its code
+  is fixed, and never add one for new code.
 
 ## Repository conventions
 

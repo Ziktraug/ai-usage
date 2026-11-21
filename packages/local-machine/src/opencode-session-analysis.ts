@@ -313,6 +313,7 @@ const turnsFromRows = (
   directUserMessageIds: ReadonlySet<string>,
   toolsByMessageId: ReadonlyMap<string, number>,
   dbPath: string,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ParsedOpenCodeTurn[] => {
   const promptIdsByMessage = new Map<string, string[]>();
   const retainedPromptIds = new Set(prompts.map(({ id }) => id));
@@ -418,6 +419,7 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
     throw detailError('readOpenCodeSessionAnalysis.turnLimit', dbPath, 'OpenCode session exceeds its turn limit');
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   return [...groups.values()].map((group, index) => {
     let tokens: SessionDetailTokenCounts = { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 };
     let tools = 0;
@@ -565,6 +567,7 @@ const readOpenCodeDetailRows = (
   dbPath: string,
   sourceSessionId: string,
 ): Effect.Effect<OpenCodeDetailRows | null, LocalHistoryError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const schemaRows = yield* db.all<{ name: unknown }>(OPENCODE_SCHEMA_SQL);
     const tables = new Set(schemaRows.flatMap((row) => (typeof row.name === 'string' ? [row.name] : [])));
@@ -732,6 +735,7 @@ const detailFromDatabase = (
   Effect.acquireUseRelease(
     storage.openDatabase(dbPath),
     (db) =>
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       Effect.gen(function* () {
         const read = yield* readOpenCodeDetailRows(db, dbPath, sourceSessionId);
         if (!read) {

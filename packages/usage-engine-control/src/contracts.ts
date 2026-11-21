@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import {
   type CampaignLabelOverrideMutation,
   MAX_CAMPAIGN_KEY_BYTES,
@@ -531,6 +532,7 @@ export type WebUsageEngineCommand =
       readonly input: UsageEngineInboxFileInput;
     } & MergePreviewProof);
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const parseProjectGroups = (value: unknown): readonly ProjectGroupConfig[] => {
   if (!(Array.isArray(value) && value.length <= usageEngineControlBounds.maxProjectGroups)) {
     return fail('Usage engine project groups are invalid or exceed their limit.');
@@ -737,6 +739,7 @@ export const parseUsageEngineProjectGroupReferenceCommand = (value: unknown): Pr
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
   const command = requireCommandRecord(value);
   switch (command.command) {
@@ -2002,6 +2005,7 @@ export const parseUsageEngineWorkThreadOutput = (value: unknown): UsageEngineWor
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCommandCompletion => {
   assertSerializedBound(
     value,

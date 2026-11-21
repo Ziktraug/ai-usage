@@ -1,9 +1,9 @@
 import { type FocusedBreakdownRequest, projectFocusedBreakdown } from '@ai-usage/report-core/focused-report-query';
 import { queryOptions } from '@tanstack/svelte-query';
-import { campaignMapFixtureGeneratedAt, campaignMapFixtureRows } from '../../../campaign-map-fixture';
-import { demoReportPayload } from '../../../report-data';
-import type { RuntimeMode } from '../../../runtime-mode';
+import { campaignMapFixtureGeneratedAt, campaignMapFixtureRows } from '../../foundation/campaign-map-fixture';
 import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
+import { demoReportPayload } from '../../foundation/report-data';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { reportBreakdownKey } from '../../query/options/report';
 import { webQueryPolicies } from '../../query/policies';
 import type { ReportClient } from '../../rpc/report-client';

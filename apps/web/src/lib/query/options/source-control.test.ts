@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SourceControlCommand } from '@ai-usage/report-core/source-control';
 import { MutationObserver, QueryObserver } from '@tanstack/svelte-query';
-import type { SourceControlClientState } from '../../../source-control-client';
+import type { SourceControlClientState } from '../../foundation/source-control-client';
 import { createWebQueryClient } from '../client';
 import { currentReportAliasKeys } from '../publication';
 import {

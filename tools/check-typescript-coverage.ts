@@ -64,6 +64,7 @@ export const listTypeScriptProjectFiles = (
   root: string,
   projectConfigs: readonly string[],
   repositoryFiles?: readonly string[],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Set<string> => {
   const projectFiles = new Set<string>();
   const transitiveProjects: ts.ParsedCommandLine[] = [];

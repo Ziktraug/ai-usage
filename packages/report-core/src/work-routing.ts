@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { isCanonicalInstant } from './canonical-instant';
 import { codexQuotaWindowModel, isCodexQuotaAvailabilityWindow } from './provider-quota';
 import {
@@ -632,6 +633,7 @@ const declaredCandidates = (
   observation: ExecutorObservation | undefined,
   input: QualifyReviewCandidatesInput,
   freshness: QualificationFreshness,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ReviewCandidate[] => {
   const now = Date.parse(input.now);
   const scope = `${executorHarnessFamily(declaration.harness)}:${declaration.accountScope}`;
@@ -1071,6 +1073,7 @@ const evaluateCandidate = (
   input: ReviewRoutingInput,
   duplicateIds: ReadonlySet<string>,
   duplicateQuotas: ReadonlySet<string>,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ReviewCandidateEvaluation => {
   const result: EvaluationBuilder = { excluded: [], missing: [] };
   if (!validId(candidate.id) || duplicateIds.has(candidate.id)) {
@@ -1210,6 +1213,7 @@ export const evaluateReviewCandidates = (input: ReviewRoutingInput): readonly Re
 };
 
 /** Pure simulation. Constraints run first; preferences cannot grant permission or capacity. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const simulateWorkReviewRouting = (input: ReviewRoutingInput): ReviewRoutingResult => {
   const errors = inputErrors(input);
   if (errors.length > 0) {

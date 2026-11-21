@@ -104,6 +104,7 @@ const boundedInterpretationText = (value: string): string =>
     ? value
     : `${value.slice(0, WORK_ATTENTION_BOUNDS.maxDetailText - 1)}${ELLIPSIS}`;
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const nativeEvidence = (input: HarnessSessionRootInput) => {
   const memberIds = new Set(input.family.members.map((member) => member.sourceSessionId));
   const machineId = rootOf(input.family).machineId;

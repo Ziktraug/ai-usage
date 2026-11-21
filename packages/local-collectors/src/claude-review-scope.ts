@@ -221,6 +221,7 @@ interface PatchSection {
   readonly startLine: number;
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const readSection = (lines: readonly string[], startLine: number, endLine: number): PatchSection => {
   const header = headerPaths((lines[startLine] ?? '').replace(TRAILING_NEWLINE, ''));
   let status: ReviewScopeFileStatus = 'modified';
@@ -465,6 +466,7 @@ const listable = (file: ReviewScopeFile): boolean =>
 export const prepareReviewScope = async (
   checkoutPath: string,
   options: PrepareReviewScopeOptions = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<PreparedReviewScope> => {
   const limits: ReviewPatchLimits = {
     maxPatchPromptBytes: options.limits?.maxPatchPromptBytes ?? REVIEW_ATTEMPT_BOUNDS.maxPatchPromptBytes,

@@ -117,6 +117,7 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           let changed = 0;
           let unchanged = 0;
@@ -222,6 +223,7 @@ export const createCodexWorkStore = (dependencies: CodexWorkStoreDependencies) =
     }
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           if (
             !db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'codex_work_observations'").get()

@@ -4,7 +4,7 @@ import {
   projectSessionNeighbors,
   projectSessionPage,
 } from '@ai-usage/report-core/session-query';
-import { demoReportPayload } from '../../../report-data';
+import { demoReportPayload } from '../../foundation/report-data';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 
 export const WORK_DEMO_REVISION = 'synthetic-work-v1';

@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../../../../session-list-label';
+  import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../session-list-label';
 
   let { query, text }: { query: string; text: string } = $props();
   const bounded = $derived(boundedSessionListLabel(text, query));

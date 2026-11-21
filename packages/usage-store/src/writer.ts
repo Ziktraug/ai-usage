@@ -11,6 +11,13 @@ export type {
 } from './codex-work-store';
 export { MAX_CODEX_WORK_BATCH } from './codex-work-store';
 export type {
+  CheckpointUsageStoreInput,
+  CheckpointUsageStoreResult,
+  InitializeUsageStoreInput,
+  QuiesceUsageStoreForShutdownInput,
+} from './connections';
+export { checkpointUsageStore, initializeUsageStore, quiesceUsageStoreForShutdown } from './connections';
+export type {
   CountDelegationRetryChainInput,
   DelegationJobPatch,
   DelegationJobRead,
@@ -40,6 +47,24 @@ export type {
   TransitionDelegationJobResult,
 } from './delegation-store';
 export { DELEGATION_STORE_BOUNDS } from './delegation-store';
+export type {
+  EnrichableUsageRow,
+  EnrichableUsageRowChange,
+  LocalRowsWatermark,
+  QueryEnrichableUsageRowChangesInput,
+  QueryEnrichableUsageRowChangesResult,
+  QueryEnrichableUsageRowsInput,
+  QueryEnrichableUsageRowsResult,
+  QueryLocalRowsWatermarkInput,
+  RtkSavingsContributionInput,
+  UpsertRtkSavingsContributionsInput,
+} from './enrichment';
+export {
+  queryEnrichableUsageRowChanges,
+  queryEnrichableUsageRows,
+  queryLocalRowsWatermark,
+  upsertRtkSavingsContributions,
+} from './enrichment';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
 export type {
@@ -49,97 +74,21 @@ export type {
   QueryExecutorAccountChangesInput,
   QueryExecutorAccountChangesResult,
 } from './executor-observation-store';
-export type {
-  CheckpointUsageStoreInput,
-  CheckpointUsageStoreResult,
-  ConfirmPeerMergeBundleInput,
-  EnrichableUsageRow,
-  EnrichableUsageRowChange,
-  EnrichmentImportResult,
-  ExportLocalMergeBundleInput,
-  ImportCheckoutStatusObservationsInput,
-  ImportJiraIssueObservationsInput,
-  ImportLocalRowsInput,
-  ImportPeerMergeBundleInput,
-  ImportProviderQuotaBatchInput,
-  ImportPullRequestObservationsInput,
-  ImportResult,
-  ImportSkillObservationsInput,
-  InitializeUsageStoreInput,
-  LocalRowsWatermark,
-  PreviewPeerMergeBundleInput,
-  PreviewPeerMergeBundleResult,
-  ProviderQuotaCheckpointUpdate,
-  ProviderQuotaImportItem,
-  ProviderQuotaImportResult,
-  ProviderQuotaSourceState,
-  PublishServedReportRevisionCapture,
-  PublishServedReportRevisionContext,
-  PublishServedReportRevisionInput,
-  PublishServedReportRevisionResult,
-  PublishServedRevisionValidationCache,
-  QueryEnrichableUsageRowChangesInput,
-  QueryEnrichableUsageRowChangesResult,
-  QueryEnrichableUsageRowsInput,
-  QueryEnrichableUsageRowsResult,
-  QueryLatestProviderQuotaObservationsInput,
-  QueryLocalRowsWatermarkInput,
-  QueryProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsResult,
-  QueryProviderQuotaSourceStateInput,
-  QueryProviderQuotaSourceStatesInput,
-  QueryServedReportRevisionInput,
-  QueryServedSessionPullRequestLinksInput,
-  QueryUsageStoreGenerationInput,
-  QuiesceUsageStoreForShutdownInput,
-  RecordProviderQuotaSourceAttemptInput,
-  RecordWorkFactRunInput,
-  RetainProviderQuotaObservationsInput,
-  RetainProviderQuotaObservationsResult,
-  RetainServedReportRevisionsInput,
-  RetainServedReportRevisionsResult,
-  RetainSkillObservationsInput,
-  RetainSkillObservationsResult,
-  RetireLocalRowsInput,
-  RetireLocalRowsResult,
-  RtkSavingsContribution,
-  RtkSavingsContributionInput,
-  ServedLocalProjectSource,
-  ServedReportPublicationPhase,
-  ServedReportRevisionManifest,
-  ServedReportRevisionSupport,
-  ServedSessionPullRequestLinks,
-  SkillObservationImportResult,
-  StoredSourceAuthority,
-  StoredUsageRowStatus,
-  UpdateUsageMachineLabelInput,
-  UpdateUsageMachineLabelResult,
-  UpsertRtkSavingsContributionsInput,
-  UsageStoreGenerations,
-  WorkFactImportResult,
-  WorkFactSourceId,
-} from './index';
 export {
   applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
-  checkpointUsageStore,
-  confirmPeerMergeBundle,
   countDelegationRetryChain,
-  exportLocalMergeBundle,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importCodexWorkObservations,
   importExecutorObservations,
   importJiraIssueObservations,
-  importLocalRows,
   importProviderQuotaBatch,
   importPullRequestObservations,
   importSkillObservations,
-  initializeUsageStore,
   markDelegationJobsLost,
   markReviewAttemptsLost,
-  previewPeerMergeBundle,
   publishServedReportRevision,
   queryActiveWorkThreadLinks,
   queryClaudeDesktopSessions,
@@ -148,8 +97,6 @@ export {
   queryCurrentServedLocalProjectSources,
   queryDelegationEvaluations,
   queryDelegationJobs,
-  queryEnrichableUsageRowChanges,
-  queryEnrichableUsageRows,
   queryExecutorAccountChanges,
   queryExecutorObservationHistory,
   queryJiraIntake,
@@ -159,7 +106,6 @@ export {
   queryLatestJiraIssueObservations,
   queryLatestProviderQuotaObservations,
   queryLatestPullRequestObservations,
-  queryLocalRowsWatermark,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
@@ -168,12 +114,9 @@ export {
   queryReviewTargetResolution,
   queryServedReportRevisionSupport,
   queryServedSessionPullRequestLinks,
-  queryUsageStoreGeneration,
-  queryUsageStoreGenerations,
   queryWorkFactRunStates,
   queryWorkThreadsPage,
   queryWorkThreadWaitCandidates,
-  quiesceUsageStoreForShutdown,
   readDelegationJob,
   readDelegationJobs,
   readDelegationQualification,
@@ -192,15 +135,49 @@ export {
   retainProviderQuotaObservations,
   retainServedReportRevisions,
   retainSkillObservations,
-  retireLocalRows,
   seedWorkThreads,
   transitionDelegationJob,
   transitionReviewAttempt,
+} from './index';
+export type {
+  ImportLocalRowsInput,
+  ImportResult,
+  RetireLocalRowsInput,
+  RetireLocalRowsResult,
+  UpdateUsageMachineLabelInput,
+  UpdateUsageMachineLabelResult,
+} from './local-rows';
+export {
+  importLocalRows,
+  retireLocalRows,
   USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   updateUsageMachineLabel,
-  upsertRtkSavingsContributions,
-  usageStorePath,
-} from './index';
+} from './local-rows';
+export { usageStorePath } from './machine-fleet';
+export type {
+  ConfirmPeerMergeBundleInput,
+  ImportPeerMergeBundleInput,
+  PreviewPeerMergeBundleInput,
+  PreviewPeerMergeBundleResult,
+} from './peer-merge';
+export { confirmPeerMergeBundle, previewPeerMergeBundle } from './peer-merge';
+export type {
+  ImportProviderQuotaBatchInput,
+  ProviderQuotaCheckpointUpdate,
+  ProviderQuotaImportItem,
+  ProviderQuotaImportResult,
+  ProviderQuotaSourceState,
+  QueryLatestProviderQuotaObservationsInput,
+  QueryProviderQuotaObservationsInput,
+  QueryProviderQuotaObservationsResult,
+  QueryProviderQuotaSourceStateInput,
+  QueryProviderQuotaSourceStatesInput,
+  RecordProviderQuotaSourceAttemptInput,
+  RetainProviderQuotaObservationsInput,
+  RetainProviderQuotaObservationsResult,
+} from './provider-quota-store';
+export type { ExportLocalMergeBundleInput, QueryUsageStoreGenerationInput, UsageStoreGenerations } from './report-rows';
+export { exportLocalMergeBundle, queryUsageStoreGeneration, queryUsageStoreGenerations } from './report-rows';
 export type {
   MarkReviewAttemptsLostInput,
   MarkReviewAttemptsLostResult,
@@ -233,6 +210,38 @@ export {
   describeReviewReservation,
   reviewTargetReservationHolder,
 } from './review-reservations';
+export type { EnrichmentImportResult, RtkSavingsContribution } from './rtk-savings';
+export type {
+  PublishServedReportRevisionCapture,
+  PublishServedReportRevisionContext,
+  PublishServedReportRevisionInput,
+  PublishServedReportRevisionResult,
+  PublishServedRevisionValidationCache,
+  QueryServedReportRevisionInput,
+  QueryServedSessionPullRequestLinksInput,
+  RetainServedReportRevisionsInput,
+  RetainServedReportRevisionsResult,
+  ServedLocalProjectSource,
+  ServedReportPublicationPhase,
+  ServedReportRevisionManifest,
+  ServedReportRevisionSupport,
+  ServedSessionPullRequestLinks,
+} from './served-report-store';
+export type {
+  ImportSkillObservationsInput,
+  RetainSkillObservationsInput,
+  RetainSkillObservationsResult,
+  SkillObservationImportResult,
+} from './skill-observation-store';
+export type { StoredSourceAuthority, StoredUsageRowStatus } from './stored-usage-row';
+export type {
+  ImportCheckoutStatusObservationsInput,
+  ImportJiraIssueObservationsInput,
+  ImportPullRequestObservationsInput,
+  RecordWorkFactRunInput,
+  WorkFactImportResult,
+  WorkFactSourceId,
+} from './work-fact-store';
 export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
 export type {
   ApplyWorkThreadWaitObservationsInput,

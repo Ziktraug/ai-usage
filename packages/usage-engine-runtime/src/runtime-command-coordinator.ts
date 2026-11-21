@@ -253,6 +253,7 @@ export const createRuntimeCommandCoordinator = (
     if (commandDrain.drain() !== undefined) {
       return;
     }
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     const drain = (async () => {
       while (commandDrain.queue.length > 0) {
         const job = commandDrain.queue.shift();
@@ -354,6 +355,7 @@ export const createRuntimeCommandCoordinator = (
   const executeCommand = (
     commandValue: UsageEngineCommand,
     commandIdValue: string,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ): Promise<UsageEngineCommandResult> => {
     try {
       const commandId = parseUsageEngineCommandId(commandIdValue);

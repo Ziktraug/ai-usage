@@ -3,7 +3,7 @@ import { queryWorkAttention } from '@ai-usage/report-data/work-attention-read';
 import { usageStoreErrorReasonFrom } from '@ai-usage/usage-store/reader';
 import type { WorkAttentionErrorTag, WorkAttentionInput } from '@ai-usage/web-contract/work';
 import { Effect, type Result } from 'effect';
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 

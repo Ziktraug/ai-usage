@@ -437,6 +437,7 @@ const interpretCurrentRequest = (
   harness: WorkRootHarnessInput,
   evidence: readonly string[],
   now: CanonicalInstant,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): RequestResult => {
   const askedAt = declaration.at;
   const label = requestLabel(declaration.status, declaration.needsAction);
@@ -526,6 +527,7 @@ const interpretCurrentRequest = (
   return { attention: 'human-request', interpretations, reconsidered };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const interpretWorkRoot = (input: InterpretWorkRootInput): WorkRootInterpretationResult => {
   const now = instantOf(input.now);
   if (now === null) {

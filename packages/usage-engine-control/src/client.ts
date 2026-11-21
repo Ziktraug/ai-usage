@@ -435,6 +435,7 @@ const readStreamChunk = async (
   }
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const parseSseFrames = async function* (
   response: Response,
   signal: AbortSignal,
@@ -451,6 +452,7 @@ const parseSseFrames = async function* (
   let eventId = '';
   let completed = false;
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const consumeLine = (line: string): SseFrame | undefined => {
     if (line.length === 0) {
       if (dataLines.length === 0) {
@@ -567,6 +569,7 @@ const waitForReconnect = async (
   }
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const openEventStream = async function* (
   options: UsageEngineControlClientOptions,
   callerSignal: AbortSignal | undefined,
@@ -750,6 +753,7 @@ export const createUsageEngineControlClient = (options: UsageEngineControlClient
     return result;
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const changes = async function* (requestOptions: UsageEngineRequestOptions = {}): AsyncGenerator<UsageEngineEvent> {
     let instanceId: string | undefined;
     let lastSequence = -1;

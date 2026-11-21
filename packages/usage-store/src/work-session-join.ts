@@ -449,6 +449,7 @@ export const createWorkSessionJoinStore = (dependencies: WorkSessionJoinDependen
     }
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: (): QueryRecentServedHarnessSessionsResult => {
           db.exec('BEGIN');
           try {

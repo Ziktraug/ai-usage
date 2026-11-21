@@ -10,7 +10,7 @@ import {
   parseDashboardTimeCell,
   primaryDashboardTabFor,
   sortingStateFromSearch,
-} from '../../../../dashboard-search';
+} from '../../../foundation/dashboard/dashboard-search';
 import { rangeBounds, reportRangeProjection, resolveTimelineGranularity } from '../range/report-range-model';
 import {
   type FocusedQuerySnapshot,

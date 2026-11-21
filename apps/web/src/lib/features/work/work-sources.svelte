@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
   import { onMount } from 'svelte';
-  import type { RuntimeMode } from '../../../runtime-mode';
-  import { presentSourceState } from '../../../source-control-presentation-model';
   import { fmtDate } from '../../foundation/presentation/format';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
+  import { presentSourceState } from '../../foundation/source-control-presentation-model';
   import { useSourceControl } from '../sources/context.svelte';
   import { workHeading, workLink, workMuted, workPanel, workStack } from './work-styles';
 

@@ -4,7 +4,7 @@ import {
   sessionCampaignIdentityForRow,
   sessionLookupFingerprint,
 } from '@ai-usage/report-core/session-query';
-import { campaignMapFixtureRows } from '../../../campaign-map-fixture';
+import { campaignMapFixtureRows } from '../../foundation/campaign-map-fixture';
 import { resolveCampaignDetailSelection } from './campaign-detail-selection';
 
 const rows = campaignMapFixtureRows.map(enrichSessionPresentationRow);

@@ -23,6 +23,7 @@ export const prepareJiraSync = (input: {
   readonly run?: BoundedProcessRunner;
   readonly signal?: AbortSignal;
 }) =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const previous = yield* queryJiraSyncState(input).pipe(
       Effect.catch((error) => (error.reason === 'store-missing' ? Effect.succeed(null) : Effect.fail(error))),

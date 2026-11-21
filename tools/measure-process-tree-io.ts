@@ -180,6 +180,7 @@ export const measureCommand = async (
   let peakResidentBytes = 0;
   let peakThreads = 0;
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const sampleProcessGroup = async (): Promise<void> => {
     const entries = await readdir('/proc', { withFileTypes: true });
     const processStats = new Map<number, LinuxProcessStat>();

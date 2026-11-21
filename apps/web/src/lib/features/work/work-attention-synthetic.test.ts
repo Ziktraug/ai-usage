@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { projectSessionLookup } from '@ai-usage/report-core/session-query';
 import { WORK_ATTENTION_BOUNDS } from '@ai-usage/report-core/work-attention';
-import { demoReportPayload } from '../../../report-data';
+import { demoReportPayload } from '../../foundation/report-data';
 import { parseWorkAttentionDataset } from '../../rpc/work-attention-client';
 import { createSyntheticWorkAttentionClient, syntheticWorkAttentionDataset } from './work-attention-synthetic';
 import { WORK_DEMO_REVISION, WORK_DEMO_TIME } from './work-synthetic';

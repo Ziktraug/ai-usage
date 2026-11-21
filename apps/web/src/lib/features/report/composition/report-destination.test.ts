@@ -16,7 +16,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { QueryObserver } from '@tanstack/svelte-query';
-import { demoReportPayload } from '../../../../report-data';
+import { demoReportPayload } from '../../../foundation/report-data';
 import { createWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapQueryOptions, reportOverviewKey } from '../../../query/options/report';

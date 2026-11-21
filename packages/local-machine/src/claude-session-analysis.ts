@@ -20,6 +20,7 @@ const findClaudeTranscript = (
   storage: LocalHistoryStorageService,
   sourceSessionId: string,
 ): Effect.Effect<string | null, LocalHistoryError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const root = resolvePaths(storage).claude.projectsDir;
     if (!(yield* storage.exists(root))) {

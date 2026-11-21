@@ -129,6 +129,7 @@ export const collectCodexRolloutQuotaBatch = <CursorError = never>(
   request: ProviderQuotaCollectRequest<CursorError>,
   options: CodexRolloutQuotaOptions = {},
 ): Effect.Effect<ProviderQuotaBatch, LocalHistoryError | CursorError, LocalHistoryStorageService> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const from =

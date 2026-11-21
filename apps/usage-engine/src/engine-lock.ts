@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import { chmod, link, lstat, mkdir, open, opendir, realpath, rename, unlink } from 'node:fs/promises';
@@ -858,6 +859,7 @@ const inspectExistingLock = async (
   lockPath: string,
   directory: ValidatedStateDirectory,
   databasePath: string,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<{ readonly identity: FileIdentity; readonly metadata: UsageEngineLockMetadata }> => {
   const initializationDeadline = Date.now() + LOCK_INITIALIZATION_DEADLINE_MS;
   let expectedIdentity: FileIdentity | undefined;
@@ -1049,6 +1051,7 @@ const recoverStaleLock = async (
   databasePath: string,
   owner: RecoveryOwner,
   ownIntent: AcquisitionIntent,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<RecoveryClaim | undefined> => {
   let finalStats = await lstat(lockPath).catch(() => undefined);
   let claims = await listRecoveryClaims(lockPath, directory, databasePath);
@@ -1259,6 +1262,7 @@ const publishLock = async (
   metadata: UsageEngineLockMetadata,
   ownIntent: AcquisitionIntent,
   faults: LockPublicationFaults,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<{ readonly file: LockFile; readonly identity: FileIdentity }> => {
   const serializedMetadata = serializeLockMetadata(lockPath, metadata);
   await scavengeAbandonedLockTemporaryFiles(directory);

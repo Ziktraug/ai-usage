@@ -1,3 +1,4 @@
+// biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { CanonicalInstant } from '@ai-usage/report-core/canonical-instant';
@@ -308,6 +309,7 @@ const linkedSessionsOf = (
   askedAt: CanonicalInstant | null,
   sessions: ReadonlyMap<string, ClaudeDesktopSessionObservation>,
   history: DeclarationHistory,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): { readonly facts: WorkFact[]; readonly inputs: WorkLinkedSession[] } => {
   const facts: WorkFact[] = [];
   const inputs: WorkLinkedSession[] = [];
@@ -967,6 +969,7 @@ const joinSessions = (
   dbPath: string,
   observations: readonly ClaudeDesktopSessionObservation[],
 ): Effect.Effect<WorkAttentionSessionLookup, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const idsByMachine = new Map<string, Set<string>>();
     for (const observation of observations) {
@@ -1495,6 +1498,7 @@ const readDeclarationHistory = (
 export const queryWorkAttention = (
   input: QueryWorkAttentionInput,
 ): Effect.Effect<WorkAttentionDataset, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const problem = boundsProblem(input);
     if (problem !== null) {

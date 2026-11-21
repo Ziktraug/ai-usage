@@ -1,12 +1,12 @@
 <script lang="ts">
   import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
-  import type { RuntimeMode } from '../../../runtime-mode';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import {
     createSourceControlClientForMode,
     type SourceControlClient,
     type SourceControlClientState,
-  } from '../../../source-control-client';
+  } from '../../foundation/source-control-client';
   import {
     sourceControlCommandMutationOptions,
     sourceControlStateQueryOptions,

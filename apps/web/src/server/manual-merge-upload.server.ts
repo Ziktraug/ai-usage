@@ -2,7 +2,7 @@ import { type MergePreviewProof, parseMergePreviewProof } from '@ai-usage/report
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import type { UsageEngineCommandCompletion, UsageEngineErrorCode } from '@ai-usage/usage-engine-control';
 import type { StagedUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
-import type { ManualOperationResult } from '../manual-transfer-contract';
+import type { ManualOperationResult } from '../lib/features/sync/manual-transfer-contract';
 import { readAbortableRequestBodyChunk } from './abortable-request-body.server';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { UsageEngineCommandCompletionError } from './usage-engine-command.server';

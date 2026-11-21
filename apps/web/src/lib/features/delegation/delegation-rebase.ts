@@ -212,6 +212,7 @@ const mergeEntries = (
   theirs: readonly Entry[],
   path: string,
   merge: Merge,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Merged => {
   const { conflicts, identity } = merge;
   const baseByKey = byKey(base);
