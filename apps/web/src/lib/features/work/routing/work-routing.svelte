@@ -24,14 +24,14 @@
   import { ssrUnavailableClient } from '../../../rpc/ssr-placeholder';
   import { createWorkAttemptsClient } from '../../../rpc/work-attempts-client';
   import { createWorkRoutingClient, createWorkRoutingQualifyClient } from '../../../rpc/work-routing-client';
-  import WorkAttempts from '../work-attempts.svelte';
+  import WorkAttempts from '../attempts/work-attempts.svelte';
   import {
     DEMO_EXECUTION_TEXT,
     launchGate,
     releaseOutcomeText,
     startReviewLabel,
     stopOutcomeText,
-  } from '../work-attempts-model';
+  } from '../attempts/work-attempts-model';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
   import {

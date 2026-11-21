@@ -1,8 +1,8 @@
 <script lang="ts">
   import { isLiveReviewAttemptState } from '@ai-usage/report-core/work-attempts';
   import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
-  import { displayTitle } from '../../foundation/presentation/display-title';
-  import { sessionRoutePathname } from '../sessions/detail/session-route';
+  import { displayTitle } from '../../../foundation/presentation/display-title';
+  import { sessionRoutePathname } from '../../sessions/detail/session-route';
   import {
     attemptProgressLabel,
     canRequestStop,
@@ -15,7 +15,7 @@
     scopeSummary,
     shortAttemptId,
   } from './work-attempts-model';
-  import { formatExactInstant, formatRelativeAge } from './work-attention-model';
+  import { formatExactInstant, formatRelativeAge } from '../work-attention-model';
   import {
     workButton,
     workExcerpt,
@@ -25,7 +25,7 @@
     workMuted,
     workPanel,
     workStack,
-  } from './work-styles';
+  } from '../work-styles';
 
   let {
     attempts,

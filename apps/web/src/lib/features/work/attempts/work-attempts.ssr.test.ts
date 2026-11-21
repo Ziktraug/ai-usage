@@ -28,17 +28,17 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: {
-    alias: { '$app/env': fileURLToPath(new URL('../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
+    alias: { '$app/env': fileURLToPath(new URL('../../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
     conditions: ['svelte'],
     dedupe: ['svelte'],
   },
-  root: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+  root: fileURLToPath(new URL('../../../../../../../', import.meta.url)),
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 afterAll(() => server.close());
 const [fixtureModule, rendererModule] = await Promise.all([
-  server.ssrLoadModule('/apps/web/src/lib/features/work/work-attempts.fixture.svelte'),
+  server.ssrLoadModule('/apps/web/src/lib/features/work/attempts/work-attempts.fixture.svelte'),
   server.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
