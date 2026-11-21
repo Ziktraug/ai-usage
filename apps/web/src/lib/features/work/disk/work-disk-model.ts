@@ -7,7 +7,7 @@ import type {
   WorkThreadRow,
   WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
-import { projectShortLabel } from './work-thread-model';
+import { projectShortLabel } from '../work-thread-model';
 
 /**
  * The Disk lens of the Work view: what is lying around on this machine. One entry per local

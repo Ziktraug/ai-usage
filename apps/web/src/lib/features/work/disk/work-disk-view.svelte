@@ -7,8 +7,8 @@
   import { createQueries } from '@tanstack/svelte-query';
   import type { Snippet } from 'svelte';
   import { browser } from '$app/env';
-  import { workThreadListQueryOptions } from '../../query/options/work-threads';
-  import type { WorkThreadsClient } from '../../rpc/work-threads-client';
+  import { workThreadListQueryOptions } from '../../../query/options/work-threads';
+  import type { WorkThreadsClient } from '../../../rpc/work-threads-client';
   import { aggregateDiskSources, type DiskPageChain, diskPageChain } from './work-disk-model';
   import WorkDiskTable from './work-disk-table.svelte';
 

@@ -23,13 +23,13 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
-  root: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+  root: fileURLToPath(new URL('../../../../../../../', import.meta.url)),
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 afterAll(() => server.close());
 
-const module: unknown = await server.ssrLoadModule('/apps/web/src/lib/features/work/work-disk-table.svelte');
+const module: unknown = await server.ssrLoadModule('/apps/web/src/lib/features/work/disk/work-disk-table.svelte');
 if (!(typeof module === 'object' && module !== null && 'default' in module && typeof module.default === 'function')) {
   throw new Error('Missing work-disk-table component');
 }
