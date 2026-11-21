@@ -250,3 +250,18 @@ describe('server route loads', () => {
     expect(probe.tracked).toEqual([]);
   });
 });
+
+// Still a source-text check (plan 128 B2, kept on purpose): a document load that reached the router
+// through an HTTP subrequest instead of in process would render the same page, and the in-process
+// path builds router services that open the configured usage store, so no test here can run it.
+describe('server document acquisition (source)', () => {
+  test.each(['+layout.server.ts', '(report)/+layout.server.ts'])(
+    '%s acquires through the in-process router client',
+    async (file) => {
+      const source = await Bun.file(new URL(file, import.meta.url)).text();
+
+      expect(source).toContain('createInProcessWebRpcClient(request)');
+      expect(source).not.toContain('fetch(request)');
+    },
+  );
+});
