@@ -27,12 +27,4 @@ describe('machine freshness presentation seam', () => {
       value: 'machine-2',
     });
   });
-
-  test('stays a collector-free client presentation leaf', async () => {
-    const source = await Bun.file(new URL('./machine-freshness-presentation.ts', import.meta.url)).text();
-
-    for (const forbidden of ['usage-store', 'manual-transfer-model', 'source-control', 'node:', 'solid-js']) {
-      expect(source).not.toContain(forbidden);
-    }
-  });
 });

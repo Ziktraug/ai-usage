@@ -589,26 +589,218 @@ const resolveRelativeModule = async (packageDirectory: string, importer: string,
   return { status: 'unresolved' as const };
 };
 
-const collectPortableReportClosureViolations = async (
-  root: string,
-  packages: Map<string, PackageInfo>,
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-): Promise<PackageBoundaryViolation[]> => {
-  const packageInfo = packages.get(reportDataPackage);
-  if (!packageInfo) {
-    return [];
-  }
-  const entrypoint = path.join(packageInfo.directory, 'src', 'portable-report.ts');
-  const entrypointExists = await readFile(entrypoint, 'utf8').then(
-    () => true,
-    () => false,
-  );
-  if (!entrypointExists) {
-    return [];
-  }
+/**
+ * An import closure that must stay inside a set of allowed modules: every module reachable from the
+ * entrypoints through relative imports (and, for the Web app, `#lib/` aliases) is read, and each
+ * import specifier and each reached module is judged by the policy.
+ */
+interface ModuleClosurePolicy {
+  /** The package directory an import alias such as `#lib/` points into, if the closure follows one. */
+  readonly aliases?: ReadonlyMap<string, string>;
+  /** Package-relative entrypoints. The closure is skipped only when none exists (a fixture without it). */
+  readonly entrypoints: readonly string[];
+  /** Why a non-relative specifier may not appear in the closure, if it may not. */
+  readonly importReason: (specifier: string) => string | undefined;
+  /** Why a reached module may not be part of the closure, if it may not; given package-relative. */
+  readonly moduleReason?: (packageRelativeFile: string) => string | undefined;
+  readonly name: string;
+  readonly packageName: string;
+}
 
+const webPresentationForbiddenPrefixes = [
+  'solid-js',
+  'svelte',
+  '@ark-ui/solid',
+  '@ark-ui/svelte',
+  '@ai-usage/design-system/solid',
+  '@ai-usage/design-system/svelte',
+  '@tanstack/solid',
+  '@tanstack/svelte',
+  '$app',
+] as const;
+const passiveDesignRuntimes = ['@ark-ui/solid', '@ark-ui/svelte', 'solid-js', 'svelte'] as const;
+const passiveDesignExternalImports = new Set(['@ai-usage/design-system/css']);
+
+const moduleClosurePolicies: readonly ModuleClosurePolicy[] = [
+  {
+    entrypoints: ['src/portable-report.ts'],
+    importReason: (specifier) =>
+      isWorkspaceSpecifier(specifier) && !isPackageOrSubpath(specifier, '@ai-usage/report-core')
+        ? 'The portable-report import closure may depend only on report-core workspace modules.'
+        : undefined,
+    name: 'portable-report',
+    packageName: reportDataPackage,
+  },
+  {
+    // Reusable presentation and dashboard models stay framework-neutral, so any client (and any test)
+    // can run them without a component runtime, a SvelteKit module or server code.
+    aliases: new Map([['#lib/', 'src/lib/']]),
+    entrypoints: [
+      'src/lib/foundation/dashboard/dashboard-analytics.ts',
+      'src/lib/foundation/dashboard/dashboard-model.ts',
+      'src/lib/features/sessions/dashboard-sort.ts',
+      'src/lib/foundation/overview-model.ts',
+      'src/lib/features/report/provider-status-model.ts',
+      'src/lib/foundation/campaign-label-overrides.ts',
+      'src/lib/foundation/session/session-analysis-target.ts',
+      'src/lib/foundation/presentation/format.ts',
+      'src/lib/foundation/presentation/report-value.ts',
+      'src/lib/foundation/machine-freshness-presentation.ts',
+    ],
+    importReason: (specifier) =>
+      specifier.startsWith('node:') ||
+      specifier.startsWith('#lib/server') ||
+      webPresentationForbiddenPrefixes.some((forbidden) => specifier.startsWith(forbidden))
+        ? 'The framework-neutral Web presentation closure cannot reach a client framework, SvelteKit, Node or server module.'
+        : undefined,
+    moduleReason: (file) =>
+      path.posix.extname(file) !== '.ts' || file.includes('.server.') || file.split('/').includes('server')
+        ? 'The framework-neutral Web presentation closure may contain only TypeScript modules outside server code.'
+        : undefined,
+    name: 'framework-neutral Web presentation',
+    packageName: '@ai-usage/web',
+  },
+  {
+    // Passive design modules are plain style recipes: no component or framework runtime, and no
+    // package beyond the generated `css` entry.
+    entrypoints: [
+      'src/components/button.ts',
+      'src/components/chart.ts',
+      'src/components/empty-state.ts',
+      'src/components/field.ts',
+      'src/components/layout.ts',
+      'src/components/overview.ts',
+      'src/components/panel.ts',
+      'src/components/skills.ts',
+      'src/components/status.ts',
+      'src/components/table.ts',
+      'src/components/time-slider.ts',
+    ],
+    importReason: (specifier) => {
+      if (passiveDesignRuntimes.some((runtime) => specifier === runtime || specifier.startsWith(`${runtime}/`))) {
+        return 'The passive design closure imports no component or framework runtime.';
+      }
+      return passiveDesignExternalImports.has(specifier)
+        ? undefined
+        : 'The passive design closure may import only the generated css entry outside its own modules.';
+    },
+    moduleReason: (file) =>
+      path.posix.extname(file) === '.ts'
+        ? undefined
+        : 'The passive design closure may contain only TypeScript modules.',
+    name: 'passive design',
+    packageName: '@ai-usage/design-system',
+  },
+];
+
+const existingFiles = async (files: readonly string[]): Promise<string[]> => {
+  const present = await Promise.all(
+    files.map((file) =>
+      readFile(file, 'utf8').then(
+        () => file,
+        () => undefined,
+      ),
+    ),
+  );
+  return present.filter((file) => file !== undefined);
+};
+
+/** A relative specifier for an import the closure follows: relative already, or through a known alias. */
+const followedSpecifier = (
+  policy: ModuleClosurePolicy,
+  packageDirectory: string,
+  importer: string,
+  specifier: string,
+): string | undefined => {
+  if (specifier.startsWith('.')) {
+    return specifier;
+  }
+  for (const [alias, target] of policy.aliases ?? []) {
+    if (specifier.startsWith(alias)) {
+      const aliased = path.join(packageDirectory, target, specifier.slice(alias.length));
+      return `./${path.relative(path.dirname(importer), aliased).split(path.sep).join('/')}`;
+    }
+  }
+};
+
+interface ClosureModuleScan {
+  readonly followed: string[];
+  readonly violations: PackageBoundaryViolation[];
+}
+
+/** Judges one module of a closure: the module itself, then each import it holds. */
+const scanClosureModule = async (
+  root: string,
+  packageInfo: PackageInfo,
+  policy: ModuleClosurePolicy,
+  file: string,
+): Promise<ClosureModuleScan> => {
+  const relativeFile = path.relative(root, file).split(path.sep).join('/');
   const violations: PackageBoundaryViolation[] = [];
-  const pending = [entrypoint];
+  const followed: string[] = [];
+  const moduleReason = policy.moduleReason?.(path.relative(packageInfo.directory, file).split(path.sep).join('/'));
+  if (moduleReason) {
+    violations.push({
+      file: relativeFile,
+      message: moduleReason,
+      packageName: policy.packageName,
+      specifier: relativeFile,
+    });
+  }
+  const text = await readFile(file, 'utf8');
+  for (const match of text.matchAll(moduleImportPattern)) {
+    const specifier = match[1] ?? match[2] ?? match[3];
+    if (!specifier) {
+      continue;
+    }
+    const followedImport = followedSpecifier(policy, packageInfo.directory, file, specifier);
+    const resolved =
+      followedImport === undefined
+        ? undefined
+        : await resolveRelativeModule(packageInfo.directory, file, followedImport);
+    if (resolved?.status === 'resolved') {
+      followed.push(resolved.file);
+      continue;
+    }
+    const reason =
+      resolved === undefined
+        ? policy.importReason(specifier)
+        : `The ${policy.name} import closure must resolve relative modules inside ${policy.packageName}.`;
+    if (reason) {
+      violations.push({
+        file: relativeFile,
+        line: lineNumberFor(text, match.index),
+        message: reason,
+        packageName: policy.packageName,
+        specifier,
+      });
+    }
+  }
+  return { followed, violations };
+};
+
+const collectModuleClosureViolations = async (
+  root: string,
+  packageInfo: PackageInfo,
+  policy: ModuleClosurePolicy,
+): Promise<PackageBoundaryViolation[]> => {
+  const entrypoints = policy.entrypoints.map((entrypoint) => path.join(packageInfo.directory, entrypoint));
+  const present = await existingFiles(entrypoints);
+  if (present.length === 0) {
+    return [];
+  }
+  const violations: PackageBoundaryViolation[] = entrypoints
+    .filter((entrypoint) => !present.includes(entrypoint))
+    .map((entrypoint) => {
+      const relativeEntrypoint = path.relative(root, entrypoint).split(path.sep).join('/');
+      return {
+        file: relativeEntrypoint,
+        message: `The ${policy.name} import closure entrypoint is missing.`,
+        packageName: policy.packageName,
+        specifier: relativeEntrypoint,
+      };
+    });
+  const pending = [...present];
   const visited = new Set<string>();
   while (pending.length > 0) {
     const file = pending.pop();
@@ -616,39 +808,9 @@ const collectPortableReportClosureViolations = async (
       continue;
     }
     visited.add(file);
-    const text = await readFile(file, 'utf8');
-    for (const match of text.matchAll(moduleImportPattern)) {
-      const specifier = match[1] ?? match[2] ?? match[3];
-      if (!specifier) {
-        continue;
-      }
-      if (isWorkspaceSpecifier(specifier)) {
-        if (!isPackageOrSubpath(specifier, '@ai-usage/report-core')) {
-          violations.push({
-            file: path.relative(root, file).split(path.sep).join('/'),
-            line: lineNumberFor(text, match.index),
-            message: 'The portable-report import closure may depend only on report-core workspace modules.',
-            packageName: reportDataPackage,
-            specifier,
-          });
-        }
-        continue;
-      }
-      if (specifier.startsWith('.')) {
-        const resolved = await resolveRelativeModule(packageInfo.directory, file, specifier);
-        if (resolved.status === 'resolved') {
-          pending.push(resolved.file);
-        } else {
-          violations.push({
-            file: path.relative(root, file).split(path.sep).join('/'),
-            line: lineNumberFor(text, match.index),
-            message: 'The portable-report import closure must resolve relative modules inside report-data.',
-            packageName: reportDataPackage,
-            specifier,
-          });
-        }
-      }
-    }
+    const scan = await scanClosureModule(root, packageInfo, policy, file);
+    violations.push(...scan.violations);
+    pending.push(...scan.followed);
   }
   return violations;
 };
@@ -760,7 +922,12 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
       .filter((packageInfo) => path.relative(root, packageInfo.directory).split(path.sep)[0] === 'apps')
       .map(({ packageName }) => packageName),
   );
-  violations.push(...(await collectPortableReportClosureViolations(root, packages)));
+  for (const policy of moduleClosurePolicies) {
+    const packageInfo = packages.get(policy.packageName);
+    if (packageInfo) {
+      violations.push(...(await collectModuleClosureViolations(root, packageInfo, policy)));
+    }
+  }
   violations.push(...(await collectApplicationProductionClosureViolations(root, packages)));
 
   for (const policy of boundaryPolicies) {

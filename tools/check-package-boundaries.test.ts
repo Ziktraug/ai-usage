@@ -864,6 +864,111 @@ describe('package boundary guard', () => {
     ]);
   });
 
+  test('keeps the framework-neutral Web presentation closure free of frameworks, Node and server code', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const lib = path.join(root, 'apps/web/src/lib');
+    await Promise.all(
+      [
+        'foundation/presentation',
+        'foundation/dashboard',
+        'foundation/session',
+        'features/sessions',
+        'features/report',
+      ].map((directory) => mkdir(path.join(lib, directory), { recursive: true })),
+    );
+    const entrypoints = [
+      'foundation/dashboard/dashboard-analytics.ts',
+      'foundation/dashboard/dashboard-model.ts',
+      'features/sessions/dashboard-sort.ts',
+      'foundation/overview-model.ts',
+      'features/report/provider-status-model.ts',
+      'foundation/campaign-label-overrides.ts',
+      'foundation/session/session-analysis-target.ts',
+      'foundation/machine-freshness-presentation.ts',
+      'foundation/presentation/report-value.ts',
+    ];
+    await Promise.all([
+      ...entrypoints.map((entrypoint) => writeFile(path.join(lib, entrypoint), 'export {};\n')),
+      writeFile(
+        path.join(lib, 'foundation/presentation/format.ts'),
+        "import { model } from './model';\nimport '@tanstack/table-core';\nimport '@ai-usage/report-core/session-query';\n",
+      ),
+      writeFile(
+        path.join(lib, 'foundation/presentation/model.ts'),
+        "import { writable } from 'svelte/store';\nimport { page } from '$app/state';\nimport { aliased } from '#lib/foundation/aliased.ts';\nimport View from './view.svelte';\n",
+      ),
+      writeFile(path.join(lib, 'foundation/aliased.ts'), "import path from 'node:path';\n"),
+      writeFile(path.join(lib, 'foundation/presentation/view.svelte'), '<p>view</p>\n'),
+    ]);
+
+    expect((await collectViolations(root)).map(({ file, specifier }) => `${file} -> ${specifier}`).toSorted()).toEqual([
+      'apps/web/src/lib/foundation/aliased.ts -> node:path',
+      'apps/web/src/lib/foundation/presentation/model.ts -> $app/state',
+      'apps/web/src/lib/foundation/presentation/model.ts -> svelte/store',
+      'apps/web/src/lib/foundation/presentation/view.svelte -> apps/web/src/lib/foundation/presentation/view.svelte',
+    ]);
+  });
+
+  test('reports a missing closure entrypoint while the rest of its closure exists', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await mkdir(path.join(root, 'apps/web/src/lib/foundation/presentation'), { recursive: true });
+    await writeFile(path.join(root, 'apps/web/src/lib/foundation/presentation/format.ts'), 'export {};\n');
+
+    const missing = (await collectViolations(root)).filter(({ message }) => message.endsWith('entrypoint is missing.'));
+    expect(missing).toHaveLength(9);
+    expect(missing).toContainEqual(
+      expect.objectContaining({
+        file: 'apps/web/src/lib/foundation/presentation/report-value.ts',
+        packageName: '@ai-usage/web',
+      }),
+    );
+  });
+
+  test('keeps the passive design closure on plain TypeScript and the generated css entry', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'design-system', { name: '@ai-usage/design-system' });
+    const source = path.join(root, 'packages/design-system/src');
+    await Promise.all([
+      mkdir(path.join(source, 'components')),
+      mkdir(path.join(source, 'svelte/passive'), { recursive: true }),
+    ]);
+    const passiveModules = [
+      'chart',
+      'empty-state',
+      'field',
+      'layout',
+      'overview',
+      'panel',
+      'skills',
+      'status',
+      'table',
+      'time-slider',
+    ];
+    await Promise.all([
+      ...passiveModules.map((name) =>
+        writeFile(path.join(source, `components/${name}.ts`), "import { css } from '@ai-usage/design-system/css';\n"),
+      ),
+      writeFile(
+        path.join(source, 'components/button.ts'),
+        "import { fill } from '../svelte/passive/harness-fill';\nimport Badge from './badge.svelte';\n",
+      ),
+      writeFile(
+        path.join(source, 'svelte/passive/harness-fill.ts'),
+        "import { Dialog } from '@ark-ui/svelte/dialog';\nimport { clsx } from 'clsx';\nimport { onMount } from 'svelte';\n",
+      ),
+      writeFile(path.join(source, 'components/badge.svelte'), '<span>badge</span>\n'),
+    ]);
+
+    expect((await collectViolations(root)).map(({ file, specifier }) => `${file} -> ${specifier}`).toSorted()).toEqual([
+      'packages/design-system/src/components/badge.svelte -> packages/design-system/src/components/badge.svelte',
+      'packages/design-system/src/svelte/passive/harness-fill.ts -> @ark-ui/svelte/dialog',
+      'packages/design-system/src/svelte/passive/harness-fill.ts -> clsx',
+      'packages/design-system/src/svelte/passive/harness-fill.ts -> svelte',
+    ]);
+  });
+
   test('accepts the current workspace graph', async () => {
     expect(await collectViolations(repositoryRoot)).toEqual([]);
   });

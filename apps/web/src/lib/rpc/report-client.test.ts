@@ -218,15 +218,4 @@ describe('report client adapter', () => {
       }).getFocusedReportSupport(supportInput),
     ).rejects.toThrow();
   });
-
-  test('imports only the public contract boundary and no server module', async () => {
-    const source = await Bun.file(new URL('./report-client.ts', import.meta.url)).text();
-
-    expect(source).toContain('@ai-usage/web-contract/report');
-    expect(source).not.toContain('@orpc/server');
-    expect(source).not.toContain('#lib/server');
-    expect(source).not.toContain('.server');
-    expect(source).not.toContain('@ai-usage/usage-store');
-    expect(source).not.toContain('@ai-usage/report-data');
-  });
 });
