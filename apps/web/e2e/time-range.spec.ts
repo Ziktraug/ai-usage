@@ -196,6 +196,10 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   });
   await timeline.focus();
   await timeline.press('End');
+  // Keyboard inspection fills a polite status readout with the inspected day.
+  const readout = activity.locator('[data-timeline-readout]');
+  await expect(readout).toHaveAttribute('role', 'status');
+  await expect(readout).toHaveAttribute('aria-live', 'polite');
   const trend = activity.locator('[data-timeline-trend]');
   await expect(trend).toBeVisible();
   await expect(trend).toHaveText('▲ 100%');
@@ -598,6 +602,11 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await custom.from.press('Tab');
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByRole('alert')).toHaveText('Enter a valid From date (YYYY-MM-DD).');
+  // Both fields name the announced error as their description.
+  const customError = await page.getByRole('alert').getAttribute('id');
+  expect(customError).toBeTruthy();
+  await expect(custom.from).toHaveAttribute('aria-describedby', customError ?? '');
+  await expect(custom.to).toHaveAttribute('aria-describedby', customError ?? '');
   expect(page.url()).toBe(urlBeforeInvalidDraft);
   await custom.from.press('Escape');
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -815,6 +824,68 @@ test('drags a brush handle with the pointer and keeps it on the selection edge',
   expect(after?.x ?? 0).toBeLessThan(before.x);
   // Dragging must not leave the pointer captured on the thumb.
   await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
+});
+
+test('ends a brush drag when the browser cancels the pointer or takes its capture away', async ({ page }) => {
+  await openHydratedReport(page);
+  const brush = (await openActivityExplorer(page)).locator('[data-report-range-part="brush"]');
+  const startHandle = brush.getByRole('slider', { name: 'Start date' });
+  await startHandle.scrollIntoViewIfNeeded();
+
+  // Drag the handle, end the gesture without a pointerup, then keep moving across the handle: a
+  // drag that is still live would follow the pointer.
+  const dragThenEnd = async (endGesture: () => Promise<void>): Promise<void> => {
+    const box = await startHandle.boundingBox();
+    if (!box) {
+      throw new Error('The start handle has no box to drag');
+    }
+    const y = box.y + box.height / 2;
+    const startedAt = await startHandle.getAttribute('aria-valuetext');
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, y, { steps: 4 });
+    await expect(startHandle).not.toHaveAttribute('aria-valuetext', startedAt ?? '');
+    const endedAt = await startHandle.getAttribute('aria-valuetext');
+    await endGesture();
+    const endedBox = await startHandle.boundingBox();
+    if (!endedBox) {
+      throw new Error('The start handle has no box after the gesture ended');
+    }
+    await page.mouse.move(endedBox.x + endedBox.width / 2 + 2, y);
+    await page.mouse.move(endedBox.x + endedBox.width / 2 + 80, y, { steps: 6 });
+    await expect(startHandle).toHaveAttribute('aria-valuetext', endedAt ?? '');
+    await page.mouse.up();
+  };
+
+  await dragThenEnd(() =>
+    startHandle.dispatchEvent('pointercancel', { bubbles: true, isPrimary: true, pointerId: 1, pointerType: 'mouse' }),
+  );
+  await dragThenEnd(() =>
+    startHandle.evaluate((element) => {
+      element.releasePointerCapture(1);
+    }),
+  );
+
+  // The selected window pans the same way, and a cancelled pan leaves no drag behind.
+  const selection = brush.getByRole('button', { name: 'Selected report window' });
+  const selectionBox = await selection.boundingBox();
+  if (!selectionBox) {
+    throw new Error('The selected report window has no box to pan');
+  }
+  await page.mouse.move(selectionBox.x + selectionBox.width / 2, selectionBox.y + selectionBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(selectionBox.x + selectionBox.width / 2 - 30, selectionBox.y + selectionBox.height / 2, {
+    steps: 3,
+  });
+  await expect(selection).toHaveAttribute('data-dragging', 'true');
+  await selection.dispatchEvent('pointercancel', {
+    bubbles: true,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: 'mouse',
+  });
+  await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
+  await page.mouse.up();
 });
 
 test('draws only the selected report range and never overflows the plot', async ({ page }) => {

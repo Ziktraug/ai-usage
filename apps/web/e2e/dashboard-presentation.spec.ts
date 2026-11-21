@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
   FOCUSED_REPORT_E2E_MODEL_TAIL_KEY,
@@ -623,42 +624,66 @@ test('never orphans a record tile: three tiles are 3-up from md and 1-up below',
   expect(widths.cards.every((width) => Math.abs(width - widths.grid) < 1)).toBe(true);
 });
 
+/** Tick labels the timeline keeps visible that sit below the boundary dates or cross one horizontally. */
+const intersectingTimelineLabels = async (page: Page): Promise<string[]> => {
+  const tickRow = page.locator('[data-timeline-tick-row]');
+  const boundaryRow = page.locator('[data-timeline-boundary-row]');
+  await expect(page.locator('[data-timeline-labels-settled="true"]')).toBeVisible();
+  await expect(tickRow).toBeVisible();
+  await expect(boundaryRow).toBeVisible();
+  const boundaries = boundaryRow.locator('[data-timeline-boundary]');
+  await expect(boundaries).toHaveCount(2);
+
+  const tickBoxes = await tickRow
+    .locator('[data-timeline-tick]')
+    .visible()
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { bottom: box.bottom, left: box.left, right: box.right, text: element.textContent?.trim() ?? '' };
+      }),
+    );
+  const boundaryBoxes = await boundaries.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top };
+    }),
+  );
+  const boundaryTop = Math.min(...boundaryBoxes.map((box) => box.top));
+  return tickBoxes
+    .filter(
+      (tick) =>
+        tick.bottom > boundaryTop ||
+        boundaryBoxes.some((boundary) => !(tick.right <= boundary.left || tick.left >= boundary.right)),
+    )
+    .map(({ text }) => text);
+};
+
 test('separates timeline boundary dates and retains no horizontally intersecting tick', async ({ page }) => {
   for (const width of [1440, 900]) {
     await page.setViewportSize({ height: 1000, width });
     await page.goto('/');
 
-    const tickRow = page.locator('[data-timeline-tick-row]');
-    const boundaryRow = page.locator('[data-timeline-boundary-row]');
-    await expect(page.locator('[data-timeline-labels-settled="true"]')).toBeVisible();
-    const ticks = tickRow.locator('[data-timeline-tick]').visible();
-    const boundaries = boundaryRow.locator('[data-timeline-boundary]');
-    await expect(tickRow).toBeVisible();
-    await expect(boundaryRow).toBeVisible();
-    await expect(boundaries).toHaveCount(2);
-
-    const tickBoxes = await ticks.evaluateAll((elements) =>
-      elements.map((element) => {
-        const box = element.getBoundingClientRect();
-        return { bottom: box.bottom, left: box.left, right: box.right };
-      }),
-    );
-    const boundaryBoxes = await boundaries.evaluateAll((elements) =>
-      elements.map((element) => {
-        const box = element.getBoundingClientRect();
-        return { left: box.left, right: box.right, top: box.top };
-      }),
-    );
-
-    expect(Math.max(...tickBoxes.map((box) => box.bottom))).toBeLessThanOrEqual(
-      Math.min(...boundaryBoxes.map((box) => box.top)),
-    );
-    for (const tick of tickBoxes) {
-      for (const boundary of boundaryBoxes) {
-        expect(tick.right <= boundary.left || tick.left >= boundary.right).toBe(true);
-      }
-    }
+    expect(await intersectingTimelineLabels(page)).toEqual([]);
   }
+
+  // Narrowing the mounted timeline, without a reload, measures its labels again.
+  await page.setViewportSize({ height: 1000, width: 1440 });
+  await page.goto('/');
+  expect(await intersectingTimelineLabels(page)).toEqual([]);
+  await page.setViewportSize({ height: 1000, width: 900 });
+  await expect.poll(() => intersectingTimelineLabels(page)).toEqual([]);
+
+  // New labels without a resize: the timeline measures them again rather than keeping the old verdict.
+  const tickTexts = () => page.locator('[data-timeline-tick]').allTextContents();
+  const before = await tickTexts();
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { exact: true, name: 'All time' })
+    .click();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(tickTexts).not.toEqual(before);
+  expect(await intersectingTimelineLabels(page)).toEqual([]);
 });
 
 test('keeps the mobile filter stack coherent with content above the fold', async ({ page }) => {

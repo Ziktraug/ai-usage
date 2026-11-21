@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { readFile } from 'node:fs/promises';
 import {
   activeReportTab,
   ensureHistoryEntryKey,
@@ -137,27 +136,6 @@ describe('Svelte application shell navigation', () => {
     expect(
       shouldPreserveReportScroll(new URL('http://localhost/sessions/row-1'), new URL('http://localhost/sync')),
     ).toBe(false);
-  });
-
-  test('keeps one hydrated retry and a same-URL progressive fallback', async () => {
-    const shellSource = await readFile(new URL('./error-shell.svelte', import.meta.url), 'utf8');
-    const routeSource = await readFile(new URL('../../../routes/+error.svelte', import.meta.url), 'utf8');
-    const ownerSource = await readFile(new URL('./error-route-owner.svelte', import.meta.url), 'utf8');
-
-    expect(shellSource).toContain('<form action={retryHref} class={retryForm} method="get" onsubmit={submitRetry}>');
-    expect(shellSource).toContain('event.preventDefault();');
-    expect(shellSource).toContain('retryParameters');
-    expect(shellSource).toContain('type="hidden"');
-    expect(shellSource).toContain('{name}');
-    expect(shellSource).toContain('{value}');
-    expect(shellSource).toContain('await onRetry();');
-    expect(routeSource).toContain('<ErrorRouteOwner />');
-    expect(ownerSource).toContain('await goto(new URL(page.url.href), { refreshAll: true, replace: true });');
-    expect(ownerSource).not.toContain('location.reload');
-    expect(ownerSource).toContain('retryHref=');
-    expect(ownerSource).toContain('page.url.pathname');
-    expect(ownerSource).toContain('page.url.search');
-    expect(ownerSource).not.toContain('invalidateAll');
   });
 });
 

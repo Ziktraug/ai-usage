@@ -202,41 +202,6 @@ describe('P2 timeline presentation model', () => {
   });
 });
 
-test('wires legend buttons, keyboard inspection, live readout, and collision measurement in the Svelte leaf', async () => {
-  const source = await Bun.file(new URL('./activity-timeline.svelte', import.meta.url)).text();
-  expect(source).toContain('onkeydown={onChartKeydown}');
-  expect(source).toContain('onfocus={() => inspect(inspectedIndex ?? bars[0]?.index ?? 0)}');
-  expect(source).toContain('aria-live="polite"');
-  expect(source).toContain('data-timeline-readout');
-  expect(source).toContain('{...pressedAria(active)}');
-  expect(source).toContain('onclick={() => filterable && onDimensionFilter(timeline.dimension, series.key)}');
-  expect(source).toContain('new ResizeObserver(measureTickCollisions)');
-  expect(source).toContain('class={timelineHoverLayer}');
-  expect(source).toContain('data-origin-series-stack');
-  expect(source).toContain('data-origin-unclassified-band');
-  expect(source).toContain('data-origin-unclassified-legend');
-  expect(source).toContain('document.fonts.ready.then');
-  expect(source).toContain('observer.observe(boundaryRowElement)');
-  expect(source).toContain('metricLabel}:');
-  expect(source).toContain('presentTimelineValue(');
-  expect(source).toContain('classifiedBucketPriceMeasurement(bar.bucket)');
-  expect(source).toContain('accessibleAmount(barValue)');
-  expect(source).toContain('presentation.provenance');
-  expect(source).toContain('data-timeline-legend-entry=');
-  expect(source).toContain('...(rank === undefined ? {} : { rank })');
-  expect(source).toContain('aggregate: (series?.memberKeys?.length ?? 0) > 0');
-  expect(source).not.toContain('data-origin-gap-value');
-});
-
-test('remeasures tick collisions when timeline labels change without a resize', async () => {
-  const source = await Bun.file(new URL('./activity-timeline.svelte', import.meta.url)).text();
-  expect(source).toContain('const tickMeasurementRevision = $derived(');
-  expect(source).toContain("monthTicks.map(timelineMonthTickId).join('|')");
-  expect(source).toContain('retainedTickIds = null');
-  expect(source).toContain('afterDomUpdate().then(() =>');
-  expect(source).toContain('cancelled = true');
-});
-
 describe('readout series trend', () => {
   const bucketWith = (date: string, alpha: number, beta: number) => ({
     byKey: {

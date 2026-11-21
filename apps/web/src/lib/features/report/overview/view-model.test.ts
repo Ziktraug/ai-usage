@@ -53,35 +53,3 @@ describe('Overview presentation adapters', () => {
     expect(description).toContain('Origin unavailable: 3 sessions');
   });
 });
-
-test('keeps the decision-first Overview and provider-last reading order', async () => {
-  const pageSource = await Bun.file(new URL('./overview-page.svelte', import.meta.url)).text();
-  const orderedSurfaces = [
-    '<ExecutiveOverview',
-    '<Records',
-    '<ActivityHeatmap',
-    '<TokenAnatomy',
-    'aria-labelledby="advanced-analysis-title"',
-    '<ProviderStatus',
-  ];
-  const positions = orderedSurfaces.map((surface) => pageSource.indexOf(surface));
-
-  expect(positions.every((position) => position >= 0)).toBe(true);
-  expect(positions).toEqual([...positions].sort((left, right) => left - right));
-  expect(pageSource).not.toContain('<DashboardMetrics');
-
-  const executiveSource = await Bun.file(new URL('./executive-overview.svelte', import.meta.url)).text();
-  const executiveSurfaces = [
-    'data-executive-kpi',
-    'data-executive-metrics',
-    '<ActivityExplorer',
-    'data-period-insight',
-    'Top models',
-  ];
-  const executivePositions = executiveSurfaces.map((surface) => executiveSource.indexOf(surface));
-  expect(executivePositions.every((position) => position >= 0)).toBe(true);
-  expect(executivePositions).toEqual([...executivePositions].sort((left, right) => left - right));
-  for (const forbiddenClaim of ['actual spend', 'bill', 'invoice', 'saving', 'ROI']) {
-    expect(executiveSource.toLowerCase()).not.toContain(forbiddenClaim.toLowerCase());
-  }
-});
