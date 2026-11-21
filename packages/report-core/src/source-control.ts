@@ -1,4 +1,5 @@
 import { isCanonicalInstant } from './canonical-instant';
+import { isRecord } from './datasets';
 import type { HarnessKey } from './harness-metadata';
 import { MAX_PORTABLE_USAGE_ROWS } from './portable-usage';
 import { isServedRevision } from './served-revision';
@@ -276,16 +277,13 @@ export type SourceControlCommand =
   | { readonly command: 'run-all' }
   | { readonly command: 'detect-all' };
 
-const isCommandRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 const commandHasExactKeys = (record: Record<string, unknown>, expected: readonly string[]): boolean => {
   const keys = Object.keys(record).sort();
   return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 };
 
 export const parseSourceControlCommand = (value: unknown): SourceControlCommand => {
-  if (!isCommandRecord(value) || typeof value.command !== 'string') {
+  if (!isRecord(value) || typeof value.command !== 'string') {
     throw new Error('Source control command must be an object.');
   }
   if (value.command === 'run-all' || value.command === 'detect-all') {
@@ -513,9 +511,6 @@ const parseFailure = (message: string): never => {
   throw new SourceControlParseError(message);
 };
 
-const isRecordValue = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 const hasOnlyRecordKeys = (record: Record<string, unknown>, allowed: readonly string[]): boolean => {
   const allowedKeys = new Set(allowed);
   return Object.keys(record).every((key) => allowedKeys.has(key));
@@ -539,7 +534,7 @@ const isOptionalBoundedInteger = (value: unknown, maximum: number): value is num
   value === undefined || isBoundedNonNegativeInteger(value, maximum);
 
 const isReason = (value: unknown): value is SourceReason => {
-  if (!(isRecordValue(value) && hasOnlyRecordKeys(value, ['code', 'message']))) {
+  if (!(isRecord(value) && hasOnlyRecordKeys(value, ['code', 'message']))) {
     return false;
   }
   return (
@@ -549,14 +544,14 @@ const isReason = (value: unknown): value is SourceReason => {
 };
 
 const isWarning = (value: unknown): value is SourceWarning =>
-  isRecordValue(value) &&
+  isRecord(value) &&
   hasOnlyRecordKeys(value, ['code', 'message']) &&
   typeof value.code === 'string' &&
   boundedCodePattern.test(value.code) &&
   (value.message === undefined || isBoundedString(value.message));
 
 const isProgress = (value: unknown): value is SourceProgress =>
-  isRecordValue(value) &&
+  isRecord(value) &&
   hasOnlyRecordKeys(value, ['completed', 'message', 'phase', 'total']) &&
   progressPhases.has(value.phase as SourceProgressPhase) &&
   isOptionalBoundedInteger(value.completed, sourceControlBounds.maxCount) &&
@@ -566,7 +561,7 @@ const isProgress = (value: unknown): value is SourceProgress =>
 const isSourceEntry = (value: unknown): value is SourceControlEntryView => {
   if (
     !(
-      isRecordValue(value) &&
+      isRecord(value) &&
       hasOnlyRecordKeys(value, [
         'availability',
         'cadenceMs',
@@ -637,7 +632,7 @@ const isSourceLifecycleConsistent = (source: SourceControlEntryView): boolean =>
 const isPublication = (value: unknown): value is SourcePublicationView => {
   if (
     !(
-      isRecordValue(value) &&
+      isRecord(value) &&
       hasOnlyRecordKeys(value, [
         'acknowledgedRequestGeneration',
         'dirty',
@@ -730,7 +725,7 @@ export const parseSourceControlSnapshot = (value: unknown): SourceControlView =>
   assertSerializedBound(value, sourceControlBounds.maxSnapshotBytes, 'Source control snapshot');
   if (
     !(
-      isRecordValue(value) &&
+      isRecord(value) &&
       hasOnlyRecordKeys(value, [
         'generatedAt',
         'generation',
@@ -817,7 +812,7 @@ export const parseSourceControlCommandResponse = (value: unknown): SourceControl
     sourceControlBounds.maxSnapshotBytes + sourceControlBounds.maxEventBytes,
     'Command response',
   );
-  if (!isRecordValue(value) || typeof value.ok !== 'boolean') {
+  if (!isRecord(value) || typeof value.ok !== 'boolean') {
     return parseFailure('Source control command response is invalid.');
   }
   if (value.ok) {
@@ -836,7 +831,7 @@ export const parseSourceControlCommandResponse = (value: unknown): SourceControl
   if (
     !(
       hasOnlyRecordKeys(value, ['error', 'ok']) &&
-      isRecordValue(error) &&
+      isRecord(error) &&
       hasOnlyRecordKeys(error, ['message', 'reason', 'tag'])
     ) ||
     error.tag !== 'SourceControlCommandError' ||
@@ -855,7 +850,7 @@ export const parseReportPublishedEvent = (value: unknown): ReportPublishedEvent 
   assertSerializedBound(value, sourceControlBounds.maxEventBytes, 'Report publication event');
   if (
     !(
-      isRecordValue(value) &&
+      isRecord(value) &&
       hasOnlyRecordKeys(value, ['instanceId', 'publishedAt', 'revision', 'sourceControlGeneration']) &&
       isBoundedString(value.instanceId, 160) &&
       isIsoTimestamp(value.publishedAt) &&
