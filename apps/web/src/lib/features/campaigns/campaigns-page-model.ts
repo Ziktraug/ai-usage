@@ -7,6 +7,8 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { campaignMapFixtureGeneratedAt } from '../../foundation/campaign-map-fixture';
 import type { DashboardSearch } from '../../foundation/dashboard/dashboard-search';
+import type { CampaignScrollState } from './campaign-virtual-window';
+import type { CampaignExplorationRefresh } from './campaigns-exploration-state.svelte';
 import type { CampaignExplorationAnchors, CampaignExplorationData } from './campaigns-query';
 
 /** The Harness select value that stands for a URL selecting more than one harness. */
@@ -160,6 +162,53 @@ export const refreshAnchorsFor = (input: {
     memberRowIds: selectedKey
       ? { [selectedKey]: [rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined].filter(isKey) }
       : {},
+  };
+};
+
+/** What a refresh onto `latest` keeps: matched positions, list and member anchors, acquired depths. */
+export const campaignRefreshFor = (input: {
+  readonly campaignView: 'list' | 'timeline';
+  readonly items: readonly CampaignListEntry[];
+  readonly latest: CampaignRevision;
+  readonly listPageCount: number;
+  readonly matchedRows: readonly { readonly rowId: string }[];
+  /** The loaded depth of the matching-session search, or none when no search is answered. */
+  readonly matchingDepth: number | null;
+  readonly memberPageCount: number;
+  /** The scroll positions of the four virtual lists. */
+  readonly navigation: Readonly<
+    Record<'listNavigation' | 'mapNavigation' | 'searchNavigation' | 'timelineNavigation', CampaignScrollState>
+  >;
+  readonly rows: readonly { readonly rowId: string }[];
+  readonly selectedKey: string;
+  readonly selectedSessionId: string;
+}): CampaignExplorationRefresh => {
+  const { matchedRows, matchingDepth, navigation, rows, selectedKey } = input;
+  return {
+    matchingRestoration:
+      matchingDepth === null
+        ? null
+        : matchingRestorationFor(
+            selectedKey,
+            matchingDepth,
+            [navigation.searchNavigation.anchor?.key, input.selectedSessionId],
+            matchedRows,
+          ),
+    anchors: refreshAnchorsFor({
+      campaignAnchor: navigation.listNavigation.anchor?.key,
+      items: input.items,
+      memberAnchor:
+        input.campaignView === 'timeline'
+          ? navigation.timelineNavigation.anchor?.key
+          : navigation.mapNavigation.anchor?.key,
+      rows,
+      selectedKey,
+      timelineAnchor: navigation.timelineNavigation.anchor?.key,
+    }),
+    listPageCount: input.listPageCount,
+    memberPageCount: input.memberPageCount,
+    selectedKey,
+    inspected: input.latest,
   };
 };
 

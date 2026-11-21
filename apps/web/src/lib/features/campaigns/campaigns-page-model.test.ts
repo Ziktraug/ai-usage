@@ -10,6 +10,7 @@ import { dashboardSearchDefaultsFor } from '../../foundation/dashboard/dashboard
 import {
   bootstrapCampaignRevision,
   campaignMapFor,
+  campaignRefreshFor,
   campaignTimelineContext,
   detailNavigationRowsFor,
   filteredSearchFrom,
@@ -208,6 +209,46 @@ describe('refreshAnchorsFor', () => {
       memberRowIds: { 'campaign-a': [] },
     });
     expect(refreshAnchorsFor({ ...input, selectedKey: '' })).toEqual({ campaignKeys: [], memberRowIds: {} });
+  });
+});
+
+describe('campaignRefreshFor', () => {
+  const latest = { revision: 'rev-2', generatedAt: '2026-11-02T00:00:00.000Z' };
+  const input = {
+    campaignView: 'list' as 'list' | 'timeline',
+    items: [{ campaignKey: 'campaign-a', row: { projectKey: 'project-a' } }],
+    latest,
+    listPageCount: 2,
+    matchedRows: [row('match-1')],
+    matchingDepth: 3 as number | null,
+    memberPageCount: 4,
+    navigation: {
+      listNavigation: { anchor: { key: 'campaign-a', offset: 0 } },
+      mapNavigation: { anchor: { key: 'member-1', offset: 0 } },
+      searchNavigation: { anchor: { key: 'match-1', offset: 0 } },
+      timelineNavigation: { anchor: { key: 'member-2', offset: 0 } },
+    },
+    rows: [row('member-1'), row('member-2')],
+    selectedKey: 'campaign-a',
+    selectedSessionId: 'gone',
+  };
+
+  test('keeps the matched positions, the Agent Map member anchor and the acquired depths', () => {
+    expect(campaignRefreshFor(input)).toEqual({
+      matchingRestoration: { campaignKey: 'campaign-a', depth: 3, rowIds: ['match-1'] },
+      anchors: { campaignKeys: ['campaign-a'], memberRowIds: { 'campaign-a': ['member-1'] } },
+      listPageCount: 2,
+      memberPageCount: 4,
+      selectedKey: 'campaign-a',
+      inspected: latest,
+    });
+  });
+
+  test('in the Project timeline, anchors its member row; without an answered search, restores no matches', () => {
+    expect(campaignRefreshFor({ ...input, campaignView: 'timeline', matchingDepth: null })).toMatchObject({
+      matchingRestoration: null,
+      anchors: { campaignKeys: ['campaign-a'], memberRowIds: { 'campaign-a': ['member-2'] } },
+    });
   });
 });
 

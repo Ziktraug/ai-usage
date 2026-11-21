@@ -4,7 +4,7 @@
   import { ghostButton, ghostButtonStyle } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
   import { campaignMapTitle } from '@ai-usage/report-core/campaign-map';
-  import { type SessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+  import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
   import {
     createInfiniteQuery,
     createQuery,
@@ -18,8 +18,7 @@
   import { page } from '$app/state';
   import { campaignDisplayLabelFor, indexCampaignLabelOverrides } from '../../foundation/campaign-label-overrides';
   import { campaignMapFixtureGeneratedAt } from '../../foundation/campaign-map-fixture';
-  import { dashboardSearchDefaultsFor } from '../../foundation/dashboard/dashboard-search';
-  import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
+  import { parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
   import { displayTitle } from '../../foundation/presentation/display-title';
   import { fmtCompact } from '../../foundation/presentation/format';
   import {
@@ -32,12 +31,7 @@
   import { optionalSessionLookupQueryOptions } from '../../query/options/session';
   import { SessionRevisionExpiredError, type SessionWindowIntent } from '../../query/options/session-window';
   import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { createReportClient } from '../../rpc/report-client';
-  import { createSessionClientAdapter } from '../../rpc/session-client';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
   import SessionDetailQuerySlot from '../sessions/detail/session-detail-query-slot.svelte';
-  import { panelOpenedFromReport, sessionPanelHistoryState } from '../sessions/detail/session-route';
-  import type { SessionSelectionInput } from '../sessions/detail/types';
   import { dashboardSearchCodec } from '../shell/navigation';
   import { useShellNavigationOwner } from '../shell/navigation-owner-context';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
@@ -49,6 +43,7 @@
   import { createCampaignExplorationState } from './campaigns-exploration-state.svelte';
   import { createCampaignFocusRestoration } from './campaigns-focus-restoration.svelte';
   import type { CampaignsPageData } from './campaigns-load';
+  import { createCampaignNavigationActions } from './campaigns-navigation-actions.svelte';
   import {
     activeCard,
     activeViewButton,
@@ -67,19 +62,18 @@
     toolbar,
     viewControls,
   } from './campaigns-page.styles';
+  import { campaignPageClientsFor } from './campaigns-page-clients';
   import {
     bootstrapCampaignRevision,
     campaignMapFor,
+    campaignRefreshFor,
     campaignTimelineContext,
     detailNavigationRowsFor,
-    filteredSearchFrom,
     inheritedFiltersFor,
     MULTIPLE_HARNESSES,
-    matchingRestorationFor,
     mergeRowsById,
     optionalSessionLookupRequest,
     recordedAt,
-    refreshAnchorsFor,
     sessionCount,
     syntheticCampaignRevision,
   } from './campaigns-page-model';
@@ -91,27 +85,12 @@
     campaignsRequest,
   } from './campaigns-query';
   import { readCampaignSelection } from './campaigns-selection';
-  import { createSyntheticCampaignClient } from './campaigns-synthetic';
 
   let { data }: { data: CampaignsPageData } = $props();
   const queryClient = useQueryClient();
   const shellNavigation = useShellNavigationOwner();
   const rpc = useOptionalWebQueryRpcContext()?.rpc;
-  const clients = untrack(() => {
-    const report =
-      browser && rpc
-        ? createReportClient(rpc)
-        : ssrUnavailableClient<ReturnType<typeof createReportClient>>('campaigns report');
-    if (data.mode !== 'live') {
-      return { report, session: createSyntheticCampaignClient() };
-    }
-    const session =
-      browser && rpc
-        ? createSessionClientAdapter(rpc.session)
-        : ssrUnavailableClient<ReturnType<typeof createSessionClientAdapter>>('campaigns session');
-    return { report, session };
-  });
-  let navigationError = $state<string | null>(null);
+  const clients = untrack(() => campaignPageClientsFor({ browser, mode: data.mode, rpc }));
   let replayOpen = $state(false);
   // Loaded on first open. A script-side import keeps Svelte's await-block runtime out of the
   // shared first-load chunk, which the report's gzip budget counts.
@@ -140,6 +119,30 @@
     selectedSessionId: () => selectedSessionId,
   });
   const explorationState = createCampaignExplorationState({ focus: focusRestoration, scope: () => scope });
+  const campaignNavigation = createCampaignNavigationActions({
+    exploration: explorationState,
+    focus: focusRestoration,
+    goto: (url, gotoOptions) => shellNavigation.goto(url, gotoOptions),
+    href: () => page.url.href,
+    latest: () => latest,
+    pageState: () => page.state,
+    pageUrl: () => pageUrl,
+    rowRevisionFor: (rowId) => rowRevisionFor(rowId),
+    search: () => search,
+    selectedKey: () => selectedKey,
+    selectedSessionId: () => selectedSessionId,
+    selectionRowId: () => selection?.row.rowId,
+  });
+  const {
+    applyFilters,
+    changeSelection,
+    clearFilters,
+    clearSelection,
+    openSession,
+    restart,
+    selectCampaign,
+    selectView,
+  } = campaignNavigation;
   let checkedExpiredRevision = '';
   const bootstrapQuery = createQuery(() =>
     reportBootstrapQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
@@ -410,136 +413,27 @@
     if (!latest) {
       return;
     }
-    explorationState.refresh({
-      matchingRestoration:
-        search.q && matching.data
-          ? matchingRestorationFor(
-              selectedKey,
-              matching.data.pages.length,
-              [explorationState.searchNavigation.anchor?.key, selectedSessionId],
-              matchedRows,
-            )
-          : null,
-      anchors: refreshAnchorsFor({
-        campaignAnchor: explorationState.listNavigation.anchor?.key,
+    explorationState.refresh(
+      campaignRefreshFor({
+        campaignView,
         items,
-        memberAnchor:
-          campaignView === 'timeline'
-            ? explorationState.timelineNavigation.anchor?.key
-            : explorationState.mapNavigation.anchor?.key,
+        latest,
+        listPageCount: listPages.length,
+        matchedRows,
+        matchingDepth: search.q && matching.data ? matching.data.pages.length : null,
+        memberPageCount: memberPages.length,
+        navigation: explorationState,
         rows,
         selectedKey,
-        timelineAnchor: explorationState.timelineNavigation.anchor?.key,
+        selectedSessionId,
       }),
-      listPageCount: listPages.length,
-      memberPageCount: memberPages.length,
-      selectedKey,
-      inspected: latest,
-    });
-  };
-  const restart = (): void => {
-    explorationState.restart(latest);
-    const url = new URL(page.url.href);
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-  const navigate = async (
-    url: URL,
-    navigationOptions: { readonly replace?: boolean; readonly state?: App.PageState } = {},
-  ): Promise<void> => {
-    navigationError = null;
-    try {
-      await shellNavigation.goto(url, { reset: false, ...navigationOptions });
-    } catch (cause) {
-      navigationError = cause instanceof Error ? cause.message : 'Campaign navigation failed.';
-    }
-  };
-  const selectCampaign = (campaignKey: string): void => {
-    const url = new URL(page.url.href);
-    url.searchParams.set('selectedCampaign', campaignKey);
-    if (campaignKey !== selectedKey) {
-      explorationState.matchingRestoration = null;
-      explorationState.searchNavigation = {};
-      url.searchParams.delete('selectedSession');
-      explorationState.mapNavigation = {};
-      explorationState.collapsedNodes = new Set();
-    }
-    explorationState.mobileMap = true;
-    navigate(url);
-  };
-  const selectView = (view: 'list' | 'timeline'): void => {
-    const url = new URL(page.url.href);
-    if (view === 'timeline') {
-      url.searchParams.set('campaignView', 'timeline');
-    } else {
-      url.searchParams.delete('campaignView');
-    }
-    navigate(url);
-  };
-  const clearSelection = (): void => {
-    explorationState.automaticCampaign = '';
-    const url = new URL(page.url.href);
-    url.searchParams.delete('selectedCampaign');
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-  const clearFilters = (): void => {
-    const url = dashboardUrlFor(pageUrl, dashboardSearchDefaultsFor('date'), dashboardSearchCodec);
-    url.searchParams.delete('selectedCampaign');
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-  const applyFilters = (event: SubmitEvent): void => {
-    event.preventDefault();
-    if (!(event.currentTarget instanceof HTMLFormElement)) {
-      return;
-    }
-    const next = filteredSearchFrom(search, new FormData(event.currentTarget));
-    const url = dashboardUrlFor(pageUrl, next, dashboardSearchCodec);
-    url.searchParams.delete('selectedCampaign');
-    url.searchParams.delete('selectedSession');
-    navigate(url);
-  };
-
-  const openSession = (row: SessionPresentationRow): void => {
-    const selectedRevision = rowRevisionFor(row.rowId);
-    if (!selectedRevision) {
-      return;
-    }
-    explorationState.mobileMap = true;
-    if (!selectedSessionId) {
-      focusRestoration.detailOpenerId = row.rowId;
-    }
-    const url = new URL(page.url.href);
-    url.searchParams.set('selectedCampaign', selectedKey);
-    url.searchParams.set('selectedSession', row.rowId);
-    const replacing = Boolean(selectedSessionId);
-    navigate(url, {
-      replace: replacing,
-      state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
-    });
+    );
   };
   beforeNavigate(focusRestoration.beforeNavigate);
   afterNavigate(() => {
-    focusRestoration.restoreFocus().catch((cause: unknown) => {
-      navigationError = cause instanceof Error ? cause.message : 'Session focus could not be restored.';
-    });
+    focusRestoration.restoreFocus().catch(campaignNavigation.focusFailed);
   });
   onDestroy(focusRestoration.destroy);
-  const changeSelection = (next: SessionSelectionInput | null): void => {
-    if (next) {
-      openSession(next.row);
-      return;
-    }
-    focusRestoration.pendingFocus = selection?.row.rowId ?? selectedSessionId;
-    if (panelOpenedFromReport(page.state)) {
-      window.history.back();
-      return;
-    }
-    const url = new URL(page.url.href);
-    url.searchParams.delete('selectedSession');
-    navigate(url, { replace: true });
-  };
   const retry = async (): Promise<void> => {
     if (recoveryBusy) {
       return;
@@ -631,8 +525,8 @@
     {#if data.mode !== 'live'}
       <p class={notice}>Synthetic demonstration · no local history is read.</p>
     {/if}
-    {#if navigationError}
-      <p class={notice} role="alert">{navigationError}</p>
+    {#if campaignNavigation.navigationError}
+      <p class={notice} role="alert">{campaignNavigation.navigationError}</p>
     {/if}
     {#if detailSelection.kind === 'missing' || invalidSessionLink}
       <p class={notice} data-session-route-status="missing" role="status">
