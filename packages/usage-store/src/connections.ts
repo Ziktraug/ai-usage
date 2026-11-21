@@ -3,8 +3,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Effect } from 'effect';
 import {
+  isBusyStoreCause,
   previewStaleError,
   UsageStoreError,
+  type UsageStoreErrorReason,
   usageStoreError,
   usageStorePreviewReadError,
   usageStoreReadError,
@@ -62,18 +64,23 @@ const ensureWalJournalMode = (db: SqliteDatabase): void => {
   }
 };
 
+const migrationFailureReason = (cause: unknown): UsageStoreErrorReason => {
+  if (cause instanceof UsageStoreSchemaTooNewError) {
+    return 'schema-too-new';
+  }
+  // Lock contention (another writer holding the store when `BEGIN IMMEDIATE` runs) is not a fault of the
+  // migration: it keeps the `storage-failure` every other open failure carries.
+  return isBusyStoreCause(cause) ? 'storage-failure' : 'migration-failure';
+};
+
 // `migrate()` knows neither the path nor the operation, so its failures are typed here: a newer store is
-// `schema-too-new`, any other failure raised while migrating is `migration-failure`.
-const migrateWriterDatabase = (db: SqliteDatabase, dbPath: string): boolean => {
+// `schema-too-new`, lock contention is `storage-failure`, any other failure raised while migrating is
+// `migration-failure`. Exported for its test only; not part of the package interface.
+export const migrateWriterDatabase = (db: SqliteDatabase, dbPath: string): boolean => {
   try {
     return migrate(db);
   } catch (cause) {
-    throw usageStoreError(
-      'openUsageStoreWriter',
-      dbPath,
-      cause,
-      cause instanceof UsageStoreSchemaTooNewError ? 'schema-too-new' : 'migration-failure',
-    );
+    throw usageStoreError('openUsageStoreWriter', dbPath, cause, migrationFailureReason(cause));
   }
 };
 
