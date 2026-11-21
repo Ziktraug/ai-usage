@@ -33,7 +33,7 @@
 | P1 | Turn the complexity and file-size limits back on, with the existing debt suppressed in place | S | — | DONE |
 | P2 | Split `packages/usage-store/src/index.ts` into owned modules (move-only) | L | P1 | DONE (merged into the integration branch at `8bc3be99`) |
 | P3 | Move the flat `apps/web/src/*.ts` root into `lib/features` and `lib/foundation` | M–L | P1 | DONE (merged into the integration branch at `9bf9a653`) |
-| P4 | Extract the `campaigns-page.svelte` script into tested controller modules | M | P3 | TODO |
+| P4 | Extract the `campaigns-page.svelte` script into tested controller modules | M | P3 | DONE with one criterion missed: script 808 → 450 lines, not under 350 (accepted, see the execution note) |
 | P5 | Decompose the worst-complexity functions behind their existing tests | L | P1; P2 for any `usage-store` file | DONE (merged into the integration branch; 271 → 264 suppressed functions) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason).
@@ -1191,3 +1191,118 @@ by reading only, not by a test: the `Effect.sleep(0)` slice yield and the
 wait-truncated and wait-unproven warnings, branch reconciliation truncated or
 failed, identity-uncertain, the `rowRetirement.storeRefused` warning and the
 non-Codex work-observation `collection` spread.
+
+### Plan 127 P4 — execution note
+
+Branch `refactor/campaigns-page-controllers` (worktree `ai-usage-wt/plan127-p4`), based on
+`refactor/structural-cleanliness` @ `46f2bcba` (P1–P3 merged). Not pushed.
+
+#### Baseline (before any change)
+
+- `(cd apps/web && bun run check)` exit 0 (svelte-check 0 errors).
+- `(cd apps/web && bun run test)` exit 0: 2395 pass / 280 files.
+- Script lines (plan awk): 808.
+
+#### Result
+
+- Script lines: 808 -> 450. Target (< 350) NOT reached; see "Why 450".
+- Web tests: 2395 pass / 280 files -> 2460 pass / 286 files (65 added cases, 0 modified).
+- Five commits, one per step (step 3 = three controllers; the last also carries the clients module
+  and the refresh composition helper).
+
+#### New modules (apps/web/src/lib/features/campaigns)
+
+| Module | Lines | Test | Cases |
+| --- | --- | --- | --- |
+| campaigns-page-model.ts (pure derivations, helpers) | 256 | campaigns-page-model.test.ts | 28 |
+| campaigns-page.styles.ts (style constants, unchanged values) | 79 | campaigns-page.styles.test.ts | 2 |
+| campaigns-page-clients.ts (report/session client construction) | 30 | campaigns-page-clients.test.ts | 4 |
+| campaigns-focus-restoration.svelte.ts (controller 1) | 140 | campaigns-focus-restoration.test.ts | 8 |
+| campaigns-exploration-state.svelte.ts (controller 2: snapshot capture/restore, anchors, positions) | 267 | campaigns-exploration-state.test.ts | 9 |
+| campaigns-navigation-actions.svelte.ts (controller 3: URL navigation/selection actions) | 160 | campaigns-navigation-actions.test.ts | 14 |
+| campaigns-rune-modules.fixture.ts (test support: client compile plugin, as delegation-draft.test.ts) | 44 | — | — |
+| campaigns-reactivity.fixture.svelte.ts (test support: `$effect.root` observer) | 23 | — | — |
+
+#### Effects
+
+All six `$effect`s stay in the component, same order, same bodies except access paths; none had or
+gained a cleanup. The scope-reset effect now calls `explorationState.followScope(scope)`, whose
+body is the original one moved verbatim; it reads `scope` (the only dependency before and after;
+`previousScope` is a plain variable) and writes state inside the same effect. Controllers create
+only `$state`, no effects. `beforeNavigate`, `afterNavigate`, `onDestroy` and `snapshot` are still
+registered by the component, after the effects, in the original relative order.
+
+#### Template
+
+Only access-path changes (`x` -> `explorationState.x` / `focusRestoration.x` /
+`campaignNavigation.navigationError`), the two shorthand binds expanded
+(`bind:expansion` -> `bind:expansion={explorationState.expansion}`), and two `<button>` opening
+tags re-wrapped by the formatter because the longer paths exceed the line width (attribute
+whitespace only; same attributes, same order, same text nodes).
+
+#### Why 450
+
+What remains: ~85 lines of imports (Biome puts one name per line), the query wiring Step 4 keeps
+(`createQuery` x5 and their option deriveds), ~180 lines of `$derived` view state interleaved
+with those queries, the six effects (~55 lines, must stay for ordering), the lazy replay toggle
+(kept as is by instruction), the loading/retry guards over the query objects, and controller
+wiring. Going further would need a fourth rune module of interleaved deriveds/queries (a "page
+controller" by another name) or moving effects/queries, both excluded by the packet rules.
+
+#### Final verification (worktree root, shim on PATH)
+
+| Command | Result |
+| --- | --- |
+| `bun run check` | exit 0 (1716 files, no fixes) |
+| `bun run lint` | exit 0 |
+| `bun run typecheck` | exit 0 |
+| `bun run test` | exit 0, 31/31 tasks; web 2460 pass / 286 files |
+| `bun run build` | exit 0 |
+| `bun run test:web-bundle` | exit 0 (6 pass; `RECORDED_GZIP_CLOSURE_BYTES` untouched) |
+| `bun run test:web-client-manifest` | exit 0 |
+| `flock … bun run test:e2e` | exit 0, 411 passed + 3 passed |
+
+Campaign specs (campaign-map, campaign-timeline, campaign-replay, campaign-short-page,
+campaign-label-overrides, origin-campaign) run after each controller: 28 passed each time.
+
+#### Deviations and residual risk
+
+- `navigate` became a sync function settling the shell goto through `.catch` (Biome forbids both
+  floating promises and `void` in `.ts`); only a goto that throws synchronously would differ, and
+  the shell goto is an `async` function.
+- `detailRows` went from `$derived.by(() => { … })` to `$derived(mergeRowsById(rows, matchedRows))`
+  as the plan's Step 1 prescribes; the two forms compile to the same derived with the same reads.
+- The refresh payload is now computed before it is written (originally `matchingRestoration` was
+  written before the anchors were read); no read in that click handler depends on those writes.
+- The navigation-actions commit also carries the clients module and `campaignRefreshFor`
+  (amended in so that no commit is left unbuildable).
+
+Orchestrator review of P4 (2026-11-21): only the 15 campaign files changed, no
+existing test file was modified, no suppression was added, the component still
+holds exactly six `$effect`s and the controllers hold none. The adversarial
+review (agent plus Codex) returned no confirmed finding. On the one flagged
+change, `navigate` becoming synchronous: none of its eight original call sites
+awaited it or chained on it, the shell `goto` is an `async` function so it
+cannot throw synchronously, and a rejection is still handled one microtask
+after it occurs.
+
+Decision on the missed criterion. The plan asked for a script under 350 lines;
+it is 450. The reviewer found about 60 to 70 further lines that could move
+without breaking a rule (three load guards as pure predicates, the
+`requestedCampaign` initialiser, a destructuring, a repeated fallback), which
+would land near 380 to 390, and confirmed that going under 350 requires an
+aggregate "page controller" or moving effects and queries, both forbidden by
+this plan. Two of the suggested cuts (`selectedLookupRequest` and
+`compatibleMemberRows` as plain `$derived(fn(...))`) were deliberately left as
+`$derived.by` with early returns by the implementer to keep their conditional
+reads. The remaining safe gain is about 30 lines, which does not justify
+another extraction, e2e and review round on focus-sensitive code. The
+criterion is therefore recorded as missed and the 350 figure as a wrong
+estimate in the plan, not as open work.
+
+Two latent points noted by the review, neither a defect today:
+`campaigns-focus-restoration.test.ts` fails loudly at load if an earlier test
+file in the same process leaves `document`, `CSS` or `getComputedStyle` on
+`globalThis`; and the test compile plugin keeps the campaign rune modules
+client-compiled for the rest of the process, so a future Bun test that renders
+`campaigns-page.svelte` through Bun's loader would mix runtimes.
