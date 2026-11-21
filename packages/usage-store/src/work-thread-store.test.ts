@@ -31,14 +31,10 @@ import {
   queryWorkThreadsPage,
 } from './reader';
 import { workFactSchemaSql } from './work-fact-schema';
+import { applyWorkThreadCommand } from './work-thread-commands';
 import type { WorkThreadCombineSuggestionEntry } from './work-thread-reads';
 import { workThreadSchemaSql } from './work-thread-schema';
-import {
-  applyWorkThreadCommand,
-  queryWorkThreadSessionEvidence,
-  seedWorkThreads,
-  type WorkThreadSeed,
-} from './work-thread-store';
+import { queryWorkThreadSessionEvidence, seedWorkThreads, type WorkThreadSeed } from './work-thread-store';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,

@@ -243,6 +243,7 @@ export {
   recordJiraSyncState,
   recordWorkFactRun,
 } from './work-fact-store';
+export { applyWorkThreadCommand } from './work-thread-commands';
 export type { QueryActiveWorkThreadLinksInput, QueryActiveWorkThreadLinksResult } from './work-thread-reads';
 export { queryActiveWorkThreadLinks, queryWorkThreadsPage } from './work-thread-reads';
 export type {
@@ -259,7 +260,6 @@ export type {
   WorkThreadWaitCandidate,
 } from './work-thread-store';
 export {
-  applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
   queryJiraIntake,
