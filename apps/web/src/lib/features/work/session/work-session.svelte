@@ -9,14 +9,14 @@
   import { createInfiniteQuery } from '@tanstack/svelte-query';
   import { onMount } from 'svelte';
   import { browser } from '$app/env';
-  import { displayTitle } from '../../foundation/presentation/display-title';
-  import { loadNextCampaignPage } from '../../query/options/campaigns';
-  import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';
-  import { workRequest } from '../../query/options/work';
-  import type { SessionClientAdapter } from '../../rpc/session-client';
-  import { sessionRoutePathname } from '../sessions/detail/session-route';
-  import { workButton, workHeading, workLink, workMuted, workPanel, workRow, workStack } from './work-styles';
-  import WorkThreadIntake from './work-thread-intake.svelte';
+  import { displayTitle } from '../../../foundation/presentation/display-title';
+  import { loadNextCampaignPage } from '../../../query/options/campaigns';
+  import { sessionCampaignInfiniteOptions } from '../../../query/options/session-window';
+  import { workRequest } from '../../../query/options/work';
+  import type { SessionClientAdapter } from '../../../rpc/session-client';
+  import { sessionRoutePathname } from '../../sessions/detail/session-route';
+  import { workButton, workHeading, workLink, workMuted, workPanel, workRow, workStack } from '../work-styles';
+  import WorkThreadIntake from '../work-thread-intake.svelte';
 
   let {
     item,

@@ -44,7 +44,7 @@
   import WorkCoverageLine from './attention/work-coverage-line.svelte';
   import WorkDelegations from './delegations/work-delegations.svelte';
   import type { WorkPageData } from './work-load';
-  import WorkSession from './work-session.svelte';
+  import WorkSession from './session/work-session.svelte';
   import WorkSources from './work-sources.svelte';
   import {
     workAside,
