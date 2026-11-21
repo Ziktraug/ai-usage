@@ -6,7 +6,6 @@ import { createProviderQuotaStore } from './provider-quota-store';
 import { readUsageStoreGenerations } from './report-rows';
 import { createServedReportStore } from './served-report-store';
 import { createSkillObservationStore } from './skill-observation-store';
-import { createWorkFactStore } from './work-fact-store';
 import { createWorkThreadStore } from './work-thread-store';
 
 export { initializeUsageStore } from './connections';
@@ -92,23 +91,18 @@ export {
   queryExecutorObservationHistory,
   queryLatestExecutorObservations,
 } from './executor-observation-store';
-export const {
+export {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
   importPullRequestObservations,
+  queryJiraSyncState,
   queryLatestCheckoutStatusObservations,
   queryLatestJiraIssueObservations,
   queryLatestPullRequestObservations,
   queryWorkFactRunStates,
-  recordWorkFactRun,
-  queryJiraSyncState,
   recordJiraSyncState,
-} = createWorkFactStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
+  recordWorkFactRun,
+} from './work-fact-store';
 export const {
   countClaudeDesktopSessions,
   importClaudeDesktopSessions,

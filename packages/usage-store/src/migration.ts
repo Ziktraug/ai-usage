@@ -19,7 +19,7 @@ import {
 import { servedReportSchemaSql } from './served-revision';
 import type { SqliteDatabase } from './sqlite-database';
 import type { StoredUsageRowStatus } from './stored-usage-row';
-import { migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-store';
+import { migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-schema';
 import { WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-schema';
 
 export const USAGE_STORE_SCHEMA_VERSION = 5;

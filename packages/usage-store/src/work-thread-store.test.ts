@@ -30,7 +30,7 @@ import {
   queryWorkThreadProjects,
   queryWorkThreadsPage,
 } from './reader';
-import { workFactSchemaSql } from './work-fact-store';
+import { workFactSchemaSql } from './work-fact-schema';
 import { workThreadSchemaSql } from './work-thread-schema';
 import { createWorkThreadStore, type WorkThreadCombineSuggestionEntry, type WorkThreadSeed } from './work-thread-store';
 import {
