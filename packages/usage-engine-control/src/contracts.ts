@@ -5,6 +5,7 @@ import {
   parseCampaignLabelOverrideMutation,
 } from '@ai-usage/report-core/campaign-label';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import { isRecord } from '@ai-usage/report-core/datasets';
 // The delegation vocabulary is import-free; the answer shapes are types only. The delegation parsers
 // (request, policy, qualification) stay out of this module: the edges run them, the control plane
 // checks shape and bounds.
@@ -144,9 +145,6 @@ export class UsageEngineContractError extends Error {
 const fail = (message: string): never => {
   throw new UsageEngineContractError('invalid-contract', message);
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const hasExactKeys = (record: Record<string, unknown>, expected: readonly string[]): boolean => {
   const actual = Object.keys(record).sort();
