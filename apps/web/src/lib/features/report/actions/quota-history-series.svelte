@@ -1,11 +1,8 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import type {
-    ProviderQuotaHistorySeries,
-    ProviderQuotaHistoryWindow,
-  } from '../../../../provider-quota-history-model';
   import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
   import { muted, panel, table, tableCell } from '../breakdown/styles';
+  import type { ProviderQuotaHistorySeries, ProviderQuotaHistoryWindow } from '../provider-quota-history-model';
 
   const chart = css({
     w: 'full',

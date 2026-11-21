@@ -27,7 +27,7 @@
   import type { FocusedOverviewResult, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import type { LocalTimeCell } from '@ai-usage/report-core/session-query';
   import type { ComponentProps } from 'svelte';
-  import type { ProviderStatusView } from '../../../../provider-status-model';
+  import type { ProviderStatusView } from '../provider-status-model';
   import type ActivityExplorer from '../range/activity-explorer.svelte';
   import ActivityHeatmap from './activity-heatmap.svelte';
   import ExecutiveOverview from './executive-overview.svelte';

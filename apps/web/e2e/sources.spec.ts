@@ -1,6 +1,9 @@
 import { collectionSourceDefinitions, parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
-import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import {
+  FOCUSED_REPORT_E2E_CONTROL_KEY,
+  FOCUSED_REPORT_E2E_ENABLED_KEY,
+} from '../src/lib/features/report/composition/focused-report-e2e-fixture';
 import { expect, openHydratedReport, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
 import { createServerStateNetworkTrace } from './server-state-network';
 

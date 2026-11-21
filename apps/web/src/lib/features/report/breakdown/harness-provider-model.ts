@@ -5,7 +5,7 @@ import {
   breakdownLabelMatchesSearch,
   filterAndSortBreakdownGroups,
   hasBreakdownSearchQuery,
-} from '../../../../group-panel-presentation';
+} from '../group-panel-presentation';
 
 export interface HarnessProviderChild {
   readonly group: AnalyticsGroup;

@@ -1,6 +1,6 @@
 import type { AnalyticsExportRow, SessionCampaignExportRow } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-import type { ProjectGroup } from './dashboard-analytics';
+import type { ProjectGroup } from '../../../dashboard-analytics';
 
 export const createAnalyticsExport = async (
   dimension: 'harnesses' | 'models',

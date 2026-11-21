@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from '../provider-quota-e2e-fixture';
+import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from '../lib/features/report/composition/provider-quota-e2e-fixture';
 import { resolveProviderQuotaHistoryForServer } from './provider-quota-resolver.server';
 
 const request = {

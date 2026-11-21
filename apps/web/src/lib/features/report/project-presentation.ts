@@ -1,7 +1,7 @@
 import type { UsageReportProjectGroup } from '@ai-usage/report-core/report-data';
-import type { ProjectGroup } from './dashboard-analytics';
+import type { ProjectGroup } from '../../../dashboard-analytics';
+import { fmtNum } from '../../foundation/presentation/format';
 import { breakdownLabelMatchesSearch } from './group-panel-presentation';
-import { fmtNum } from './lib/foundation/presentation/format';
 
 export type ProjectDataQualityLabel = 'Filename-like' | 'No detected project' | 'Worktree-like';
 

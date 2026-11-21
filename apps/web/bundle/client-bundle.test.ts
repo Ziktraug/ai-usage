@@ -3,7 +3,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { reportRouteClientEntryKeys } from '../e2e/session-scroll-benchmark-closure';
-import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import {
+  FOCUSED_REPORT_E2E_CONTROL_KEY,
+  FOCUSED_REPORT_E2E_ENABLED_KEY,
+} from '../src/lib/features/report/composition/focused-report-e2e-fixture';
 
 /**
  * These assertions read the emitted client build; they never produce one. Run `bun run build`

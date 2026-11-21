@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { demoReportPayload } from './report-data';
+import { demoReportPayload } from '../../../report-data';
 import {
   mergeWebReportSlices,
   parseReportRequestFingerprint,

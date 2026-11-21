@@ -6,8 +6,8 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { toDateInputValue } from '../../../../date-range';
-import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
+import type { ProviderStatusView } from '../provider-status-model';
 import { overviewResultScope } from './overview-result-scope';
 
 interface SvelteServerModule {

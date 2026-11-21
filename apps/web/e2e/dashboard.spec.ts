@@ -4,7 +4,7 @@ import {
   FOCUSED_REPORT_E2E_CONTROL_KEY,
   FOCUSED_REPORT_E2E_ENABLED_KEY,
   FOCUSED_REPORT_E2E_FAILURE_KEY,
-} from '../src/focused-report-e2e-fixture';
+} from '../src/lib/features/report/composition/focused-report-e2e-fixture';
 import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled, waitForHydratedNavigation } from './browser-test';
 import { encodeRpcResponseBody } from './rpc-test-transport';

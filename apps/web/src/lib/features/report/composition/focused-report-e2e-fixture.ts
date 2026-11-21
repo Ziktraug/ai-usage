@@ -14,13 +14,13 @@ import {
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import { demoReportPayload } from './report-data';
+import { demoReportPayload } from '../../../../report-data';
 import {
   parseReportRevision,
   reportManifestRequestFingerprint,
   type WebReportRevisionBootstrapResult,
   type WebReportRevisionManifestResult,
-} from './web-report-payload';
+} from '../web-report-payload';
 
 export const FOCUSED_REPORT_E2E_CONTROL_KEY = '__aiUsageE2EFocusedReportControl';
 export const FOCUSED_REPORT_E2E_ENABLED_KEY = '__aiUsageE2EFocusedReportEnabled';

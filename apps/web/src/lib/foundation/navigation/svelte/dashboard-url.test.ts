@@ -51,7 +51,7 @@ interface SessionSchemaModule {
 // exercising the frozen production parser at runtime.
 const dashboardSearchModuleId: string = '../../../../dashboard-search';
 const dashboardSearchModule = (await import(dashboardSearchModuleId)) as DashboardSearchModule;
-const dashboardFilterModuleId: string = '../../../../dashboard-filter-navigation';
+const dashboardFilterModuleId: string = '../../../features/report/dashboard-filter-navigation';
 const dashboardFilterModule = (await import(dashboardFilterModuleId)) as DashboardFilterModule;
 const sessionSchemaModuleId: string = '../../../../session-table-schema';
 const sessionSchemaModule = (await import(sessionSchemaModuleId)) as SessionSchemaModule;

@@ -11,7 +11,7 @@
     type DashboardTab,
     type FieldFilterKey,
   } from '../../../../dashboard-search';
-  import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
+  import type { WebReportPayloadWithoutRows } from '../web-report-payload';
   import HarnessProviderPanel from './harness-provider-panel.svelte';
   import ModelAnalysisTable from './model-analysis-table.svelte';
   import ProjectsPanel from './projects-panel.svelte';

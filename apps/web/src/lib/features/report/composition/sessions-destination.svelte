@@ -6,11 +6,6 @@
     SessionQueryRequest,
   } from '@ai-usage/report-core/session-query';
   import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-  import {
-    createSessionsExport,
-    sessionsExportButtonLabel,
-    sessionsExportScopeLabel,
-  } from '../../../../dashboard-breakdown-export';
   import type { DashboardSearch } from '../../../../dashboard-search';
   import {
     sessionAnalysisTargetForPageItem,
@@ -34,6 +29,11 @@
   import SessionTable from '../../sessions/table/session-table.svelte';
   import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';
+  import {
+    createSessionsExport,
+    sessionsExportButtonLabel,
+    sessionsExportScopeLabel,
+  } from '../dashboard-breakdown-export';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
   import SessionsDestinationState from './sessions-destination-state.svelte';

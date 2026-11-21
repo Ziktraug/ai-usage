@@ -47,7 +47,7 @@ const sourceFilesUnder = (directory: string): string[] => {
  * notices, so the declared set is checked against the source here.
  */
 test('Report source references only declared semantic color tokens', () => {
-  const appDirectory = path.resolve(import.meta.dir, '..');
+  const appDirectory = path.resolve(import.meta.dir, '../../../..');
   const repositoryDirectory = path.resolve(appDirectory, '../..');
   const sourceFiles = [
     ...sourceFilesUnder(path.join(appDirectory, 'src/lib/features/report')),
@@ -69,7 +69,7 @@ test('Report source references only declared semantic color tokens', () => {
 });
 
 test('Report alerts use warning and danger roles instead of the interaction accent', () => {
-  const reportCoreDirectory = path.join(import.meta.dir, 'lib/features/report/core');
+  const reportCoreDirectory = path.join(import.meta.dir, '../../features/report/core');
   const warningSource = readFileSync(path.join(reportCoreDirectory, 'report-warnings.svelte'), 'utf8');
   const statusSource = readFileSync(path.join(reportCoreDirectory, 'report-status.svelte'), 'utf8');
 

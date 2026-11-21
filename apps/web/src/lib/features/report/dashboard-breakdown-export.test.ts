@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { SESSION_CAMPAIGN_EXPORT_COLUMNS } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
+import { syntheticSessionRow } from '../sessions/table/session-table.fixtures';
 import {
   createSessionsExport,
   sessionsExportButtonLabel,
   sessionsExportScopeLabel,
 } from './dashboard-breakdown-export';
-import { syntheticSessionRow } from './lib/features/sessions/table/session-table.fixtures';
 
 const GENERATED_AT = '2026-08-20T18:45:00.000Z';
 const campaignHeader = SESSION_CAMPAIGN_EXPORT_COLUMNS.join(',');

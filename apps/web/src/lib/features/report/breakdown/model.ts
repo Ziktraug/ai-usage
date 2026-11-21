@@ -2,18 +2,18 @@ import { type AnalyticsGroup, processedTokensForAnalytics } from '@ai-usage/repo
 import type { AnalyticsExportRow } from '@ai-usage/report-core/csv';
 import { type ApiPriceMeasurementState, PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
 import type { BreakdownSort } from '../../../../dashboard-search';
-import {
-  breakdownBarPresentation,
-  breakdownModelLabel,
-  breakdownPriceStateLabel,
-  filterAndSortBreakdownGroups,
-} from '../../../../group-panel-presentation';
 import { fmtCompact, fmtCount, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   type ApiValuePresentation,
   aggregateApiValuePresentation,
   USAGE_UNAVAILABLE_HINT,
 } from '../../../foundation/presentation/report-value';
+import {
+  breakdownBarPresentation,
+  breakdownModelLabel,
+  breakdownPriceStateLabel,
+  filterAndSortBreakdownGroups,
+} from '../group-panel-presentation';
 
 export interface BreakdownRowView {
   readonly ariaLabel: string;
@@ -240,7 +240,7 @@ export const analyticsExportRows = (
   rows: readonly Pick<BreakdownRowView, 'group' | 'label'>[],
 ): readonly AnalyticsExportRow[] => rows.map(({ group, label }) => ({ group, label }));
 
-export { breakdownLabelMatchesSearch } from '../../../../group-panel-presentation';
+export { breakdownLabelMatchesSearch } from '../group-panel-presentation';
 
 export interface ModelComparisonBar {
   readonly key: string;

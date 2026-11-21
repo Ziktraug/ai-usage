@@ -2,14 +2,11 @@
   import { parseProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import { createQuery } from '@tanstack/svelte-query';
   import { onMount } from 'svelte';
-  import {
-    type ProviderQuotaHistoryRange,
-    providerQuotaHistoryRequest,
-  } from '../../../../provider-quota-history-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import { type QuotaQueryClient, quotaHistoryQueryOptions } from '../../../query/options/quota';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createReportClient } from '../../../rpc/report-client';
+  import { type ProviderQuotaHistoryRange, providerQuotaHistoryRequest } from '../provider-quota-history-model';
 
   type QuotaHistoryPanelModule = typeof import('./quota-history-panel.svelte');
 

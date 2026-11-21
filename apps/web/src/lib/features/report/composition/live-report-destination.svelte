@@ -54,14 +54,11 @@
     machineLabelPresentationForSnapshot,
   } from '../../../../machine-freshness-presentation';
   import type { TimelineDimension, TimelineValue } from '../../../../overview-model';
-  import { buildProjectGroupReferenceCommand } from '../../../../project-group-control';
-  import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import {
     sessionAnalysisTargetForOverviewRow,
     sessionAnalysisTargetForSession,
   } from '../../../../session-analysis-target';
-  import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
     campaignLabelOverridesQueryOptions,
@@ -104,7 +101,10 @@
   import { installReportIntentResolver } from '../core/report-intent';
   import ReportWarnings from '../core/report-warnings.svelte';
   import { overviewResultScope } from '../overview/overview-result-scope';
+  import { buildProjectGroupReferenceCommand } from '../project-group-control';
+  import { buildProviderStatusViews, providerHistoryAvailable } from '../provider-status-model';
   import type { TimelineGranularityPreference } from '../range/report-range-model';
+  import type { WebReportPayloadWithoutRows } from '../web-report-payload';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';

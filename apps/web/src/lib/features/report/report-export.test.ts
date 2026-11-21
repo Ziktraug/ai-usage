@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import { analyticsBreakdownCsv, projectBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
-import type { ProjectGroup } from './dashboard-analytics';
+import type { ProjectGroup } from '../../../dashboard-analytics';
 
 const analyticsGroup = (overrides: Partial<AnalyticsGroup> = {}): AnalyticsGroup => ({
   ambiguous: 0,

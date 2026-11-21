@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
-  import type { ProviderStatusTone } from '../../../../provider-status-model';
+  import type { ProviderStatusTone } from '../provider-status-model';
 
   const panelIntro = css({ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between' });
   const statusList = css({ display: 'grid', gap: '8px', listStyle: 'none', m: 0, p: 0 });
@@ -191,15 +191,15 @@
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
   import { panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-system/report';
-  import type { ProviderStatusView } from '../../../../provider-status-model';
+  import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
+  import type { ProviderStatusView } from '../provider-status-model';
   import {
     buildProviderStatusPanelSummary,
     describeProviderStatusSummary,
     detailedProviders,
     providerMachineLines,
-  } from '../../../../provider-status-panel-model';
-  import { providerProgressState } from '../../../../provider-status-progress';
-  import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
+  } from '../provider-status-panel-model';
+  import { providerProgressState } from '../provider-status-progress';
   import { providerPercentLabel, providerWindowAriaLabel } from './provider-presentation';
 
   let { onOpenHistory, providers }: { onOpenHistory?: () => void; providers: readonly ProviderStatusView[] } = $props();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
 import { demoReportPayload } from '../../../../report-data';
-import { toWebReportPayload } from '../../../../web-report-payload';
+import { toWebReportPayload } from '../web-report-payload';
 import { liveReportShellModel, reportFreshnessLabel, syntheticReportShellModel } from './report-view-model';
 
 const support = () => {

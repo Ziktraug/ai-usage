@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import type { DashboardRow } from '../../../shared';
 import { buildProviderStatusViews, providerHistoryAvailable } from './provider-status-model';
-import type { DashboardRow } from './shared';
 
 const FIXTURE_NOW = '2026-01-01T00:00:00.000Z';
 

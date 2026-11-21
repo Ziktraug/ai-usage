@@ -22,7 +22,7 @@ const entryPaths = [
   'dashboard-model.ts',
   'lib/features/sessions/dashboard-sort.ts',
   'overview-model.ts',
-  'provider-status-model.ts',
+  'lib/features/report/provider-status-model.ts',
   'campaign-label-overrides.ts',
   'session-analysis-target.ts',
   'lib/foundation/presentation/format.ts',

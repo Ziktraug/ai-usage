@@ -32,15 +32,12 @@
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
   } from '../../../../dashboard-search';
-  import { createFocusedReportE2EFixture } from '../../../../focused-report-e2e-fixture';
   import {
     machineFreshnessSnapshotFromFocused,
     machineFreshnessStatusLabel,
     machineLabelPresentationForSnapshot,
   } from '../../../../machine-freshness-presentation';
   import type { TimelineValue } from '../../../../overview-model';
-  import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from '../../../../provider-quota-e2e-fixture';
-  import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import { sessionAnalysisTargetForOverviewRow } from '../../../../session-analysis-target';
@@ -66,14 +63,17 @@
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import { overviewResultScope } from '../overview/overview-result-scope';
+  import { buildProviderStatusViews, providerHistoryAvailable } from '../provider-status-model';
   import {
     reportRangeProjection,
     resolveTimelineGranularity,
     type TimelineGranularityPreference,
   } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
+  import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
+  import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from './provider-quota-e2e-fixture';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
   import { reportRegionStaleness } from './report-region-staleness';
   import { reportDestinationForSearch } from './report-search';
