@@ -2,7 +2,6 @@ import { createClaudeDesktopSessionStore } from './claude-desktop-session-store'
 import { withUsageStoreReader, withUsageStoreWriter } from './connections';
 import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from './errors';
 import { readUsageLocalMachineWithDatabase } from './machine-fleet';
-import { createProviderQuotaStore } from './provider-quota-store';
 import { readUsageStoreGenerations } from './report-rows';
 import { createServedReportStore } from './served-report-store';
 import { createSkillObservationStore } from './skill-observation-store';
@@ -59,22 +58,16 @@ export const {
   withUsageStoreWriter,
 });
 
-export const {
+export {
   importProviderQuotaBatch,
+  queryLatestLocalProviderQuotaObservations,
+  queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
-  queryLatestProviderQuotaObservations,
-  queryLatestLocalProviderQuotaObservations,
   recordProviderQuotaSourceAttempt,
   retainProviderQuotaObservations,
-} = createProviderQuotaStore({
-  readUsageLocalMachineWithDatabase,
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
+} from './provider-quota-store';
 
 export const { importSkillObservations, querySkillObservations, retainSkillObservations } = createSkillObservationStore(
   {

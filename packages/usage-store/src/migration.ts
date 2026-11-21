@@ -8,7 +8,7 @@ import {
   rebuildUsageMachineFleetOrder,
   type StoredMachineFleetRow,
 } from './machine-fleet-order';
-import { MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
+import { MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-schema';
 import { migrateReviewAttemptSchema, REVIEW_ATTEMPT_TABLES } from './review-attempt-schema';
 import {
   enrichmentContentHash,
