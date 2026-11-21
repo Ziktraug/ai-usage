@@ -5,8 +5,8 @@ import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status'
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import { toDateInputValue } from '../../../../date-range';
-import { demoReportPayload } from '../../../../report-data';
+import { toDateInputValue } from '../../../foundation/date-range';
+import { demoReportPayload } from '../../../foundation/report-data';
 import type { ProviderStatusView } from '../provider-status-model';
 import { overviewResultScope } from './overview-result-scope';
 

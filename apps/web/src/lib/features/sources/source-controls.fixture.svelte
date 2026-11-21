@@ -5,7 +5,7 @@
     type SourceControlEntryView,
     type SourceControlView,
   } from '@ai-usage/report-core/source-control';
-  import type { SourceControlClientState } from '../../../source-control-client';
+  import type { SourceControlClientState } from '../../foundation/source-control-client';
   import { provideSourceControl } from './context.svelte';
   import SourceActions from './source-actions.svelte';
   import SourceCard from './source-card.svelte';

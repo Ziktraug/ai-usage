@@ -21,8 +21,8 @@ import {
   campaignMapFixtureGeneratedAt,
   campaignMapFixtureRootKey,
   campaignMapFixtureRows,
-} from '../../../campaign-map-fixture';
-import { demoReportPayload } from '../../../report-data';
+} from '../../foundation/campaign-map-fixture';
+import { demoReportPayload } from '../../foundation/report-data';
 import { createHydratedWebQueryClient } from '../../query/client';
 import { campaignLabelOverridesKey, campaignLabelOverridesQueryOptions } from '../../query/options/report';
 import { sessionLookupKey, sessionLookupQueryOptions } from '../../query/options/session';

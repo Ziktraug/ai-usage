@@ -9,7 +9,7 @@
   import { createQuery, useIsFetching } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
   import { replaceState } from '$app/navigation';
-  import type { RuntimeMode } from '../../../../runtime-mode';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
   import type { WebQueryHydrationState } from '../../../query/client';
   import { useWebQueryHydrationContext } from '../../../query/hydration-context.svelte';
   import {

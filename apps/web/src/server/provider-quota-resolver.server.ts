@@ -3,7 +3,7 @@ import {
   type ProviderQuotaHistoryResult,
   parseProviderQuotaHistoryRequest,
 } from '@ai-usage/report-core/provider-quota';
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
 export type ProviderQuotaHistoryReader = (

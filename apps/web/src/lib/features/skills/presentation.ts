@@ -12,7 +12,7 @@ import {
   type SkillHealthSummary,
   type SkillMatrix,
   type UnmanagedGroup,
-} from '../../../skills-page-model';
+} from '../../foundation/skills-page-model';
 import { matrixDotTone } from './management/model';
 import {
   buildSkillObservationsView,

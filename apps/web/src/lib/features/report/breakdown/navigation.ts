@@ -1,5 +1,4 @@
 import type { LocalTimeCell, SessionOrigin } from '@ai-usage/report-core/session-query';
-import type { TimelineDimension } from '../../../../overview-model';
 import {
   type BreakdownSort,
   type BreakdownTab,
@@ -12,6 +11,7 @@ import {
   withoutDashboardTimeCell,
 } from '../../../foundation/dashboard/dashboard-search';
 import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+import type { TimelineDimension } from '../../../foundation/overview-model';
 import { applyTimelineDimensionFilter } from '../dashboard-filter-navigation';
 
 export interface BreakdownNavigation {

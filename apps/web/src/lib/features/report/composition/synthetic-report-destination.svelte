@@ -25,23 +25,23 @@
     presentCampaignTimelineSeries,
     presentFocusedOverviewSessionItem,
     presentServedCampaignDisplayRow,
-  } from '../../../../campaign-label-overrides';
-  import {
-    machineFreshnessSnapshotFromFocused,
-    machineFreshnessStatusLabel,
-    machineLabelPresentationForSnapshot,
-  } from '../../../../machine-freshness-presentation';
-  import type { TimelineValue } from '../../../../overview-model';
-  import { demoReportPayload } from '../../../../report-data';
-  import type { RuntimeMode } from '../../../../runtime-mode';
+  } from '../../../foundation/campaign-label-overrides';
   import { buildCampaignTableRows, buildCampaignViews } from '../../../foundation/dashboard/dashboard-model';
   import {
     type DashboardSearch,
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
   } from '../../../foundation/dashboard/dashboard-search';
+  import {
+    machineFreshnessSnapshotFromFocused,
+    machineFreshnessStatusLabel,
+    machineLabelPresentationForSnapshot,
+  } from '../../../foundation/machine-freshness-presentation';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import type { TimelineValue } from '../../../foundation/overview-model';
   import { withSessionDisplayTitle } from '../../../foundation/presentation/display-title';
+  import { demoReportPayload } from '../../../foundation/report-data';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
   import { sessionAnalysisTargetForOverviewRow } from '../../../foundation/session/session-analysis-target';
   import {
     columnVisibilityFromDiff,

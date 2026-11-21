@@ -8,5 +8,5 @@ export {
   fmtNum,
   fmtPct,
   median,
-} from './lib/foundation/presentation/format';
-export * from './lib/foundation/presentation/report-value';
+} from './presentation/format';
+export * from './presentation/report-value';

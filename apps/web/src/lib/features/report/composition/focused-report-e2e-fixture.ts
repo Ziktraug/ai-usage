@@ -14,7 +14,7 @@ import {
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import { demoReportPayload } from '../../../../report-data';
+import { demoReportPayload } from '../../../foundation/report-data';
 import {
   parseReportRevision,
   reportManifestRequestFingerprint,

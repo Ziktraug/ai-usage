@@ -13,7 +13,7 @@ import {
 import type { UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import type { ServedReportRevisionManifest } from '@ai-usage/usage-store/reader';
 import { reportManifestRequestFingerprint } from '../lib/features/report/web-report-payload';
-import { demoReportPayload } from '../report-data';
+import { demoReportPayload } from '../lib/foundation/report-data';
 import {
   getReportRevisionBootstrapForServer,
   getReportRevisionManifestForServer,

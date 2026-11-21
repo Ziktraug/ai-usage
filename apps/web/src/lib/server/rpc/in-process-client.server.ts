@@ -1,7 +1,7 @@
 import type { WebContractClient } from '@ai-usage/web-contract';
 import { createRouterClient, ORPCError } from '@orpc/server';
-import type { RuntimeMode } from '../../../runtime-mode';
 import { getServerRuntimeMode } from '../../../server/runtime-mode.server';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { type E2ESkillsFixtureVariant, e2eSkillsFixtureVariantForHeaders } from './e2e-fixture-profile';
 import { rpcPolicyForPath } from './request-policy-handler';
 import { createWebRpcRouter, type WebRpcRouterDependencies } from './router';

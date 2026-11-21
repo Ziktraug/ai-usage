@@ -4,7 +4,6 @@ import type {
   FocusedReportSummary,
 } from '@ai-usage/report-core/focused-report-query';
 import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
-import type { DateBounds, DateRangeMode } from '../../../../date-range';
 import {
   comparePeriodMetric,
   type MetricPeriodComparison,
@@ -13,6 +12,7 @@ import {
   resolvePeriodBaseline,
   totalApiValueReading,
 } from '../../../foundation/dashboard/dashboard-model';
+import type { DateBounds, DateRangeMode } from '../../../foundation/date-range';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   type ApiValuePresentation,

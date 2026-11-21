@@ -1,5 +1,5 @@
-import type { TimelineDimension } from '../../../../overview-model';
 import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
+import type { TimelineDimension } from '../../../foundation/overview-model';
 
 export const activeTimelineSeriesKeys = (search: DashboardSearch, dimension: TimelineDimension): readonly string[] => {
   if (dimension === 'harness') {

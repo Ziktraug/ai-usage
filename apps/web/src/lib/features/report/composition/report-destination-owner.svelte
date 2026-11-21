@@ -5,7 +5,6 @@
   import { dev } from '$app/env';
   import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
-  import type { RuntimeMode } from '../../../../runtime-mode';
   import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
@@ -14,6 +13,7 @@
     parseDashboardSearchUrl,
   } from '../../../foundation/navigation/svelte/dashboard-url';
   import { createSvelteNavigationPort } from '../../../foundation/navigation/svelte/navigation';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createReportClient } from '../../../rpc/report-client';
   import { createSessionClientAdapter } from '../../../rpc/session-client';

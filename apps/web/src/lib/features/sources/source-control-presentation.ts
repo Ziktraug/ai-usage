@@ -1,5 +1,5 @@
 import { statusPillDanger, statusPillInfo, statusPillOk, statusPillWarn } from '@ai-usage/design-system/report';
-import type { SourcePresentationTone } from '../../../source-control-presentation-model';
+import type { SourcePresentationTone } from '../../foundation/source-control-presentation-model';
 
 export {
   presentSourceProgress,
@@ -7,7 +7,7 @@ export {
   type SourcePresentation,
   type SourcePresentationTone,
   type SourceProgressPresentation,
-} from '../../../source-control-presentation-model';
+} from '../../foundation/source-control-presentation-model';
 
 export const sourceToneClass = (tone: SourcePresentationTone): string => {
   if (tone === 'ok') {

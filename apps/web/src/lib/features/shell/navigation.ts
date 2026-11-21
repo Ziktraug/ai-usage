@@ -1,4 +1,3 @@
-import type { RuntimeMode } from '../../../runtime-mode';
 import {
   breakdownTabFor,
   type DashboardSearch,
@@ -13,6 +12,7 @@ import {
   dashboardUrlFor,
   parseDashboardSearchUrl,
 } from '../../foundation/navigation/svelte/dashboard-url';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { isReportPathname } from '../sessions/detail/session-route';
 
 export type ShellIconName =

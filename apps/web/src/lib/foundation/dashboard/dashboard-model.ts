@@ -9,7 +9,7 @@ import {
   sessionCampaignIdentityForRow,
   sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
-import { DAY_MS, type DateBounds, rowMatchesDateBounds } from '../../../date-range';
+import { DAY_MS, type DateBounds, rowMatchesDateBounds } from '../date-range';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../presentation/format';
 import {
   aggregateApiPriceProvenance,

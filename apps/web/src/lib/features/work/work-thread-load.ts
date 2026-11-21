@@ -1,5 +1,5 @@
 import { isWorkThreadId } from '@ai-usage/report-core/work-thread';
-import type { RuntimeMode } from '../../../runtime-mode';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
 import type { WebQueryRuntime } from '../../query/composition';
 import { prefetchWorkThreadRoute } from '../../query/options/work-threads';

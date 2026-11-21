@@ -8,9 +8,9 @@ import {
   type SourceControlCommandResponse,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
-import type { StateSubscription } from './lib/foundation/subscription';
-import { createControlBrowserAdapter } from './lib/rpc/control-client';
+import { createControlBrowserAdapter } from '../rpc/control-client';
 import type { RuntimeMode } from './runtime-mode';
+import type { StateSubscription } from './subscription';
 
 export type { SourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 

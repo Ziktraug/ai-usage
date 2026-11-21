@@ -3,7 +3,7 @@
   import type { Snippet } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
-  import type { RuntimeMode } from '../../../runtime-mode';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import AppNavigation from './app-navigation.svelte';
   import { createDirtyGuardRegistry, provideDirtyGuardRegistry } from './dirty-navigation-context';
   import {

@@ -4,7 +4,7 @@ import {
   presentSourceProgress,
   presentSourceState,
   type SourcePresentationTone,
-} from '../../../source-control-presentation-model';
+} from '../../foundation/source-control-presentation-model';
 import { sourceToneClass } from './source-control-presentation';
 
 const source = (overrides: Partial<SourceControlEntryView> = {}): SourceControlEntryView => ({

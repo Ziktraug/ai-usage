@@ -37,7 +37,7 @@ import {
   type WorkAttemptWire,
 } from '@ai-usage/web-contract/work-attempts';
 import { Effect } from 'effect';
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { getServerRuntimeMode } from './runtime-mode.server';
 import {

@@ -4,9 +4,9 @@ import type {
   FocusedReportQueryScope,
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryRange } from '@ai-usage/report-core/session-query';
-import type { DateRangeMode, TimeRangePreset } from '../../../../date-range';
 import { periodRecordedHistory } from '../../../foundation/dashboard/dashboard-model';
 import type { DashboardDateRangeSearch } from '../../../foundation/dashboard/dashboard-search';
+import type { DateRangeMode, TimeRangePreset } from '../../../foundation/date-range';
 import { rangeBounds } from '../range/report-range-model';
 import type { ExecutiveOverviewModelInput } from './executive-overview-model';
 

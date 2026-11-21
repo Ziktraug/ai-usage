@@ -1,4 +1,3 @@
-import type { RuntimeMode } from '../../runtime-mode';
 import {
   observatoryFixtureDate,
   observatoryFixtureRevision,
@@ -6,6 +5,7 @@ import {
   observatoryRequest,
 } from '../features/observatory/observatory-query';
 import { requireAvailableReportBootstrap } from '../features/report/core/report-bootstrap';
+import type { RuntimeMode } from '../foundation/runtime-mode';
 import { createReportClient } from '../rpc/report-client';
 import type { WebQueryRuntime } from './composition';
 import { reportBootstrapQueryOptions } from './options/report';

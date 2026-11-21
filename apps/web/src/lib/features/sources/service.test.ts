@@ -4,7 +4,7 @@ import type {
   SourceControlCommand,
   SourceControlView,
 } from '@ai-usage/report-core/source-control';
-import type { SourceControlClient, SourceControlClientState } from '../../../source-control-client';
+import type { SourceControlClient, SourceControlClientState } from '../../foundation/source-control-client';
 import { skillObservationsKey } from '../../query/identities/skills';
 import { currentReportAliasKeys, publicationInvalidatedKeys } from '../../query/publication';
 import { createSourceControlService, type PublicationQueryKey } from './service';

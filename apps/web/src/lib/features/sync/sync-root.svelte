@@ -3,7 +3,7 @@
   import { page, shell } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/env';
-  import type { SourceControlConnectionState } from '../../../source-control-client';
+  import type { SourceControlConnectionState } from '../../foundation/source-control-client';
   import { invalidateSyncFleet } from '../../query/options/sync';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
   import MachineFleet from './machine-fleet.svelte';

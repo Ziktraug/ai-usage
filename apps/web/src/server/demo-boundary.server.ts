@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
 const RPC_PREFIX = '/rpc/';

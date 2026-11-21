@@ -1,8 +1,8 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import type { SkillDiagnostic } from '@ai-usage/skills';
-  import { skillDiagnosticLabel } from '../../../../skills-page-model';
   import { fmtNum } from '../../../foundation/presentation/format';
+  import { skillDiagnosticLabel } from '../../../foundation/skills-page-model';
   import { diagnosticRow, heading, infoPill, muted, pill, stack } from './styles';
 
   let { diagnostics }: { diagnostics: readonly SkillDiagnostic[] } = $props();

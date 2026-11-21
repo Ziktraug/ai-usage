@@ -5,7 +5,7 @@ import {
   type SourceControlView,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
-import { createControlBrowserAdapter } from './lib/rpc/control-client';
+import { createControlBrowserAdapter } from '../rpc/control-client';
 import {
   createSourceControlClient,
   createSourceControlClientForMode,

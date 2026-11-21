@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../../../runtime-mode';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
 import type { WebQueryRuntime } from '../../query/composition';
 import { workAttentionRequestFromSearch } from '../../query/options/work-attention';

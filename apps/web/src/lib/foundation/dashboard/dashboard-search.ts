@@ -6,7 +6,7 @@ import {
   type SessionOrigin,
   sessionOrigins,
 } from '@ai-usage/report-core/session-query';
-import { type DateRangeMode, parseLocalDate } from '../../../date-range';
+import { type DateRangeMode, parseLocalDate } from '../date-range';
 import {
   isSearchableColumnDiffId,
   isSessionColumnId,

@@ -3,7 +3,7 @@ import {
   projectRouteKey,
   type SkillSelection,
   skillSelectionFromPath,
-} from '../../../../skills-page-model';
+} from '../../skills-page-model';
 import type { NavigationIntent } from './navigation';
 
 export type SkillDestination = SkillSelection | { readonly type: 'matrix' };

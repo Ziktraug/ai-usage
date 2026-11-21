@@ -2,7 +2,7 @@
   import { parseProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import { createQuery } from '@tanstack/svelte-query';
   import { onMount } from 'svelte';
-  import type { RuntimeMode } from '../../../../runtime-mode';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
   import { type QuotaQueryClient, quotaHistoryQueryOptions } from '../../../query/options/quota';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createReportClient } from '../../../rpc/report-client';

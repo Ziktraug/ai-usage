@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../../../../runtime-mode';
+import type { RuntimeMode } from '../../../foundation/runtime-mode';
 import { prefetchReportDestinationIntent } from '../../../query/options/report-destination';
 import { createReportClient } from '../../../rpc/report-client';
 import { createSessionClientAdapter } from '../../../rpc/session-client';

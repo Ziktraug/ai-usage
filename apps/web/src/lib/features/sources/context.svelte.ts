@@ -1,6 +1,6 @@
 import type { SourceControlCommand } from '@ai-usage/report-core/source-control';
 import { createContext } from 'svelte';
-import type { SourceControlClientState } from '../../../source-control-client';
+import type { SourceControlClientState } from '../../foundation/source-control-client';
 
 export interface SourceControlContextValue {
   readonly execute: (command: SourceControlCommand) => Promise<boolean>;

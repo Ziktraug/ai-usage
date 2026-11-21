@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../../../runtime-mode';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import type { WebQueryHydrationState } from '../../query/client';
 import { prefetchObservatory } from '../../query/observatory-prefetch';
 import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';

@@ -21,9 +21,9 @@ const entryPaths = [
   'lib/foundation/dashboard/dashboard-analytics.ts',
   'lib/foundation/dashboard/dashboard-model.ts',
   'lib/features/sessions/dashboard-sort.ts',
-  'overview-model.ts',
+  'lib/foundation/overview-model.ts',
   'lib/features/report/provider-status-model.ts',
-  'campaign-label-overrides.ts',
+  'lib/foundation/campaign-label-overrides.ts',
   'lib/foundation/session/session-analysis-target.ts',
   'lib/foundation/presentation/format.ts',
   'lib/foundation/presentation/report-value.ts',
@@ -114,7 +114,7 @@ describe('framework-neutral presentation closure', () => {
     expect(isForbiddenRuntimeSpecifier('@ai-usage/report-core/session-query')).toBe(false);
 
     const presentationPath = path.join(sourceDirectory, 'lib/foundation/presentation/format.ts');
-    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../../shared'))).toBe(false);
+    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../shared'))).toBe(false);
     expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../features/shell/app-shell'))).toBe(
       true,
     );

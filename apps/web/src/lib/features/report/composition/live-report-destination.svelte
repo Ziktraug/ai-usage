@@ -42,20 +42,20 @@
     presentCampaignTimelineSeries,
     presentFocusedOverviewSessionItem,
     presentServedCampaignDisplayRow,
-  } from '../../../../campaign-label-overrides';
-  import {
-    machineFreshnessSnapshotFromFocused,
-    machineFreshnessStatusLabel,
-    machineLabelPresentationForSnapshot,
-  } from '../../../../machine-freshness-presentation';
-  import type { TimelineDimension, TimelineValue } from '../../../../overview-model';
-  import type { RuntimeMode } from '../../../../runtime-mode';
+  } from '../../../foundation/campaign-label-overrides';
   import {
     type DashboardSearch,
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
   } from '../../../foundation/dashboard/dashboard-search';
+  import {
+    machineFreshnessSnapshotFromFocused,
+    machineFreshnessStatusLabel,
+    machineLabelPresentationForSnapshot,
+  } from '../../../foundation/machine-freshness-presentation';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import type { TimelineDimension, TimelineValue } from '../../../foundation/overview-model';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
   import {
     sessionAnalysisTargetForOverviewRow,
     sessionAnalysisTargetForSession,

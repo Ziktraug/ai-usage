@@ -13,8 +13,8 @@
   import type { WorkRoot } from '@ai-usage/report-core/work-attention';
   import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
   import { browser } from '$app/env';
-  import type { RuntimeMode } from '../../../runtime-mode';
   import { displayTitle } from '../../foundation/presentation/display-title';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import { loadNextCampaignPage } from '../../query/options/campaigns';
   import { optionalSessionLookupQueryOptions } from '../../query/options/session';
   import { sessionCampaignInfiniteOptions } from '../../query/options/session-window';

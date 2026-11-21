@@ -2,7 +2,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { meta, muted, statusPill, statusPillInfo, statusPillWarn, strongCell } from '@ai-usage/design-system/report';
-  import { count } from '../../../../skills-page-model';
+  import { count } from '../../../foundation/skills-page-model';
   import { toggleOperation } from '../management/model';
   import type { SkillsManagementOperationEpisodePort } from '../management/operation-episode.svelte';
   import SkillSwitch from '../management/skill-switch.svelte';

@@ -47,7 +47,7 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 315_000;
 // comparison the closure measured 315,717 B. The synthetic report destination, its in-memory
 // projections and e2e fixtures are now compiled out of production builds (SvelteKit's `dev`; demo and
 // e2e run on the development server), and the comparison explanation opens as a popover. The demo
-// payload itself (`src/report-data.ts`, ~1.3 KB gzip) still ships: the layout's bootstrap and the
+// payload itself (`src/lib/foundation/report-data.ts`, ~1.3 KB gzip) still ships: the layout's bootstrap and the
 // Work and Observatory synthetic paths import it, and its module has load-time effects. A fresh
 // production build measures 309,001 B gzip.
 const RECORDED_GZIP_CLOSURE_BYTES = 309_001;

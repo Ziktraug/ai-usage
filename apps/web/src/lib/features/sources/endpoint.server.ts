@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../../../runtime-mode';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { enforceRequestPolicy, explicitPolicyForPath } from '../../server/rpc/request-policy-handler';
 
 export type SourceControlEndpointPath = '/api/source-control' | '/api/source-control/command';

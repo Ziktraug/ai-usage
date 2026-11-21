@@ -76,8 +76,8 @@
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
   import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
-  import { dateFromIndex } from '../../../../date-range';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
+  import { dateFromIndex } from '../../../foundation/date-range';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
   import RangeBrush from './range-brush.svelte';
   import {

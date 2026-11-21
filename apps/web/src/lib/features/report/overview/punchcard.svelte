@@ -50,7 +50,7 @@
     localTimeCellLabel,
     localTimeWeekdayNames,
   } from '@ai-usage/report-core/session-query';
-  import { PUNCH_DAYS, punchcardSessionMark } from '../../../../overview-model';
+  import { PUNCH_DAYS, punchcardSessionMark } from '../../../foundation/overview-model';
   import { fmtMoney, fmtNum } from '../../../foundation/presentation/format';
 
   let {

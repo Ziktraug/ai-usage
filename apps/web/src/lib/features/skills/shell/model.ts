@@ -13,7 +13,7 @@ import {
   type SkillTreeModel,
   selectionKey,
   skillSelectionFromPath,
-} from '../../../../skills-page-model';
+} from '../../../foundation/skills-page-model';
 import { parseProjectInventoriesResult, parseSkillSnapshotResult } from '../skills-client-contracts';
 
 /**

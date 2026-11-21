@@ -1,4 +1,4 @@
-import type { SourcePresentationTone } from '../../../source-control-presentation-model';
+import type { SourcePresentationTone } from '../../foundation/source-control-presentation-model';
 import { statusPillDanger, statusPillInfo, statusPillOk, statusPillWarn } from './styles';
 
 export {
@@ -7,7 +7,7 @@ export {
   type SourcePresentation,
   type SourcePresentationTone,
   type SourceProgressPresentation,
-} from '../../../source-control-presentation-model';
+} from '../../foundation/source-control-presentation-model';
 
 export const sourceToneClass = (tone: SourcePresentationTone): string => {
   if (tone === 'ok') {

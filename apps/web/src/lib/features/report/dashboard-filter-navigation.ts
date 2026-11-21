@@ -1,10 +1,10 @@
 import { isSessionOrigin, type SessionOrigin } from '@ai-usage/report-core/session-query';
-import type { TimelineDimension } from '../../../overview-model';
 import {
   type DashboardSearch,
   type FieldFilterKey,
   toggleExactFieldFilter,
 } from '../../foundation/dashboard/dashboard-search';
+import type { TimelineDimension } from '../../foundation/overview-model';
 
 const toggleValue = <Value extends string>(values: readonly Value[], value: Value): Value[] =>
   values.includes(value) ? values.filter((current) => current !== value) : [...values, value];

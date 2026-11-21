@@ -8,7 +8,7 @@ import {
   type SessionQueryRequest,
 } from '@ai-usage/report-core/session-query';
 import type { Locator, Page, Request } from '@playwright/test';
-import { campaignMapFixtureRows } from '../src/campaign-map-fixture';
+import { campaignMapFixtureRows } from '../src/lib/foundation/campaign-map-fixture';
 import { expect, test, waitForHydratedNavigation } from './browser-test';
 import { decodeRpcResponseBody, encodeRpcResponseBody } from './rpc-test-transport';
 import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';

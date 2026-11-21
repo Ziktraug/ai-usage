@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { buildCampaignViews } from './dashboard/dashboard-model';
 import { toDateInputValue } from './date-range';
-import { buildCampaignViews } from './lib/foundation/dashboard/dashboard-model';
 import {
   buildAdvancedAnalysisSummary,
   buildCalendarHeatmapData,

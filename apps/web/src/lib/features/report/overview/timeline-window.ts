@@ -1,8 +1,8 @@
 import type { FocusedTimelineBucket, FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
 import { type ApiPriceMeasurement, combineApiPriceMeasurements } from '@ai-usage/report-core/provenance';
-import { clampNumber, dateFromIndex } from '../../../../date-range';
-import type { ResolvedTimelineMetric } from '../../../../overview-model';
-import type { TimeRangeIndexRange, TimeRangeSelectionIndexes } from '../../../../time-range-control-state';
+import { clampNumber, dateFromIndex } from '../../../foundation/date-range';
+import type { ResolvedTimelineMetric } from '../../../foundation/overview-model';
+import type { TimeRangeIndexRange, TimeRangeSelectionIndexes } from '../../../foundation/time-range-control-state';
 
 /**
  * The Activity chart renders the selected report window, not the whole domain

@@ -16,7 +16,7 @@ import {
   type WorkRoutingQualifyOutput,
 } from '@ai-usage/web-contract/work-routing';
 import { Effect } from 'effect';
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { getServerRuntimeMode } from './runtime-mode.server';
 import {

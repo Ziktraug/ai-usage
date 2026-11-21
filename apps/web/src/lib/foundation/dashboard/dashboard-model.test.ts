@@ -2,10 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { projectSessionPage, type SessionQueryFilters } from '@ai-usage/report-core/session-query';
-import type { DateBounds } from '../../../date-range';
-import { demoReportPayload } from '../../../report-data';
-import { enrichReportRow } from '../../../shared';
+import type { DateBounds } from '../date-range';
 import type { ReportSummary } from '../presentation/report-value';
+import { demoReportPayload } from '../report-data';
+import { enrichReportRow } from '../shared';
 import {
   buildCampaignTableItems,
   buildCampaignTableRows,

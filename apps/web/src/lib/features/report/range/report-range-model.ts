@@ -1,4 +1,5 @@
 import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
+import type { DashboardDateRangeSearch } from '../../../foundation/dashboard/dashboard-search';
 import {
   DAY_MS,
   dateBoundsForRange,
@@ -9,10 +10,9 @@ import {
   rollingDaysAgo,
   startOfDay,
   toDateInputValue,
-} from '../../../../date-range';
-import type { MigrationGranularity } from '../../../../overview-model';
-import type { TimeRangeSelectionIndexes } from '../../../../time-range-control-state';
-import type { DashboardDateRangeSearch } from '../../../foundation/dashboard/dashboard-search';
+} from '../../../foundation/date-range';
+import type { MigrationGranularity } from '../../../foundation/overview-model';
+import type { TimeRangeSelectionIndexes } from '../../../foundation/time-range-control-state';
 
 export const reportRangeEditKey = (range: DashboardDateRangeSearch): string =>
   JSON.stringify([range.mode, range.from ?? null, range.to ?? null]);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
-import { demoReportPayload } from '../../../report-data';
 import { buildCampaignViews } from '../dashboard/dashboard-model';
+import { demoReportPayload } from '../report-data';
 import {
   sessionAnalysisTargetForCampaign,
   sessionAnalysisTargetForOverviewRow,

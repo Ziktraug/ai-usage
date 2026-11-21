@@ -16,8 +16,8 @@ import {
   skillReconcileResultSchema,
 } from '@ai-usage/web-contract/skills';
 import { parse } from 'valibot';
-import type { RuntimeMode } from '../../../runtime-mode';
 import type { SkillsServerAdapter, SkillsServerAdapterResult } from '../../../server/skills-contracts';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import { type E2ESkillsFixtureVariant, e2eSkillsFixtureVariantForHeaders } from './e2e-fixture-profile';
 import type { WebRpcRouterDependencies } from './router';
 import type { SkillsCallOptions, SkillsCapability, SkillsCapabilityResult } from './skills';
