@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isRecord } from '@ai-usage/report-core/datasets';
 
 const ignoredDirectories = new Set([
   '.direnv',
@@ -30,9 +31,6 @@ interface Violation {
 }
 
 const root = process.cwd();
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const packageExportKeys = (exportsValue: unknown) => {
   if (typeof exportsValue === 'string') {

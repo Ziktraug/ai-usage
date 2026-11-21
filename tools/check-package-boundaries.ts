@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { collectModuleClosureViolations } from './package-boundary-module-closures';
 import {
   collectPackageExportsViolations,
@@ -319,9 +320,6 @@ const targetImportReason = (
     return 'report-data may import only the usage-store reader facade.';
   }
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const matchesPattern = (specifier: string, pattern: string) => {
   if (pattern.endsWith('/*')) {

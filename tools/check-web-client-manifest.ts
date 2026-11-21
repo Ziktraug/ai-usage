@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
+import { isRecord } from '@ai-usage/report-core/datasets';
 
 const webClientModuleManifestFormat = 'ai-usage-web-client-modules' as const;
 const webClientModuleManifestVersion = 2 as const;
@@ -38,9 +39,6 @@ interface ForbiddenModuleRule {
   matches: (moduleId: string) => boolean;
   name: string;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const hasText = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 
