@@ -30,7 +30,7 @@
 
 | Packet | Title | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| P1 | Turn the complexity and file-size limits back on, with the existing debt suppressed in place | S | — | TODO |
+| P1 | Turn the complexity and file-size limits back on, with the existing debt suppressed in place | S | — | DONE |
 | P2 | Split `packages/usage-store/src/index.ts` into owned modules (move-only) | L | P1 | TODO |
 | P3 | Move the flat `apps/web/src/*.ts` root into `lib/features` and `lib/foundation` | M–L | P1 | TODO |
 | P4 | Extract the `campaigns-page.svelte` script into tested controller modules | M | P3 | TODO |
@@ -725,3 +725,79 @@ loads its e2e fixture through a mode-gated dynamic import.
 
 (Executors append dated notes here: the counts recorded by P1, the P3 mapping
 table, residual scores left by P5, and any STOP with its evidence.)
+
+### 2026-11-21 — P1 executed (branch `chore/enforce-complexity-and-file-size`)
+
+No drift since `a1a902be`. Recorded debt counters (exclude `plans/`, which
+quotes the pattern):
+
+- `git grep -c 'biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127' -- ':!plans'` → **271**
+- `git grep -c 'biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127' -- ':!plans'` → **34**
+
+Files with a file-length suppression (34): `apps/usage-engine/src/engine-lock.ts`,
+`apps/web/src/lib/features/work/work-attention-synthetic.ts`,
+`apps/web/src/lib/features/work/work-thread-model.ts`,
+`apps/web/src/lib/features/work/work-threads.css`,
+`apps/web/src/lib/features/work/work-timeline-model.ts`,
+`apps/web/src/server/work-threads-e2e-fixture.server.ts`,
+`packages/local-collectors/src/codex-history.ts`,
+`packages/local-machine/src/claude-session-facts.ts`,
+`packages/local-machine/src/codex-skill-observation.ts`,
+`packages/local-machine/src/internal/codex-history.ts`,
+`packages/report-core/src/delegation-job.ts`,
+`packages/report-core/src/delegation-policy.ts`,
+`packages/report-core/src/delegation-qualification.ts`,
+`packages/report-core/src/focused-report-query.ts`,
+`packages/report-core/src/provider-quota.ts`,
+`packages/report-core/src/session-detail.ts`,
+`packages/report-core/src/session-query.ts`,
+`packages/report-core/src/work-attempts.ts`,
+`packages/report-core/src/work-attention.ts`,
+`packages/report-core/src/work-routing.ts`,
+`packages/report-data/src/work-attention-read.ts`,
+`packages/report-data/src/work-thread-read.ts`,
+`packages/usage-engine-control/src/contracts.ts`,
+`packages/usage-engine-runtime/src/delegation.ts`,
+`packages/usage-engine-runtime/src/input-file.ts`,
+`packages/usage-engine-runtime/src/live.ts`,
+`packages/usage-engine-runtime/src/source-adapters.ts`,
+`packages/usage-store/src/delegation-store.ts`,
+`packages/usage-store/src/index.ts`,
+`packages/usage-store/src/served-report-store.ts`,
+`packages/usage-store/src/work-fact-store.ts`,
+`packages/usage-store/src/work-thread-store.ts`,
+`tools/check-web-production-start.ts`,
+`tools/measure-usage-runtime-io.ts`.
+
+Deviations, all explained by tool semantics rather than drift:
+
+- **Complexity: 271, not 284.** The 284 dry-run diagnostics are 271 errors plus
+  13 infos, all in test files. The Ultracite core preset has its own test-file
+  override that sets `noExcessiveCognitiveComplexity` to `off`; `--only` forces
+  the rule back on there, so `--suppress` wrote 13 comments that the real
+  configuration reports as `suppressions/unused`. Those 13 were removed. So,
+  contrary to design decision 6, test files *are* exempt from the complexity
+  rule, through the preset. No override was added to change that.
+- **File length: 34 files, not ~39.** Biome counts lines through syntax trivia,
+  so newlines inside multi-line template literals (the SQL strings) do not
+  count, and for `.svelte` files it counts only the script block. As a result
+  `focused-report-query-sqlite.ts`, `session-query-sqlite.ts`,
+  `claude-desktop-session-store.ts`, `provider-quota-store.ts`,
+  `work-attention-model.ts`, `work-disk-model.ts` and `campaigns-page.svelte`
+  are over 1,000 `wc -l` lines but not flagged. Biome does flag one CSS file,
+  `work-threads.css`, which got a `/* biome-ignore-all … */` block comment.
+- **Step 4 by hand.** `--suppress --only=lint/style/noExcessiveLinesPerFile`
+  wrote plain `biome-ignore` comments, not `biome-ignore-all`, and also touched
+  test files (78 files). Its output was reverted and the file-level comment was
+  inserted as line 1 of the 34 flagged files. None of them has a shebang or a
+  leading license comment.
+- Some complexity comments sit where Biome reports the diagnostic, not on the
+  enclosing declaration. Examples: before an `Effect.gen(function* …)` or
+  `try: () =>` callback, before a `return rows.map(…)`, and once inside a
+  parameter list before `): ImportResult =>`. Each one is effective: `bun run
+  check` reports no unused suppression.
+
+Ratchet proven: a scratch function with complexity above 20 and a scratch
+1,005-line non-test file under `tools/` made `bun run check` exit 1 with
+exactly those two errors. Both files were then deleted. Final gate:
+`check`, `lint`, `typecheck`, `test` and `build` each exited 0.
