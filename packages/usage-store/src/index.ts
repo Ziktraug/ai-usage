@@ -1,6 +1,5 @@
 import { createClaudeDesktopSessionStore } from './claude-desktop-session-store';
 import { withUsageStoreReader, withUsageStoreWriter } from './connections';
-import { createDelegationStore } from './delegation-store';
 import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from './errors';
 import { readUsageLocalMachineWithDatabase } from './machine-fleet';
 import { createProviderQuotaStore } from './provider-quota-store';
@@ -122,16 +121,9 @@ export const {
   withUsageStoreReader,
   withUsageStoreWriter,
 });
+
+export { importCodexWorkObservations, queryCodexWorkObservations } from './codex-work-store';
 export {
-  markReviewAttemptsLost,
-  queryReviewAttempts,
-  queryReviewReservations,
-  queryReviewTargetResolution,
-  releaseReviewAttemptReservation,
-  requestReviewAttempt,
-  transitionReviewAttempt,
-} from './review-attempt-store';
-export const {
   countDelegationRetryChain,
   markDelegationJobsLost,
   queryDelegationEvaluations,
@@ -145,14 +137,16 @@ export const {
   requestDelegationCancel,
   requestDelegationJob,
   transitionDelegationJob,
-} = createDelegationStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
-
-export { importCodexWorkObservations, queryCodexWorkObservations } from './codex-work-store';
+} from './delegation-store';
+export {
+  markReviewAttemptsLost,
+  queryReviewAttempts,
+  queryReviewReservations,
+  queryReviewTargetResolution,
+  releaseReviewAttemptReservation,
+  requestReviewAttempt,
+  transitionReviewAttempt,
+} from './review-attempt-store';
 
 export const {
   applyWorkThreadCommand,

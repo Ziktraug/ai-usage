@@ -1,7 +1,7 @@
 import { isSerializedMergeRow, migrateLegacySerializedMergeRow } from '@ai-usage/report-core/merge-bundle';
 import { CLAUDE_DESKTOP_SESSION_TABLES, claudeDesktopSessionSchemaSql } from './claude-desktop-session-store';
 import { CODEX_WORK_TABLES, codexWorkSchemaSql } from './codex-work-schema';
-import { DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
+import { DELEGATION_TABLES, migrateDelegationSchema } from './delegation-schema';
 import { migrateExecutorAccountChangeSchema } from './executor-observation-schema';
 import {
   fleetMetadataForStoredRow,
