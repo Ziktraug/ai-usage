@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   collectUncoveredTypeScriptFiles,
@@ -11,6 +11,75 @@ import {
 
 const repositoryRoot = path.resolve(import.meta.dir, '..');
 const coverageTestTimeoutMs = 15_000;
+
+// Two installed packages publish a `tsc` binary: `typescript` (6.x, kept for svelte-check, `svelte-kit sync`
+// and the compiler-API coverage tool) and `@typescript/native` (TypeScript 7). `node_modules/.bin/tsc` is
+// whichever of the two the installer linked last, so a script must name the package it means (ADR 0093).
+const TSC_PACKAGES = new Set(['@typescript/native', 'typescript']);
+const explicitTypeScript7 = 'bun x --no-install --package @typescript/native tsc';
+const SEGMENT_SEPARATOR = /&&|\|\||[;|]/;
+const WHITESPACE = /\s+/;
+const WORKSPACE_GLOB_SUFFIX = /\/\*$/;
+
+const SHELL_WRAPPING = /^["'(]+|["')]+$/g;
+
+const scriptSegments = (script: string): string[][] =>
+  script.split(SEGMENT_SEPARATOR).map((segment) =>
+    segment
+      .trim()
+      .split(WHITESPACE)
+      .map((token) => token.replace(SHELL_WRAPPING, '')),
+  );
+
+const isTscToken = (token: string): boolean => token === 'tsc' || token.endsWith('/tsc') || token.startsWith('tsc@');
+
+// `effect-tsgo tsc@7.0.2 …` runs the compiler bundled with `@effect/tsgo`; `tsc@…` is its argument.
+const invokesTsc = (tokens: readonly string[]): boolean => !tokens.includes('effect-tsgo') && tokens.some(isTscToken);
+
+// Only `bun x --no-install --package <pkg> tsc` qualifies: without `--no-install` a missing alias would be
+// fetched from the registry by name, and a versioned `tsc@…` never resolves the installed package.
+const selectsTscPackage = (tokens: readonly string[]): boolean => {
+  const tsc = tokens.indexOf('tsc');
+  const noInstall = tokens.indexOf('--no-install');
+  const packageFlag = tokens.indexOf('--package');
+  return (
+    tokens[0] === 'bun' &&
+    tokens[1] === 'x' &&
+    noInstall !== -1 &&
+    noInstall < tsc &&
+    packageFlag !== -1 &&
+    packageFlag < tsc &&
+    TSC_PACKAGES.has(tokens[packageFlag + 1] ?? '')
+  );
+};
+
+const ambiguousTscSegments = (script: string): string[] =>
+  scriptSegments(script)
+    .filter((tokens) => invokesTsc(tokens) && !selectsTscPackage(tokens))
+    .map((tokens) => tokens.join(' '));
+
+interface PackageManifest {
+  readonly scripts?: Record<string, string>;
+  readonly workspaces?: string[];
+}
+
+const readManifest = (manifestPath: string): PackageManifest =>
+  JSON.parse(readFileSync(path.join(repositoryRoot, manifestPath), 'utf8')) as PackageManifest;
+
+const manifestPaths = (): string[] => {
+  const workspaceManifests = (readManifest('package.json').workspaces ?? []).flatMap((pattern) => {
+    const workspaceRoot = pattern.replace(WORKSPACE_GLOB_SUFFIX, '');
+    return readdirSync(path.join(repositoryRoot, workspaceRoot))
+      .map((directory) => path.posix.join(workspaceRoot, directory, 'package.json'))
+      .filter((manifestPath) => existsSync(path.join(repositoryRoot, manifestPath)));
+  });
+  return ['package.json', ...workspaceManifests.sort()];
+};
+
+const repositoryScripts = (): { manifestPath: string; name: string; script: string }[] =>
+  manifestPaths().flatMap((manifestPath) =>
+    Object.entries(readManifest(manifestPath).scripts ?? {}).map(([name, script]) => ({ manifestPath, name, script })),
+  );
 
 describe('TypeScript project coverage guard', () => {
   test('reports files that do not belong to a checked project', () => {
@@ -68,8 +137,52 @@ describe('TypeScript project coverage guard', () => {
     expect(packageJson.scripts.typecheck.split(' && ')).toEqual([
       'turbo run check',
       'bun tools/check-typescript-coverage.ts',
-      'tsc -p tsconfig.tools.json --noEmit',
+      `${explicitTypeScript7} -p tsconfig.tools.json --noEmit`,
     ]);
+  });
+
+  test('recognises a tsc invocation that does not select its package', () => {
+    expect(ambiguousTscSegments('tsc --noEmit')).toEqual(['tsc --noEmit']);
+    expect(ambiguousTscSegments('bun run lib && bun --bun tsc --noEmit')).toEqual(['bun --bun tsc --noEmit']);
+    expect(ambiguousTscSegments('node_modules/.bin/tsc -p tsconfig.tools.json')).toEqual([
+      'node_modules/.bin/tsc -p tsconfig.tools.json',
+    ]);
+    expect(ambiguousTscSegments('bun x --no-install --package left-pad tsc --noEmit')).toEqual([
+      'bun x --no-install --package left-pad tsc --noEmit',
+    ]);
+    for (const unselected of [
+      'bunx tsc@latest --noEmit',
+      "sh -c 'tsc --noEmit'",
+      '(tsc --noEmit)',
+      'bun x --package @typescript/native tsc --noEmit',
+      'npx --no-install --package typescript tsc --noEmit',
+    ]) {
+      expect(ambiguousTscSegments(unselected)).toHaveLength(1);
+    }
+    expect(ambiguousTscSegments(`${explicitTypeScript7} --noEmit`)).toEqual([]);
+    expect(ambiguousTscSegments('bun x --no-install --package typescript tsc --noEmit')).toEqual([]);
+    // `effect-tsgo` is another binary; `tsc@7.0.2` is its argument, not the `tsc` binary.
+    expect(
+      ambiguousTscSegments('bun --bun x --no-install effect-tsgo tsc@7.0.2 --project tsconfig.effect.json --noEmit'),
+    ).toEqual([]);
+  });
+
+  test('every script that runs tsc selects its package, because two installed packages publish tsc', () => {
+    const scripts = repositoryScripts();
+    const ambiguous = scripts.flatMap(({ manifestPath, name, script }) =>
+      ambiguousTscSegments(script).map((segment) => `${manifestPath} ${name}: ${segment}`),
+    );
+
+    expect(scripts.filter(({ script }) => scriptSegments(script).some(invokesTsc)).length).toBeGreaterThan(0);
+    expect(ambiguous).toEqual([]);
+  });
+
+  test('no build script invokes tsc: type-checking belongs to check', () => {
+    const typeCheckingBuilds = repositoryScripts()
+      .filter(({ name, script }) => name === 'build' && scriptSegments(script).some(invokesTsc))
+      .map(({ manifestPath, script }) => `${manifestPath} build: ${script}`);
+
+    expect(typeCheckingBuilds).toEqual([]);
   });
 
   test('prepares generated Web sources before running the Web typecheck', () => {

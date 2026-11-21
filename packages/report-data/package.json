@@ -15,8 +15,7 @@
     "./work-thread-read": "./src/work-thread-read.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit",
-    "check": "tsc --noEmit",
+    "check": "bun x --no-install --package @typescript/native tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome check .",
     "test": "bun test --parallel"

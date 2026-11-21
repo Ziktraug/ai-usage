@@ -615,6 +615,12 @@ Typecheck:
 bun run typecheck
 ```
 
+The non-Svelte projects are type-checked by the native TypeScript 7 compiler,
+installed as `@typescript/native`. The Svelte project stays on `svelte-check`
+with TypeScript 6, which remains installed as `typescript`. Both packages
+publish a `tsc` binary, so scripts select one explicitly:
+`bun x --no-install --package @typescript/native tsc …` (ADR 0093).
+
 Optional Effect diagnostics:
 
 ```sh
@@ -622,7 +628,8 @@ bun run check:effect
 ```
 
 This advisory pilot uses pinned `@effect/tsgo` 0.64.1 and its bundled TypeScript
-7.0.2 compiler. It does not patch `node_modules`, replace TypeScript 6, or change
+7.0.2 compiler, separate from the `@typescript/native` compiler of the typecheck
+gate. It does not patch `node_modules`, replace TypeScript 6, or change
 the Biome or Svelte gates. The diagnostics stay advisory and are not a `verify`
 gate, but their compiler-fixture tests run via `bun test tools` and are part of
 `verify`. The command uses Bun for its launcher
