@@ -4,9 +4,9 @@ import {
   compareSessionPresentationRows,
   sortValueForSessionColumn as sortValueForCoreSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import type { SessionColumnId } from '../../../session-table-schema';
 import { fmtMaybeNum, fmtNum, fmtPct } from '../../foundation/presentation/format';
 import type { DashboardRow } from '../../foundation/presentation/report-value';
+import type { SessionColumnId } from '../../foundation/session/session-table-schema';
 import type { TableSortingState } from '../../foundation/table/state';
 
 export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): number | string =>

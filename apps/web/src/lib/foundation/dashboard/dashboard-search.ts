@@ -14,7 +14,7 @@ import {
   type SearchableColumnDiffId,
   type SessionColumnId,
   type SessionColumnVisibilityBase,
-} from '../../../session-table-schema';
+} from '../session/session-table-schema';
 import type { TableSortingState } from '../table/state';
 
 export const fieldFilterKeys = ['campaign', 'provider', 'model', 'project'] as const;

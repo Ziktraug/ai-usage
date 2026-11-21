@@ -2,8 +2,8 @@
   import { type SessionPresentationRow, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
   import { createQuery, type QueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, tick } from 'svelte';
-  import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
   import { drawerCommandForKey } from '../../../foundation/navigation/svelte/navigation';
+  import { sessionAnalysisTargetForSession } from '../../../foundation/session/session-analysis-target';
   import {
     optionalSessionDetailQueryOptions,
     optionalSessionNeighborsQueryOptions,

@@ -1,7 +1,7 @@
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
 import type { SessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
-import type { SessionAnalysisTarget } from '../../../../session-analysis-target';
+import type { SessionAnalysisTarget } from '../../../foundation/session/session-analysis-target';
 import type { SessionAnalysisError } from '../session-analysis-error';
 
 export interface SessionDetailNavigation {

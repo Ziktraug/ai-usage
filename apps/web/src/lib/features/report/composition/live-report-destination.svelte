@@ -51,15 +51,15 @@
   import type { TimelineDimension, TimelineValue } from '../../../../overview-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import {
-    sessionAnalysisTargetForOverviewRow,
-    sessionAnalysisTargetForSession,
-  } from '../../../../session-analysis-target';
-  import {
     type DashboardSearch,
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
   } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import {
+    sessionAnalysisTargetForOverviewRow,
+    sessionAnalysisTargetForSession,
+  } from '../../../foundation/session/session-analysis-target';
   import {
     campaignLabelOverridesQueryOptions,
     fetchReportBreakdown,

@@ -47,6 +47,8 @@
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
   import { onMount, tick, untrack } from 'svelte';
+  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
+  import { fmtDate } from '../../../foundation/presentation/format';
   import {
     columnVisibilityForSessionPreset,
     defaultColumnVisibility,
@@ -55,9 +57,7 @@
     sessionColumnPresetForVisibility,
     sessionColumnPresets,
     sessionColumnSchema,
-  } from '../../../../session-table-schema';
-  import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
-  import { fmtDate } from '../../../foundation/presentation/format';
+  } from '../../../foundation/session/session-table-schema';
   import type { StateChangeHandler, TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
   import type { SessionCampaignPage } from '../../../query/options/session-window';
   import { calculateSessionViewportHeight } from '../session-row-window';

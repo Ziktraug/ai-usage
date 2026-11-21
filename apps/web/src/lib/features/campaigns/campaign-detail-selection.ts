@@ -4,7 +4,7 @@ import {
   sessionCampaignIdentityForRow,
   sessionLookupFingerprint,
 } from '@ai-usage/report-core/session-query';
-import { sessionAnalysisTargetForSession } from '../../../session-analysis-target';
+import { sessionAnalysisTargetForSession } from '../../foundation/session/session-analysis-target';
 import type { SessionSelectionInput } from '../sessions/detail/types';
 
 export type CampaignDetailSelection =

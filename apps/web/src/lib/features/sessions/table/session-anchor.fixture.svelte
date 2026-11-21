@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { columnVisibilityForSessionPreset } from '../../../../session-table-schema';
+  import { columnVisibilityForSessionPreset } from '../../../foundation/session/session-table-schema';
   import { syntheticSessionRows } from './session-table.fixtures';
   import SessionTable from './session-table.svelte';
 

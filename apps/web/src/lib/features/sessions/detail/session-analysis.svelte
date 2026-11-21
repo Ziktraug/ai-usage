@@ -244,8 +244,8 @@
     sessionDurationSemantics,
     type TimelineScaleMode,
     timelineHasCompressibleGaps,
-  } from '../../../../session-analysis-model';
-  import type { SessionAnalysisTarget } from '../../../../session-analysis-target';
+  } from '../../../foundation/session/session-analysis-model';
+  import type { SessionAnalysisTarget } from '../../../foundation/session/session-analysis-target';
   import type { SessionAnalysisError } from '../session-analysis-error';
   import { buildSessionAnalysisPresentation } from '../session-analysis-presentation';
 

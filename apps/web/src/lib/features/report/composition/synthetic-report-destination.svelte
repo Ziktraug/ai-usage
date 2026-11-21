@@ -34,12 +34,6 @@
   import type { TimelineValue } from '../../../../overview-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
-  import { sessionAnalysisTargetForOverviewRow } from '../../../../session-analysis-target';
-  import {
-    columnVisibilityFromDiff,
-    columnVisibilitySearchForVisibility,
-    sortFromSortingState,
-  } from '../../../../session-table-schema';
   import { buildCampaignTableRows, buildCampaignViews } from '../../../foundation/dashboard/dashboard-model';
   import {
     type DashboardSearch,
@@ -48,6 +42,12 @@
   } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { withSessionDisplayTitle } from '../../../foundation/presentation/display-title';
+  import { sessionAnalysisTargetForOverviewRow } from '../../../foundation/session/session-analysis-target';
+  import {
+    columnVisibilityFromDiff,
+    columnVisibilitySearchForVisibility,
+    sortFromSortingState,
+  } from '../../../foundation/session/session-table-schema';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { routeForRow } from '../../sessions/detail/detail-selection';

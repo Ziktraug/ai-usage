@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { sessionSortFields } from '@ai-usage/report-core/session-query';
-import { sessionTableColumns } from './lib/features/sessions/table/session-columns';
+import { sessionTableColumns } from '../../features/sessions/table/session-columns';
 import {
   columnDiffFromVisibility,
   columnVisibilityForSessionPreset,

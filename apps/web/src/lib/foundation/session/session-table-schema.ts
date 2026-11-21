@@ -5,7 +5,7 @@ import {
   sessionSortFields,
   sortValueForSessionColumn as sortValueForCoreSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import type { TableSortingState, TableVisibilityState } from './lib/foundation/table/state';
+import type { TableSortingState, TableVisibilityState } from '../table/state';
 
 type DashboardRow = SessionPresentationRow;
 

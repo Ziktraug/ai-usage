@@ -3,7 +3,7 @@ import {
   sessionAnalysisTargetForOverviewRow,
   sessionAnalysisTargetForPageItem,
   sessionAnalysisTargetForSession,
-} from '../../../../session-analysis-target';
+} from '../../../foundation/session/session-analysis-target';
 import { campaignSessionSelectionQuery } from '../../report/actions/campaign-session-controls-binding';
 import type { SessionRoute } from './session-route';
 import type { SessionSelectionInput } from './types';

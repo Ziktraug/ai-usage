@@ -58,10 +58,10 @@
   import { campaignBadgeLabelForSessionRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { onDestroy, type Snippet, tick } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
-  import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  import { sessionDurationSemantics } from '../../../foundation/session/session-analysis-model';
   import RecoverableRegion from '../../shell/recoverable-region.svelte';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../dashboard-sort';
   import DrawerDetailItem from './drawer-detail-item.svelte';

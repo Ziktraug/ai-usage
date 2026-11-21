@@ -2,14 +2,14 @@ import { rtkSavingsPct } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { type ColumnDef, createExpandedRowModel, rowExpandingFeature, tableFeatures } from '@tanstack/table-core';
 import { storeReactivityBindings } from '@tanstack/table-core/store-reactivity-bindings';
+import { fmtCompactColumn, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
+import { apiValuePresentation } from '../../../foundation/presentation/report-value';
 import {
   isSessionColumnVisible,
   type SessionColumnId,
   sessionColumnSchema,
   sortValueForSessionColumn,
-} from '../../../../session-table-schema';
-import { fmtCompactColumn, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
-import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+} from '../../../foundation/session/session-table-schema';
 import { lineDeltaLabel } from '../dashboard-sort';
 
 export interface SessionColumnMeta {

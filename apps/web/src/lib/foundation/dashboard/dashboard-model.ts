@@ -10,7 +10,6 @@ import {
   sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
 import { DAY_MS, type DateBounds, rowMatchesDateBounds } from '../../../date-range';
-import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from '../../../session-table-schema';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../presentation/format';
 import {
   aggregateApiPriceProvenance,
@@ -19,6 +18,7 @@ import {
   type DashboardRow,
   type ReportSummary,
 } from '../presentation/report-value';
+import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from '../session/session-table-schema';
 import type { TableSortingState } from '../table/state';
 import {
   buildAnalyticsGroups,

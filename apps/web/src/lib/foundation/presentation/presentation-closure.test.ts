@@ -24,7 +24,7 @@ const entryPaths = [
   'overview-model.ts',
   'lib/features/report/provider-status-model.ts',
   'campaign-label-overrides.ts',
-  'session-analysis-target.ts',
+  'lib/foundation/session/session-analysis-target.ts',
   'lib/foundation/presentation/format.ts',
   'lib/foundation/presentation/report-value.ts',
 ] as const;
