@@ -27,7 +27,15 @@ import {
 } from './claude-desktop-session-store';
 import { CODEX_WORK_TABLES, codexWorkSchemaSql, createCodexWorkStore } from './codex-work-store';
 import { createDelegationStore, DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
-import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import {
+  previewStaleError,
+  UsageStoreError,
+  usageStoreError,
+  usageStorePreviewReadError,
+  usageStorePreviewStateError,
+  usageStoreReadError,
+  usageStoreServedReadError,
+} from './errors';
 import { createExecutorObservationStore, migrateExecutorAccountChangeSchema } from './executor-observation-store';
 import {
   inspectPrivateStoreForConfirmation,
@@ -39,12 +47,7 @@ import { createProviderQuotaStore, MAX_PROVIDER_QUOTA_STREAMS } from './provider
 import type { UsageStoreGenerations } from './report-rows';
 import { createReviewAttemptStore, migrateReviewAttemptSchema, REVIEW_ATTEMPT_TABLES } from './review-attempt-store';
 import { createServedReportStore } from './served-report-store';
-import {
-  assertServedReportSchema,
-  ServedRevisionQueryValidationError,
-  ServedRevisionSchemaValidationError,
-  servedReportSchemaSql,
-} from './served-revision';
+import { assertServedReportSchema, servedReportSchemaSql } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
 import {
   createTrackedSqliteDatabase,
@@ -499,77 +502,6 @@ interface EnrichmentStatements {
   touch: SqliteStatement;
   update: SqliteStatement;
 }
-
-const usageStoreError = (operation: string, dbPath: string, cause: unknown, reason: UsageStoreErrorReason) =>
-  new UsageStoreError({
-    operation,
-    message: `${operation} ${dbPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-    reason,
-    cause,
-  });
-
-const sqliteErrorText = (cause: unknown): string =>
-  cause instanceof Error ? `${cause.name} ${cause.message}`.toLowerCase() : String(cause).toLowerCase();
-
-const readFailureReason = (cause: unknown): UsageStoreErrorReason => {
-  if (cause instanceof ServedRevisionSchemaValidationError) {
-    return 'corrupt';
-  }
-  if (cause instanceof ServedRevisionQueryValidationError) {
-    return 'invalid-input';
-  }
-  const sqliteCode =
-    cause instanceof Error && 'code' in cause && typeof cause.code === 'string' ? cause.code.toUpperCase() : '';
-  if (sqliteCode.startsWith('SQLITE_BUSY') || sqliteCode.startsWith('SQLITE_LOCKED')) {
-    return 'busy';
-  }
-  if (sqliteCode.startsWith('SQLITE_CORRUPT') || sqliteCode.startsWith('SQLITE_NOTADB')) {
-    return 'corrupt';
-  }
-  const errorText = sqliteErrorText(cause);
-  if (errorText.includes('busy') || errorText.includes('locked')) {
-    return 'busy';
-  }
-  if (
-    errorText.includes('corrupt') ||
-    errorText.includes('malformed') ||
-    errorText.includes('not a database') ||
-    errorText.includes('file is encrypted')
-  ) {
-    return 'corrupt';
-  }
-  if (errorText.includes('unsafe') || errorText.includes('not owner-only')) {
-    return 'corrupt';
-  }
-  return 'storage-failure';
-};
-
-const usageStoreReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError =>
-  cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, readFailureReason(cause));
-
-const usageStorePreviewReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
-  const reason = cause instanceof UsageStoreError ? cause.reason : readFailureReason(cause);
-  if (reason === 'corrupt' || reason === 'schema-too-new' || reason === 'schema-too-old') {
-    return usageStoreError(operation, dbPath, cause, 'preview-unavailable');
-  }
-  return cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, reason);
-};
-
-const usageStorePreviewStateError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
-  const reason = cause instanceof UsageStoreError ? cause.reason : readFailureReason(cause);
-  if (reason === 'busy') {
-    return cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, reason);
-  }
-  return usageStoreError(operation, dbPath, cause, 'preview-unavailable');
-};
-
-const usageStoreServedReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
-  if (cause instanceof UsageStoreError) {
-    return cause;
-  }
-  const reason = readFailureReason(cause);
-  return usageStoreError(operation, dbPath, cause, reason === 'storage-failure' ? 'corrupt' : reason);
-};
 
 export const usageStorePath = (home: string) => path.join(home, '.config', 'ai-usage', 'usage-store.sqlite');
 
@@ -2517,14 +2449,6 @@ const confirmationTokenFor = (
     .digest('hex');
   return parseMergeConfirmationToken(`v1.${digest}`);
 };
-
-const previewStaleError = (cause?: unknown): UsageStoreError =>
-  new UsageStoreError({
-    operation: 'confirmPeerMergeBundle',
-    message: 'The usage-store state changed after preview; create a new preview before confirming.',
-    reason: 'preview-stale',
-    ...(cause === undefined ? {} : { cause }),
-  });
 
 const readCurrentUsageStoreGeneration = (db: SqliteDatabase): number => {
   try {
