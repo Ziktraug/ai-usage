@@ -38,3 +38,26 @@ test('preflights the top-level rows array before JSON parsing', () => {
     assertPortableUsageTopLevelRowsPreflight('{"rows":[],"r\\u006fws":[{},{}]}', 'Escaped duplicate fixture', 1),
   ).toThrow('Escaped duplicate fixture contains more than 1 rows; maximum is 1');
 });
+
+test('rows preflight characterization: element shapes, unreadable strings and unterminated arrays (plan 127)', () => {
+  const preflight = (text: string, maxRows: number) => () =>
+    assertPortableUsageTopLevelRowsPreflight(text, 'Fixture', maxRows);
+  // A lone element is counted when the array closes, whatever its shape.
+  expect(preflight('{"rows":["a"]}', 0)).toThrow('more than 0 rows; maximum is 0');
+  expect(preflight('{"rows":[{}]}', 0)).toThrow('more than 0 rows; maximum is 0');
+  expect(preflight('{"rows":[ 7 ]}', 0)).toThrow('more than 0 rows; maximum is 0');
+  expect(preflight('{"rows":[ ]}', 0)).not.toThrow();
+  expect(preflight('{"rows":[1]}', 1)).not.toThrow();
+  expect(preflight('{"rows":[1, 2]}', 1)).toThrow('more than 1 rows; maximum is 1');
+  expect(preflight('{"rows":["]", "[", "\\"", 3]}', 4)).not.toThrow();
+  expect(preflight('{"rows":["]", "[", "\\"", 3]}', 3)).toThrow('more than 3 rows; maximum is 3');
+  // An unreadable string ends the preflight without a verdict; parsing reports it.
+  expect(preflight('{"x\\uZZZZ":1,"rows":[{},{},{}]}', 2)).not.toThrow();
+  expect(preflight('{"rows":["\\uZZZZ",{},{},{}]}', 2)).not.toThrow();
+  expect(preflight('{"rows":[{},{}', 2)).not.toThrow();
+  expect(preflight('{"rows":[{},{},', 2)).toThrow('more than 2 rows; maximum is 2');
+  // The key must name an array at object depth one; enclosing arrays are not counted.
+  expect(preflight('{"rows":{"a":1,"b":2,"c":3}}', 1)).not.toThrow();
+  expect(preflight('{"rows" 5,"rows":[{},{}]}', 1)).toThrow('more than 1 rows; maximum is 1');
+  expect(preflight('[{"rows":[{},{}]}]', 1)).toThrow('more than 1 rows; maximum is 1');
+});
