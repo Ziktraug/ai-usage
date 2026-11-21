@@ -676,7 +676,10 @@ test('separates timeline boundary dates and retains no horizontally intersecting
 
   // New labels without a resize: the timeline measures them again rather than keeping the old verdict.
   const tickTexts = () => page.locator('[data-timeline-tick]').allTextContents();
+  const visibleTickTexts = () => page.locator('[data-timeline-tick]').visible().allTextContents();
   const before = await tickTexts();
+  const visibleBefore = await visibleTickTexts();
+  expect(visibleBefore.length).toBeGreaterThan(0);
   await page
     .getByRole('region', { name: 'Report period' })
     .getByRole('button', { exact: true, name: 'All time' })
@@ -684,6 +687,10 @@ test('separates timeline boundary dates and retains no horizontally intersecting
   await waitForFocusedReportSettled(page);
   await expect.poll(tickTexts).not.toEqual(before);
   expect(await intersectingTimelineLabels(page)).toEqual([]);
+  // A verdict kept from the old labels would hide every new tick: the new labels are measured and shown.
+  const visibleAfter = await visibleTickTexts();
+  expect(visibleAfter.length).toBeGreaterThan(0);
+  expect(visibleAfter).not.toEqual(visibleBefore);
 });
 
 test('keeps the mobile filter stack coherent with content above the fold', async ({ page }) => {

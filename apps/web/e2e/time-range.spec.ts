@@ -866,26 +866,34 @@ test('ends a brush drag when the browser cancels the pointer or takes its captur
     }),
   );
 
-  // The selected window pans the same way, and a cancelled pan leaves no drag behind.
+  // The selected window pans the same way, and a cancelled pan or a lost capture leaves no drag behind.
+  // The browser delivers `lostpointercapture` before the next pointer event, so the pointer keeps moving.
   const selection = brush.getByRole('button', { name: 'Selected report window' });
-  const selectionBox = await selection.boundingBox();
-  if (!selectionBox) {
-    throw new Error('The selected report window has no box to pan');
-  }
-  await page.mouse.move(selectionBox.x + selectionBox.width / 2, selectionBox.y + selectionBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(selectionBox.x + selectionBox.width / 2 - 30, selectionBox.y + selectionBox.height / 2, {
-    steps: 3,
-  });
-  await expect(selection).toHaveAttribute('data-dragging', 'true');
-  await selection.dispatchEvent('pointercancel', {
-    bubbles: true,
-    isPrimary: true,
-    pointerId: 1,
-    pointerType: 'mouse',
-  });
-  await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
-  await page.mouse.up();
+  const panThenEnd = async (endGesture: () => Promise<void>): Promise<void> => {
+    const selectionBox = await selection.boundingBox();
+    if (!selectionBox) {
+      throw new Error('The selected report window has no box to pan');
+    }
+    const x = selectionBox.x + selectionBox.width / 2;
+    const y = selectionBox.y + selectionBox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 30, y, { steps: 3 });
+    await expect(selection).toHaveAttribute('data-dragging', 'true');
+    await endGesture();
+    await page.mouse.move(x - 34, y, { steps: 2 });
+    await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
+    await page.mouse.up();
+  };
+
+  await panThenEnd(() =>
+    selection.dispatchEvent('pointercancel', { bubbles: true, isPrimary: true, pointerId: 1, pointerType: 'mouse' }),
+  );
+  await panThenEnd(() =>
+    selection.evaluate((element) => {
+      element.releasePointerCapture(1);
+    }),
+  );
 });
 
 test('draws only the selected report range and never overflows the plot', async ({ page }) => {
