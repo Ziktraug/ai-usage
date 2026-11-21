@@ -25,32 +25,29 @@
     presentCampaignTimelineSeries,
     presentFocusedOverviewSessionItem,
     presentServedCampaignDisplayRow,
-  } from '../../../../campaign-label-overrides';
-  import { buildCampaignTableRows, buildCampaignViews } from '../../../../dashboard-model';
+  } from '../../../foundation/campaign-label-overrides';
+  import { buildCampaignTableRows, buildCampaignViews } from '../../../foundation/dashboard/dashboard-model';
   import {
     type DashboardSearch,
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
-  } from '../../../../dashboard-search';
-  import { createFocusedReportE2EFixture } from '../../../../focused-report-e2e-fixture';
+  } from '../../../foundation/dashboard/dashboard-search';
   import {
     machineFreshnessSnapshotFromFocused,
     machineFreshnessStatusLabel,
     machineLabelPresentationForSnapshot,
-  } from '../../../../machine-freshness-presentation';
-  import type { TimelineValue } from '../../../../overview-model';
-  import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from '../../../../provider-quota-e2e-fixture';
-  import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
-  import { demoReportPayload } from '../../../../report-data';
-  import type { RuntimeMode } from '../../../../runtime-mode';
-  import { sessionAnalysisTargetForOverviewRow } from '../../../../session-analysis-target';
+  } from '../../../foundation/machine-freshness-presentation';
+  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import type { TimelineValue } from '../../../foundation/overview-model';
+  import { withSessionDisplayTitle } from '../../../foundation/presentation/display-title';
+  import { demoReportPayload } from '../../../foundation/report-data';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
+  import { sessionAnalysisTargetForOverviewRow } from '../../../foundation/session/session-analysis-target';
   import {
     columnVisibilityFromDiff,
     columnVisibilitySearchForVisibility,
     sortFromSortingState,
-  } from '../../../../session-table-schema';
-  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
-  import { withSessionDisplayTitle } from '../../../foundation/presentation/display-title';
+  } from '../../../foundation/session/session-table-schema';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { routeForRow } from '../../sessions/detail/detail-selection';
@@ -66,14 +63,17 @@
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import { overviewResultScope } from '../overview/overview-result-scope';
+  import { buildProviderStatusViews, providerHistoryAvailable } from '../provider-status-model';
   import {
     reportRangeProjection,
     resolveTimelineGranularity,
     type TimelineGranularityPreference,
   } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
+  import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
+  import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from './provider-quota-e2e-fixture';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
   import { reportRegionStaleness } from './report-region-staleness';
   import { reportDestinationForSearch } from './report-search';

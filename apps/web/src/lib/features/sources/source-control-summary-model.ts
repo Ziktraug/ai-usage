@@ -1,9 +1,9 @@
-import type { SourceControlClientState } from '../../../source-control-client';
+import type { SourceControlClientState } from '../../foundation/source-control-client';
 import {
   hasOnlyHistoricalWarnings,
   presentSourceState,
   type SourcePresentationTone,
-} from '../../../source-control-presentation-model';
+} from '../../foundation/source-control-presentation-model';
 
 export interface SourceControlSummaryStatus {
   readonly detail: string;

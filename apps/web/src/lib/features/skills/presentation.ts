@@ -1,12 +1,6 @@
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import {
-  deriveInstallationAction,
-  type GroupedSkillDiagnostic,
-  groupSkillDiagnostics,
-  type InstallationAction,
-} from '../../../skill-document-inspector-model';
-import {
   buildGlobalSkillExposure,
   buildSkillHealthSummary,
   buildSkillMatrix,
@@ -18,7 +12,7 @@ import {
   type SkillHealthSummary,
   type SkillMatrix,
   type UnmanagedGroup,
-} from '../../../skills-page-model';
+} from '../../foundation/skills-page-model';
 import { matrixDotTone } from './management/model';
 import {
   buildSkillObservationsView,
@@ -33,6 +27,12 @@ import {
   skillObservationsPresentationState,
 } from './observations/model';
 import type { SkillsShellViewModel } from './shell/model';
+import {
+  deriveInstallationAction,
+  type GroupedSkillDiagnostic,
+  groupSkillDiagnostics,
+  type InstallationAction,
+} from './skill-document-inspector-model';
 
 const ATTENTION_SKILL_LIMIT = 6;
 

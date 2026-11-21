@@ -39,7 +39,7 @@ export const browserSharingEnvironment = (): SharingEnvironment => ({
   copyText: async (text) => await navigator.clipboard.writeText(text),
   currentUrl: () => window.location.href,
   download: async ({ csv, filename }) => {
-    const { downloadReportCsv } = await import('../../../../report-export');
+    const { downloadReportCsv } = await import('../report-export');
     downloadReportCsv(filename, csv);
   },
 });

@@ -3,15 +3,15 @@
   import { Tabs } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
-  import type { ProjectGroup } from '../../../../dashboard-analytics';
+  import type { ProjectGroup } from '../../../foundation/dashboard/dashboard-analytics';
   import {
     type BreakdownSort,
     type BreakdownTab,
     breakdownTabFor,
     type DashboardTab,
     type FieldFilterKey,
-  } from '../../../../dashboard-search';
-  import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
+  } from '../../../foundation/dashboard/dashboard-search';
+  import type { WebReportPayloadWithoutRows } from '../web-report-payload';
   import HarnessProviderPanel from './harness-provider-panel.svelte';
   import ModelAnalysisTable from './model-analysis-table.svelte';
   import ProjectsPanel from './projects-panel.svelte';

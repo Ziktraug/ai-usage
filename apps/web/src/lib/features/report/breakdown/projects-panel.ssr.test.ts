@@ -3,7 +3,7 @@ import type { UsageReportProjectGroup, UsageReportProjectSource } from '@ai-usag
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import type { ProjectGroup } from '../../../../dashboard-analytics';
+import type { ProjectGroup } from '../../../foundation/dashboard/dashboard-analytics';
 
 const LEGACY_MEASUREMENT_PATTERN = /\d+\/\d+ measured/;
 const MOBILE_EMPTY_STATUS_PATTERN = /<li[^>]*><span role="status">No projects<\/span><\/li>/;

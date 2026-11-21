@@ -1,5 +1,5 @@
 import type { UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
 type LoadLiveUsageEngineControl = () => Promise<{

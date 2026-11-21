@@ -18,13 +18,13 @@ const FORBIDDEN_RUNTIME_PREFIXES = [
 ] as const;
 const sourceDirectory = fileURLToPath(new URL('../../../', import.meta.url));
 const entryPaths = [
-  'dashboard-analytics.ts',
-  'dashboard-model.ts',
-  'dashboard-sort.ts',
-  'overview-model.ts',
-  'provider-status-model.ts',
-  'campaign-label-overrides.ts',
-  'session-analysis-target.ts',
+  'lib/foundation/dashboard/dashboard-analytics.ts',
+  'lib/foundation/dashboard/dashboard-model.ts',
+  'lib/features/sessions/dashboard-sort.ts',
+  'lib/foundation/overview-model.ts',
+  'lib/features/report/provider-status-model.ts',
+  'lib/foundation/campaign-label-overrides.ts',
+  'lib/foundation/session/session-analysis-target.ts',
   'lib/foundation/presentation/format.ts',
   'lib/foundation/presentation/report-value.ts',
 ] as const;
@@ -114,7 +114,7 @@ describe('framework-neutral presentation closure', () => {
     expect(isForbiddenRuntimeSpecifier('@ai-usage/report-core/session-query')).toBe(false);
 
     const presentationPath = path.join(sourceDirectory, 'lib/foundation/presentation/format.ts');
-    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../../shared'))).toBe(false);
+    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../shared'))).toBe(false);
     expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../features/shell/app-shell'))).toBe(
       true,
     );

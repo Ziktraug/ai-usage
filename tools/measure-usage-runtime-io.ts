@@ -2666,7 +2666,7 @@ const runUsageRuntimeMeasurementScenarios = async (
   await restoreAutonomousSources(control, runningEngineProcess, disabledSources.enabledSourceIds);
   const beforeHmr = await waitForEngineStatus(control, runningEngineProcess, 'HMR boundary', readyAndSettled);
   const beforeHmrStore = await readStoreBoundarySnapshot(databasePath);
-  const hmrTarget = path.join(webDirectory, 'src', 'dashboard-model.ts');
+  const hmrTarget = path.join(webDirectory, 'src', 'lib', 'foundation', 'dashboard', 'dashboard-model.ts');
   const hmrTargetStat = await stat(hmrTarget);
   const hmrTargetContents = new Uint8Array(await Bun.file(hmrTarget).arrayBuffer());
   const hmrStdoutPosition = runningWebProcess.stdout.position();

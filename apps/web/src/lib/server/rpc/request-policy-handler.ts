@@ -1,8 +1,8 @@
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
-import type { RuntimeMode } from '../../../runtime-mode';
 import { demoNotFoundResponse } from '../../../server/demo-boundary.server';
 import { validateTrustedLocalRequest } from '../../../server/local-request-trust.server';
 import { getServerRuntimeMode } from '../../../server/runtime-mode.server';
+import type { RuntimeMode } from '../../foundation/runtime-mode';
 import {
   type ExplicitHttpRequestPolicy,
   explicitHttpRequestPolicies,

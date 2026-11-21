@@ -19,8 +19,8 @@ import {
 } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { ORPCError } from '@orpc/client';
-import { demoReportPayload } from '../../../../report-data';
 import { parseDashboardSearchUrl } from '../../../foundation/navigation/svelte/dashboard-url';
+import { demoReportPayload } from '../../../foundation/report-data';
 import { countDehydratedSessionPagePayloads, createHydratedWebQueryClient } from '../../../query/client';
 import { createWebQueryRuntime } from '../../../query/composition';
 import { type ReportQueryClient, reportBootstrapKey } from '../../../query/options/report';

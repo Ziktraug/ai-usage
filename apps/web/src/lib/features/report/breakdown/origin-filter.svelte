@@ -1,6 +1,6 @@
 <script lang="ts">
   import { type SessionOrigin, sessionOriginLabel, sessionOrigins } from '@ai-usage/report-core/session-query';
-  import { isDefaultDashboardOriginSelection } from '../../../../dashboard-search';
+  import { isDefaultDashboardOriginSelection } from '../../../foundation/dashboard/dashboard-search';
   import CheckboxFilter from './checkbox-filter.svelte';
 
   let { onValueChange, value }: { onValueChange: (origins: SessionOrigin[]) => void; value: SessionOrigin[] } =

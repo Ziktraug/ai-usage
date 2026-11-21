@@ -3,8 +3,8 @@ import {
   collectionSourceDefinitions,
   type SourceControlEntryView,
 } from '@ai-usage/report-core/source-control';
-import type { SourceControlClientState } from '../../../source-control-client';
-import { presentSourceState } from '../../../source-control-presentation-model';
+import type { SourceControlClientState } from '../../foundation/source-control-client';
+import { presentSourceState } from '../../foundation/source-control-presentation-model';
 
 export const revisionDisplayBounds = { maxInlineLength: 24, prefixLength: 12, suffixLength: 8 } as const;
 

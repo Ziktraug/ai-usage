@@ -8,7 +8,7 @@ import {
   type SkillCellStateFilter,
   type SkillInvocation,
   type SkillRowFilter,
-} from '../../../../skills-page-model';
+} from '../../../foundation/skills-page-model';
 
 export const skillStateFilterOrder = [
   'linked',

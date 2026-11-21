@@ -136,9 +136,9 @@
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import { type ApiPriceMeasurement, apiPriceMeasurement } from '@ai-usage/report-core/provenance';
   import { tick as afterDomUpdate, onMount } from 'svelte';
-  import type { ResolvedTimelineMetric, TimelineValue } from '../../../../overview-model';
-  import type { TimeRangeIndexRange } from '../../../../time-range-control-state';
+  import type { ResolvedTimelineMetric, TimelineValue } from '../../../foundation/overview-model';
   import { fmtCompact, fmtDateOnly, fmtMoney, fmtPct } from '../../../foundation/presentation/format';
+  import type { TimeRangeIndexRange } from '../../../foundation/time-range-control-state';
   import {
     type CampaignSeriesPresenter,
     type MachineSeriesPresenter,

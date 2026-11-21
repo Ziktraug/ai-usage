@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { campaignMapFixtureGeneratedAt, campaignMapFixtureRootKey } from '../../../campaign-map-fixture';
-import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
+import { campaignMapFixtureGeneratedAt, campaignMapFixtureRootKey } from '../../foundation/campaign-map-fixture';
+import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../foundation/dashboard/dashboard-search';
 import { createHydratedWebQueryClient, createWebQueryClient } from '../../query/client';
 import { initialSessionWindowIntent } from '../../query/options/session-window';
 import { createWebRpcClient } from '../../rpc/client';

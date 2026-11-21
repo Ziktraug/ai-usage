@@ -3,7 +3,6 @@
   import { onMount, type Snippet, tick } from 'svelte';
   import { afterNavigate, beforeNavigate, disableScrollHandling, onNavigate } from '$app/navigation';
   import { page } from '$app/state';
-  import type { RuntimeMode } from '../../../runtime-mode';
   import {
     createDirtyNavigationController,
     type DirtyBeforeNavigate,
@@ -16,6 +15,7 @@
     type ScrollLifecycle,
     type ScrollLifecycleEvent,
   } from '../../foundation/navigation/svelte/navigation';
+  import type { RuntimeMode } from '../../foundation/runtime-mode';
   import { isReportPathname } from '../sessions/detail/session-route';
   import { useDirtyGuardRegistry } from './dirty-navigation-context';
   import DiscardNavigationDialog from './discard-navigation-dialog.svelte';

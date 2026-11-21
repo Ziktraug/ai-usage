@@ -1,4 +1,8 @@
-import type { MetricPeriodComparison, PeriodRecordedHistory, PeriodWindow } from '../../../../dashboard-model';
+import type {
+  MetricPeriodComparison,
+  PeriodRecordedHistory,
+  PeriodWindow,
+} from '../../../foundation/dashboard/dashboard-model';
 import { fmtDateOnly } from '../../../foundation/presentation/format';
 
 /** How one metric is worded when it is compared with the previous period. */

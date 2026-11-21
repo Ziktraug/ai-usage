@@ -7,7 +7,7 @@ import {
   type WebReportRevisionBootstrapResult,
   type WebReportRevisionManifest,
   type WebReportRevisionManifestResult,
-} from '../web-report-payload';
+} from '../lib/features/report/web-report-payload';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import {
   type ExecuteUsageEngineCommandOptions,

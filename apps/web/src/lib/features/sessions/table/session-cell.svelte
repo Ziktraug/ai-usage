@@ -12,8 +12,8 @@
     sessionTitleClamp,
   } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-  import type { SessionColumnId } from '../../../../session-table-schema';
   import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
+  import type { SessionColumnId } from '../../../foundation/session/session-table-schema';
   import {
     applySessionFieldFilter,
     projectSessionCell,

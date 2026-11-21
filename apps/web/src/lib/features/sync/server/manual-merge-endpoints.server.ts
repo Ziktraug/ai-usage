@@ -1,4 +1,4 @@
-import type { RuntimeMode } from '../../../../runtime-mode';
+import type { RuntimeMode } from '../../../foundation/runtime-mode';
 import { enforceRequestPolicy, explicitPolicyForPath } from '../../../server/rpc/request-policy-handler';
 
 type ExplicitHandler = (request: Request) => Promise<Response>;

@@ -1,5 +1,4 @@
 import type { LocalTimeCell, SessionOrigin } from '@ai-usage/report-core/session-query';
-import { applyTimelineDimensionFilter } from '../../../../dashboard-filter-navigation';
 import {
   type BreakdownSort,
   type BreakdownTab,
@@ -10,9 +9,10 @@ import {
   serializeDashboardTimeCell,
   toggleExactFieldFilter,
   withoutDashboardTimeCell,
-} from '../../../../dashboard-search';
-import type { TimelineDimension } from '../../../../overview-model';
+} from '../../../foundation/dashboard/dashboard-search';
 import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+import type { TimelineDimension } from '../../../foundation/overview-model';
+import { applyTimelineDimensionFilter } from '../dashboard-filter-navigation';
 
 export interface BreakdownNavigation {
   readonly clearAllFilters: () => void;

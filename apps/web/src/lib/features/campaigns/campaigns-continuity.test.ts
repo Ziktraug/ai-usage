@@ -7,7 +7,7 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { InfiniteQueryObserver } from '@tanstack/svelte-query';
-import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
+import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../foundation/dashboard/dashboard-search';
 import { createWebQueryClient } from '../../query/client';
 import { pruneCampaignExplorations } from '../../query/options/campaigns';
 import { initialSessionWindowIntent } from '../../query/options/session-window';

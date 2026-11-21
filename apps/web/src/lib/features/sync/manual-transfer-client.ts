@@ -10,8 +10,8 @@ import {
   type UsageEngineMergePreviewOutput,
 } from '@ai-usage/usage-engine-control';
 import { manualMergeUploadTransport } from '@ai-usage/web-contract/sync';
-import type { ManualOperationError, ManualOperationResult } from '../../../manual-transfer-contract';
 import { createSyncBrowserAdapter, type SyncFetch } from '../../rpc/sync-client';
+import type { ManualOperationError, ManualOperationResult } from './manual-transfer-contract';
 
 const MAX_PUBLIC_ERROR_TEXT = 512;
 

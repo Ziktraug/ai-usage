@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type KnownProjectScope, selectionKey } from '../../../../skills-page-model';
+import { type KnownProjectScope, selectionKey } from '../../skills-page-model';
 import { createDirtyNavigationController } from './dirty-navigation';
 import { createMemoryNavigationPort } from './navigation';
 import {

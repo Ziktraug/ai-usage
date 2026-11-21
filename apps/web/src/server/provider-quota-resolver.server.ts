@@ -3,7 +3,7 @@ import {
   type ProviderQuotaHistoryResult,
   parseProviderQuotaHistoryRequest,
 } from '@ai-usage/report-core/provider-quota';
-import type { RuntimeMode } from '../runtime-mode';
+import type { RuntimeMode } from '../lib/foundation/runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
 export type ProviderQuotaHistoryReader = (
@@ -30,7 +30,9 @@ export const resolveProviderQuotaHistoryForServer = async (
     throw new Error('Demo mode does not expose provider quota history.');
   }
   if (mode === 'e2e') {
-    const { createE2EProviderQuotaHistoryFixture } = await import('../provider-quota-e2e-fixture');
+    const { createE2EProviderQuotaHistoryFixture } = await import(
+      '../lib/features/report/composition/provider-quota-e2e-fixture'
+    );
     return createE2EProviderQuotaHistoryFixture();
   }
   const readLive = await loadLiveReader();

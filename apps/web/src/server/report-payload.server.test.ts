@@ -12,8 +12,8 @@ import {
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import type { ServedReportRevisionManifest } from '@ai-usage/usage-store/reader';
-import { demoReportPayload } from '../report-data';
-import { reportManifestRequestFingerprint } from '../web-report-payload';
+import { reportManifestRequestFingerprint } from '../lib/features/report/web-report-payload';
+import { demoReportPayload } from '../lib/foundation/report-data';
 import {
   getReportRevisionBootstrapForServer,
   getReportRevisionManifestForServer,

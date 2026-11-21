@@ -16,8 +16,8 @@
   import { Drawer } from '@ai-usage/design-system/svelte';
   import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
   import { type Snippet, tick } from 'svelte';
-  import { count, skillDiagnosticLabel, skillInvocation } from '../../../../skills-page-model';
   import { fmtNum } from '../../../foundation/presentation/format';
+  import { count, skillDiagnosticLabel, skillInvocation } from '../../../foundation/skills-page-model';
   import { MATRIX_DOT_GLYPHS, matrixDotTone, reconcileSkillOperation, toggleOperation } from '../management/model';
   import type { SkillsManagementOperationEpisodePort } from '../management/operation-episode.svelte';
   import SkillSwitch from '../management/skill-switch.svelte';

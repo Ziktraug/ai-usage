@@ -5,7 +5,7 @@ import {
   projectSessionNeighbors,
   projectSessionPage,
 } from '@ai-usage/report-core/session-query';
-import { campaignMapFixtureRows } from '../../../campaign-map-fixture';
+import { campaignMapFixtureRows } from '../../foundation/campaign-map-fixture';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import { campaignReplayFixture } from './campaign-replay-fixture';
 

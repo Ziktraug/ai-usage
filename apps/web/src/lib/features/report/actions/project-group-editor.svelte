@@ -8,8 +8,8 @@
   } from '@ai-usage/report-core/project-group';
   import type { UsageReportProjectSource } from '@ai-usage/report-core/report-data';
   import { untrack } from 'svelte';
-  import { moveProjectSourcesToGroup } from '../../../../project-group-actions';
   import { button, field, item, list, muted, panel, panelHeader, row, stack, title } from '../breakdown/styles';
+  import { moveProjectSourcesToGroup } from '../project-group-actions';
 
   let {
     createGroupId = () => globalThis.crypto.randomUUID(),

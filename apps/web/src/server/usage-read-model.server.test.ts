@@ -16,8 +16,8 @@ import {
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
+import { buildProviderStatusViews } from '../lib/features/report/provider-status-model';
 import { buildProviderQuotaRail } from '../lib/features/shell/provider-quota-rail';
-import { buildProviderStatusViews } from '../provider-status-model';
 import { joinSkillObservations } from './skill-observation-join';
 import { createLiveUsageReadModel, createSqliteUsageReadModel } from './usage-read-model.server';
 

@@ -8,7 +8,7 @@ import {
   projectRouteKey,
   type SkillTreeScopeNode,
   skillInvocation,
-} from '../../../../skills-page-model';
+} from '../../../foundation/skills-page-model';
 import { MATRIX_DOT_GLYPHS, type MatrixDotTone, matrixDotTone } from '../management/model';
 import {
   compareObservationRows,

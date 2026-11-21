@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dashboardSearchDefaultsFor } from '../../../../dashboard-search';
+import { dashboardSearchDefaultsFor } from '../../../foundation/dashboard/dashboard-search';
 import { INITIAL_REPORT_TIMELINE } from './report-destination';
 import { initialReportTimelineFor, reportDestinationForSearch } from './report-search';
 

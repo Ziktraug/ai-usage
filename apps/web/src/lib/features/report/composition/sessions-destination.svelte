@@ -6,22 +6,17 @@
     SessionQueryRequest,
   } from '@ai-usage/report-core/session-query';
   import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-  import {
-    createSessionsExport,
-    sessionsExportButtonLabel,
-    sessionsExportScopeLabel,
-  } from '../../../../dashboard-breakdown-export';
-  import type { DashboardSearch } from '../../../../dashboard-search';
+  import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
+  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
     sessionAnalysisTargetForPageItem,
     sessionAnalysisTargetForSession,
-  } from '../../../../session-analysis-target';
+  } from '../../../foundation/session/session-analysis-target';
   import {
     columnVisibilityFromDiff,
     columnVisibilitySearchForVisibility,
     sortFromSortingState,
-  } from '../../../../session-table-schema';
-  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  } from '../../../foundation/session/session-table-schema';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import {
     projectSessionDestinationRows,
@@ -34,6 +29,11 @@
   import SessionTable from '../../sessions/table/session-table.svelte';
   import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';
+  import {
+    createSessionsExport,
+    sessionsExportButtonLabel,
+    sessionsExportScopeLabel,
+  } from '../dashboard-breakdown-export';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
   import SessionsDestinationState from './sessions-destination-state.svelte';

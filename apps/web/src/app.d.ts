@@ -4,7 +4,7 @@ declare global {
     interface Locals {
       quotaE2eFailure?: boolean;
       readonly requestId?: string;
-      runtimeMode?: import('./runtime-mode').RuntimeMode;
+      runtimeMode?: import('./lib/foundation/runtime-mode').RuntimeMode;
       shellE2eError?: boolean;
     }
 

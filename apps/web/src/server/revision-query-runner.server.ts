@@ -56,7 +56,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { sourceControlBounds } from '@ai-usage/report-core/source-control';
 import { Effect, Exit, Option } from 'effect';
-import { parseReportRevision, type ReportRevision } from '../web-report-payload';
+import { parseReportRevision, type ReportRevision } from '../lib/features/report/web-report-payload';
 import type { UsageReadModel } from './usage-read-model.server';
 import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 import { runWebReadEffect } from './web-read-observability.server';
