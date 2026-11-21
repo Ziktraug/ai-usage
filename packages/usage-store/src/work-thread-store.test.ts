@@ -16,8 +16,8 @@ import {
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import { UsageStoreError } from './errors';
-import { applyWorkThreadCommand, seedWorkThreads } from './index';
+import { setUsageStoreConnectionsForTesting } from './connections';
+import type { UsageStoreError } from './errors';
 import {
   countWorkThreads,
   queryJiraIntake,
@@ -30,13 +30,12 @@ import {
   queryWorkThreadProjects,
   queryWorkThreadsPage,
 } from './reader';
-import { workFactSchemaSql } from './work-fact-store';
-import {
-  createWorkThreadStore,
-  type WorkThreadCombineSuggestionEntry,
-  type WorkThreadSeed,
-  workThreadSchemaSql,
-} from './work-thread-store';
+import { workFactSchemaSql } from './work-fact-schema';
+import { applyWorkThreadCommand } from './work-thread-commands';
+import type { WorkThreadCombineSuggestionEntry } from './work-thread-reads';
+import { workThreadSchemaSql } from './work-thread-schema';
+import { seedWorkThreads, type WorkThreadSeed } from './work-thread-seeding';
+import { queryWorkThreadSessionEvidence } from './work-thread-session-evidence';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
@@ -51,6 +50,7 @@ import {
 } from './writer';
 
 const roots: string[] = [];
+const connectionDisposers: Array<() => void> = [];
 const NOW = parseCanonicalInstant('2026-10-24T10:00:00.000Z');
 const LATER = parseCanonicalInstant('2026-10-24T11:00:00.000Z');
 const MACHINE = 'thread-machine';
@@ -310,6 +310,9 @@ describe('declared sessions join existing Work threads', () => {
 });
 
 afterEach(async () => {
+  for (const dispose of connectionDisposers.splice(0)) {
+    dispose();
+  }
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
 
@@ -420,28 +423,32 @@ const evidenceFixture = async () => {
   db.query('INSERT INTO served_report_revisions VALUES (?, ?, 1)').run('fixture', NOW);
   let connections = 0;
   let queries = 0;
-  const store = createWorkThreadStore({
-    usageStoreError: (operation, _path, cause, reason) =>
-      new UsageStoreError({ operation, message: String(cause), reason }),
-    usageStoreReadError: (operation, _path, cause) =>
-      cause instanceof UsageStoreError
-        ? cause
-        : new UsageStoreError({ operation, message: String(cause), reason: 'storage-failure' }),
-    withUsageStoreReader: (_path, use) =>
-      Effect.suspend(() => {
-        connections++;
-        const reader = new Database(dbPath, { readonly: true });
-        reader.exec('PRAGMA query_only = ON');
-        return use({
-          exec: (sql) => reader.exec(sql),
-          query: (sql) => {
-            queries++;
-            return reader.query(sql) as unknown as ReturnType<Parameters<typeof use>[0]['query']>;
-          },
-        }).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
-      }),
-    withUsageStoreWriter: (_path, use) => use(db as unknown as Parameters<typeof use>[0]),
-  });
+  connectionDisposers.push(
+    setUsageStoreConnectionsForTesting(dbPath, {
+      withUsageStoreReader: (_path, use) =>
+        Effect.suspend(() => {
+          connections++;
+          const reader = new Database(dbPath, { readonly: true });
+          reader.exec('PRAGMA query_only = ON');
+          return use({
+            exec: (sql: string) => reader.exec(sql),
+            query: (sql: string) => {
+              queries++;
+              return reader.query(sql) as unknown as ReturnType<Parameters<typeof use>[0]['query']>;
+            },
+          } as unknown as Parameters<typeof use>[0]).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
+        }),
+      withUsageStoreWriter: (_path, use) => use(db as unknown as Parameters<typeof use>[0]),
+    }),
+  );
+  const store = {
+    applyWorkThreadCommand,
+    queryActiveWorkThreadLinks,
+    queryWorkThreadEvents,
+    queryWorkThreadLinks,
+    queryWorkThreadSessionEvidence,
+    queryWorkThreadsPage,
+  };
   let ordinal = 0;
   const addSession = (
     id: string,

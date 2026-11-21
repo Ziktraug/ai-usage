@@ -83,6 +83,9 @@ const readFailureReason = (cause: unknown): UsageStoreErrorReason => {
   return 'storage-failure';
 };
 
+/** A busy or locked SQLite cause: lock contention, not a fault of the operation that met it. */
+export const isBusyStoreCause = (cause: unknown): boolean => readFailureReason(cause) === 'busy';
+
 export const usageStoreReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError =>
   cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, readFailureReason(cause));
 

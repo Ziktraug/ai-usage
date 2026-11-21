@@ -20,20 +20,10 @@ import {
 } from '@ai-usage/report-core/delegation-job';
 import { DELEGATION_RESULT_BOUNDS } from '@ai-usage/report-core/delegation-result';
 import {
-  DELEGATION_ACCEPTANCE_VERDICTS,
   DELEGATION_BOUNDS,
-  DELEGATION_CONTEXTS,
-  DELEGATION_EVALUATION_AUTHORS,
-  DELEGATION_EVALUATION_KINDS,
-  DELEGATION_EXECUTOR_HARNESSES,
-  DELEGATION_JOB_STATES,
   DELEGATION_LIVE_STATES,
   DELEGATION_QUALIFICATION_PURPOSES,
-  DELEGATION_REFUSAL_REASONS,
-  DELEGATION_RELEASE_EVIDENCE,
-  DELEGATION_RESULT_KINDS,
   DELEGATION_TRACE_VERSION,
-  DELEGATION_VERIFICATION_VERDICTS,
   type DelegationContext,
   type DelegationExecutorHarness,
   type DelegationJobState,
@@ -42,7 +32,9 @@ import {
   type DelegationReleaseEvidence,
 } from '@ai-usage/report-core/delegation-vocabulary';
 import { Effect } from 'effect';
-import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import { withUsageStoreReader, withUsageStoreWriter } from './connections';
+import { DELEGATION_TABLES, LIVE_SQL, RESERVING_SQL, tableMissing } from './delegation-schema';
+import { UsageStoreError, type UsageStoreErrorReason, usageStoreError, usageStoreReadError } from './errors';
 import {
   checkReviewReservations,
   type ReviewReservationHolder,
@@ -68,8 +60,6 @@ import {
  * - **Outside the served revision.** The three tables never advance the store generation, never
  *   enter a publication, a snapshot or an export. They describe this machine.
  */
-export const DELEGATION_TABLES = ['delegation_jobs', 'delegation_evaluations', 'delegation_qualifications'] as const;
-
 export const DELEGATION_STORE_BOUNDS = {
   /** Jobs one list read returns at most. */
   maxListLimit: 200,
@@ -87,121 +77,6 @@ export const DELEGATION_STORE_BOUNDS = {
   /** `retry_of` links followed when a chain is counted; a longer chain is counted to this depth. */
   maxRetryChainDepth: 16,
 } as const;
-
-const sqlList = (values: readonly string[]): string => `(${values.map((value) => `'${value}'`).join(', ')})`;
-
-/** The reserving predicate, shared by the unique index and every read that must agree with it. */
-const RESERVING_SQL = `(state IN ${sqlList(DELEGATION_LIVE_STATES)} OR (state = 'lost' AND released_at IS NULL))`;
-const LIVE_SQL = `state IN ${sqlList(DELEGATION_LIVE_STATES)}`;
-
-const delegationSchemaSql = `
-  CREATE TABLE IF NOT EXISTS delegation_qualifications (
-    qualification_id TEXT PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    request_digest TEXT NOT NULL,
-    policy_revision TEXT NOT NULL,
-    purpose TEXT NOT NULL CHECK (purpose IN ${sqlList(DELEGATION_QUALIFICATION_PURPOSES)}),
-    qualified_at TEXT NOT NULL,
-    valid_until TEXT NOT NULL,
-    qualification_json TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_delegation_qualifications_machine
-    ON delegation_qualifications(machine_id, qualified_at DESC);
-
-  CREATE TABLE IF NOT EXISTS delegation_jobs (
-    job_id TEXT PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    request_digest TEXT NOT NULL,
-    selection_digest TEXT,
-    request_json TEXT NOT NULL,
-    action TEXT NOT NULL,
-    task_category TEXT NOT NULL,
-    checkout_path TEXT,
-    base_sha TEXT,
-    head_sha TEXT,
-    retry_of TEXT,
-    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
-    qualification_id TEXT,
-    qualification_json TEXT,
-    selection_json TEXT,
-    route_id TEXT,
-    pool_id TEXT,
-    executor_harness TEXT CHECK (executor_harness IS NULL OR executor_harness IN ${sqlList(DELEGATION_EXECUTOR_HARNESSES)}),
-    account_scope TEXT,
-    context TEXT CHECK (context IS NULL OR context IN ${sqlList(DELEGATION_CONTEXTS)}),
-    model_requested TEXT,
-    model_resolved TEXT,
-    effort TEXT,
-    harness_version TEXT,
-    state TEXT NOT NULL CHECK (state IN ${sqlList(DELEGATION_JOB_STATES)}),
-    refusal_reason TEXT CHECK (refusal_reason IS NULL OR refusal_reason IN ${sqlList(DELEGATION_REFUSAL_REASONS)}),
-    failure_reason TEXT,
-    requested_at TEXT NOT NULL,
-    started_at TEXT,
-    ended_at TEXT,
-    updated_at TEXT NOT NULL,
-    cancel_requested_at TEXT,
-    launch_marker TEXT,
-    pid INTEGER,
-    native_session_id TEXT,
-    exit_code INTEGER,
-    result_kind TEXT CHECK (result_kind IS NULL OR result_kind IN ${sqlList(DELEGATION_RESULT_KINDS)}),
-    result_json TEXT,
-    usage_json TEXT,
-    guarantee_json TEXT,
-    scope_json TEXT,
-    executed_scope_json TEXT,
-    released_at TEXT,
-    release_evidence TEXT CHECK (release_evidence IS NULL OR release_evidence IN ${sqlList(DELEGATION_RELEASE_EVIDENCE)}),
-    trace_version INTEGER NOT NULL,
-    UNIQUE (machine_id, idempotency_key)
-  );
-  CREATE INDEX IF NOT EXISTS idx_delegation_jobs_machine_state
-    ON delegation_jobs(machine_id, state, requested_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_delegation_jobs_target
-    ON delegation_jobs(machine_id, checkout_path, base_sha, head_sha);
-  CREATE INDEX IF NOT EXISTS idx_delegation_jobs_pool
-    ON delegation_jobs(machine_id, pool_id);
-  CREATE INDEX IF NOT EXISTS idx_delegation_jobs_retry_of
-    ON delegation_jobs(retry_of);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_delegation_jobs_reserved_target
-    ON delegation_jobs(machine_id, action, checkout_path, base_sha, head_sha)
-    WHERE ${RESERVING_SQL};
-
-  CREATE TABLE IF NOT EXISTS delegation_evaluations (
-    evaluation_id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ${sqlList(DELEGATION_EVALUATION_KINDS)}),
-    verdict TEXT NOT NULL CHECK (verdict IN ${sqlList([...DELEGATION_VERIFICATION_VERDICTS, ...DELEGATION_ACCEPTANCE_VERDICTS])}),
-    author TEXT NOT NULL CHECK (author IN ${sqlList(DELEGATION_EVALUATION_AUTHORS)}),
-    author_label TEXT,
-    note TEXT,
-    checks_json TEXT NOT NULL DEFAULT '[]',
-    recorded_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_delegation_evaluations_job
-    ON delegation_evaluations(job_id, recorded_at DESC);
-`;
-
-interface MigrationDatabase {
-  exec: (sql: string) => unknown;
-  query: (sql: string) => { all: (...params: unknown[]) => unknown[]; get: (...params: unknown[]) => unknown };
-}
-
-const tableMissing = (db: MigrationDatabase, table: string): boolean =>
-  db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null;
-
-/**
- * Creates the three tables and their indexes inside the caller's migration transaction when they
- * are absent (ADR 0075: additive tables under usage `user_version` 4, presence is the signal);
- * `true` when something was created. Idempotent: a second open finds them and changes nothing.
- */
-export const migrateDelegationSchema = (db: MigrationDatabase): boolean => {
-  const missing = DELEGATION_TABLES.some((table) => tableMissing(db, table));
-  db.exec(delegationSchemaSql);
-  return missing;
-};
 
 // ---------------------------------------------------------------------------------------------
 // Inputs and results
@@ -504,24 +379,6 @@ interface SqliteDatabase {
   query: (sql: string) => SqliteStatement;
 }
 
-interface DelegationStoreDependencies {
-  readonly usageStoreError: (
-    operation: string,
-    dbPath: string,
-    cause: unknown,
-    reason: UsageStoreErrorReason,
-  ) => UsageStoreError;
-  readonly usageStoreReadError: (operation: string, dbPath: string, cause: unknown) => UsageStoreError;
-  readonly withUsageStoreReader: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
-  readonly withUsageStoreWriter: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
-}
-
 interface DelegationJobRecord {
   account_scope: string | null;
   action: string;
@@ -812,90 +669,87 @@ const countRetryChain = (db: SqliteDatabase, retryOf: string | null): Delegation
 // The store
 // ---------------------------------------------------------------------------------------------
 
-export const createDelegationStore = (dependencies: DelegationStoreDependencies) => {
-  const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
-
-  const requestDelegationJob = (
-    input: RequestDelegationJobInput,
-  ): Effect.Effect<RequestDelegationJobResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const { job, limits } = input;
-          const invalid = (message: string): UsageStoreError =>
-            usageStoreError('requestDelegationJob', input.dbPath, message, 'invalid-input');
-          if (!(Number.isSafeInteger(limits.maxConcurrent) && limits.maxConcurrent >= 1)) {
-            throw invalid('maxConcurrent must be a positive integer');
-          }
-          if (!(Number.isSafeInteger(limits.maxAttempts) && limits.maxAttempts >= 1)) {
-            throw invalid('maxAttempts must be a positive integer');
-          }
-          const qualificationJson = jsonOrNull(job.qualification);
-          if (
-            qualificationJson !== null &&
-            Buffer.byteLength(qualificationJson) > DELEGATION_BOUNDS.maxQualificationBytes
-          ) {
-            throw invalid('qualification snapshot exceeds its byte bound');
-          }
-          const baseSha = job.scope?.baseSha ?? null;
-          const headSha = job.scope?.headSha ?? null;
-          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-          return inTransaction(db, (): RequestDelegationJobResult => {
-            const existing = db
-              .query(`SELECT ${JOB_COLUMNS} FROM delegation_jobs WHERE machine_id = ? AND idempotency_key = ?`)
-              .get(job.machineId, job.idempotencyKey) as DelegationJobRecord | null;
-            if (existing !== null) {
-              const sameRequest =
-                existing.request_digest === job.requestDigest && existing.selection_digest === job.selectionDigest;
-              if (!sameRequest) {
-                return {
-                  existing: { jobId: existing.job_id, state: existing.state as DelegationJobState },
-                  kind: 'idempotency-conflict',
-                };
-              }
-              const parsed = jobFromRecord(existing);
-              if (parsed === null) {
-                throw new Error(`Delegation job ${existing.job_id} does not satisfy its own contract`);
-              }
-              return { job: parsed, kind: 'reused' };
+export const requestDelegationJob = (
+  input: RequestDelegationJobInput,
+): Effect.Effect<RequestDelegationJobResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const { job, limits } = input;
+        const invalid = (message: string): UsageStoreError =>
+          usageStoreError('requestDelegationJob', input.dbPath, message, 'invalid-input');
+        if (!(Number.isSafeInteger(limits.maxConcurrent) && limits.maxConcurrent >= 1)) {
+          throw invalid('maxConcurrent must be a positive integer');
+        }
+        if (!(Number.isSafeInteger(limits.maxAttempts) && limits.maxAttempts >= 1)) {
+          throw invalid('maxAttempts must be a positive integer');
+        }
+        const qualificationJson = jsonOrNull(job.qualification);
+        if (
+          qualificationJson !== null &&
+          Buffer.byteLength(qualificationJson) > DELEGATION_BOUNDS.maxQualificationBytes
+        ) {
+          throw invalid('qualification snapshot exceeds its byte bound');
+        }
+        const baseSha = job.scope?.baseSha ?? null;
+        const headSha = job.scope?.headSha ?? null;
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+        return inTransaction(db, (): RequestDelegationJobResult => {
+          const existing = db
+            .query(`SELECT ${JOB_COLUMNS} FROM delegation_jobs WHERE machine_id = ? AND idempotency_key = ?`)
+            .get(job.machineId, job.idempotencyKey) as DelegationJobRecord | null;
+          if (existing !== null) {
+            const sameRequest =
+              existing.request_digest === job.requestDigest && existing.selection_digest === job.selectionDigest;
+            if (!sameRequest) {
+              return {
+                existing: { jobId: existing.job_id, state: existing.state as DelegationJobState },
+                kind: 'idempotency-conflict',
+              };
             }
-            const chain = countRetryChain(db, job.retryOf);
-            if (job.state === 'requested') {
-              if (job.checkoutPath === null || baseSha === null || headSha === null) {
-                throw invalid('a requested job needs a checkout path and a frozen scope');
-              }
-              if (job.poolId === null || job.routeId === null) {
-                throw invalid('a requested job needs a route and a pool');
-              }
-              if (!chain.parentKnown) {
-                throw invalid('retryOf names a job this store does not hold');
-              }
-              // The shared rule, under this transaction: the target must be free of both review
-              // families and the pool must have a slot, delegation jobs and legacy attempts counted
-              // together. The partial unique index still backs the delegation side below the code path.
-              const check = checkReviewReservations({
-                holders: readReviewReservationHolders(db, job.machineId),
-                maxConcurrent: limits.maxConcurrent,
-                pool: { harness: job.executorHarness ?? '', poolId: job.poolId },
-                target: { action: job.action, baseSha, checkoutPath: job.checkoutPath, headSha },
-              });
-              if (check.kind === 'target-reserved') {
-                return {
-                  existing: { jobId: check.holder.id, state: check.holder.state },
-                  holder: check.holder,
-                  kind: 'target-reserved',
-                  message: check.message,
-                };
-              }
-              if (check.kind === 'pool-busy') {
-                return { count: check.count, holders: check.holders, kind: 'pool-busy', message: check.message };
-              }
-              if (job.retryOf !== null && chain.attempts >= limits.maxAttempts) {
-                return { count: chain.attempts, kind: 'attempts-exhausted' };
-              }
+            const parsed = jobFromRecord(existing);
+            if (parsed === null) {
+              throw new Error(`Delegation job ${existing.job_id} does not satisfy its own contract`);
             }
-            const jobId = job.jobId ?? randomUUID();
-            db.query(`
+            return { job: parsed, kind: 'reused' };
+          }
+          const chain = countRetryChain(db, job.retryOf);
+          if (job.state === 'requested') {
+            if (job.checkoutPath === null || baseSha === null || headSha === null) {
+              throw invalid('a requested job needs a checkout path and a frozen scope');
+            }
+            if (job.poolId === null || job.routeId === null) {
+              throw invalid('a requested job needs a route and a pool');
+            }
+            if (!chain.parentKnown) {
+              throw invalid('retryOf names a job this store does not hold');
+            }
+            // The shared rule, under this transaction: the target must be free of both review
+            // families and the pool must have a slot, delegation jobs and legacy attempts counted
+            // together. The partial unique index still backs the delegation side below the code path.
+            const check = checkReviewReservations({
+              holders: readReviewReservationHolders(db, job.machineId),
+              maxConcurrent: limits.maxConcurrent,
+              pool: { harness: job.executorHarness ?? '', poolId: job.poolId },
+              target: { action: job.action, baseSha, checkoutPath: job.checkoutPath, headSha },
+            });
+            if (check.kind === 'target-reserved') {
+              return {
+                existing: { jobId: check.holder.id, state: check.holder.state },
+                holder: check.holder,
+                kind: 'target-reserved',
+                message: check.message,
+              };
+            }
+            if (check.kind === 'pool-busy') {
+              return { count: check.count, holders: check.holders, kind: 'pool-busy', message: check.message };
+            }
+            if (job.retryOf !== null && chain.attempts >= limits.maxAttempts) {
+              return { count: chain.attempts, kind: 'attempts-exhausted' };
+            }
+          }
+          const jobId = job.jobId ?? randomUUID();
+          db.query(`
               INSERT INTO delegation_jobs (
                 job_id, machine_id, idempotency_key, request_digest, selection_digest, request_json, action, task_category,
                 checkout_path, base_sha, head_sha, retry_of, attempt_number, qualification_id, qualification_json,
@@ -903,281 +757,281 @@ export const createDelegationStore = (dependencies: DelegationStoreDependencies)
                 state, refusal_reason, failure_reason, requested_at, updated_at, launch_marker, scope_json, trace_version
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-              jobId,
-              job.machineId,
-              job.idempotencyKey,
-              job.requestDigest,
-              job.selectionDigest,
-              JSON.stringify(job.request),
-              job.action,
-              job.taskCategory,
-              job.checkoutPath,
-              baseSha,
-              headSha,
-              job.retryOf,
-              chain.ancestors + 1,
-              job.qualificationId,
-              qualificationJson,
-              jsonOrNull(job.selection),
-              job.routeId,
-              job.poolId,
-              job.executorHarness,
-              job.accountScope,
-              job.context,
-              job.modelRequested,
-              job.effort,
-              job.state,
-              job.refusalReason ?? null,
-              boundedOrNull(job.failureReason, DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters),
-              job.requestedAt,
-              job.requestedAt,
-              job.launchMarker ?? null,
-              jsonOrNull(job.scope),
-              DELEGATION_TRACE_VERSION,
-            );
-            const inserted = readJob(db, jobId);
-            if (inserted === null) {
-              throw new Error(`Delegation job ${jobId} does not satisfy its own contract after insert`);
-            }
-            return { job: inserted, kind: 'inserted' };
-          });
-        },
-        catch: (cause) =>
-          cause instanceof UsageStoreError
-            ? cause
-            : usageStoreError('requestDelegationJob', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
-
-  const transitionDelegationJob = (
-    input: TransitionDelegationJobInput,
-  ): Effect.Effect<TransitionDelegationJobResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const fromStates = input.fromStates ?? DELEGATION_LIVE_STATES;
-          if (fromStates.length === 0) {
-            return { applied: false };
+            jobId,
+            job.machineId,
+            job.idempotencyKey,
+            job.requestDigest,
+            job.selectionDigest,
+            JSON.stringify(job.request),
+            job.action,
+            job.taskCategory,
+            job.checkoutPath,
+            baseSha,
+            headSha,
+            job.retryOf,
+            chain.ancestors + 1,
+            job.qualificationId,
+            qualificationJson,
+            jsonOrNull(job.selection),
+            job.routeId,
+            job.poolId,
+            job.executorHarness,
+            job.accountScope,
+            job.context,
+            job.modelRequested,
+            job.effort,
+            job.state,
+            job.refusalReason ?? null,
+            boundedOrNull(job.failureReason, DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters),
+            job.requestedAt,
+            job.requestedAt,
+            job.launchMarker ?? null,
+            jsonOrNull(job.scope),
+            DELEGATION_TRACE_VERSION,
+          );
+          const inserted = readJob(db, jobId);
+          if (inserted === null) {
+            throw new Error(`Delegation job ${jobId} does not satisfy its own contract after insert`);
           }
-          const assignments: string[] = ['updated_at = ?'];
-          const values: unknown[] = [input.at];
-          appendPatch(input.patch, new Set(), assignments, values);
-          db.query(`
+          return { job: inserted, kind: 'inserted' };
+        });
+      },
+      catch: (cause) =>
+        cause instanceof UsageStoreError
+          ? cause
+          : usageStoreError('requestDelegationJob', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const transitionDelegationJob = (
+  input: TransitionDelegationJobInput,
+): Effect.Effect<TransitionDelegationJobResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const fromStates = input.fromStates ?? DELEGATION_LIVE_STATES;
+        if (fromStates.length === 0) {
+          return { applied: false };
+        }
+        const assignments: string[] = ['updated_at = ?'];
+        const values: unknown[] = [input.at];
+        appendPatch(input.patch, new Set(), assignments, values);
+        db.query(`
             UPDATE delegation_jobs
             SET ${assignments.join(', ')}
             WHERE job_id = ? AND state IN (${fromStates.map(() => '?').join(', ')})
           `).run(...values, input.jobId, ...fromStates);
-          return { applied: changes(db) > 0 };
-        },
-        catch: (cause) => usageStoreError('transitionDelegationJob', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
+        return { applied: changes(db) > 0 };
+      },
+      catch: (cause) => usageStoreError('transitionDelegationJob', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
 
-  const requestDelegationCancel = (
-    input: RequestDelegationCancelInput,
-  ): Effect.Effect<RequestDelegationCancelResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () =>
-          inTransaction(db, (): RequestDelegationCancelResult => {
-            const row = db.query('SELECT state FROM delegation_jobs WHERE job_id = ?').get(input.jobId) as {
-              state: DelegationJobState;
-            } | null;
-            if (row === null) {
-              return { applied: false, state: null };
-            }
-            db.query(`
+export const requestDelegationCancel = (
+  input: RequestDelegationCancelInput,
+): Effect.Effect<RequestDelegationCancelResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        inTransaction(db, (): RequestDelegationCancelResult => {
+          const row = db.query('SELECT state FROM delegation_jobs WHERE job_id = ?').get(input.jobId) as {
+            state: DelegationJobState;
+          } | null;
+          if (row === null) {
+            return { applied: false, state: null };
+          }
+          db.query(`
               UPDATE delegation_jobs
               SET cancel_requested_at = COALESCE(cancel_requested_at, ?), updated_at = ?
               WHERE job_id = ? AND ${LIVE_SQL}
             `).run(input.at, input.at, input.jobId);
-            return { applied: changes(db) > 0, state: row.state };
-          }),
-        catch: (cause) => usageStoreError('requestDelegationCancel', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
+          return { applied: changes(db) > 0, state: row.state };
+        }),
+      catch: (cause) => usageStoreError('requestDelegationCancel', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
 
-  const markDelegationJobsLost = (
-    input: MarkDelegationJobsLostInput,
-  ): Effect.Effect<MarkDelegationJobsLostResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () =>
-          inTransaction(db, (): MarkDelegationJobsLostResult => {
-            const live = db
-              .query(
-                `SELECT job_id, pid, state FROM delegation_jobs WHERE machine_id = ? AND ${LIVE_SQL} ORDER BY requested_at, job_id`,
-              )
-              .all(input.machineId) as { job_id: string; pid: number | null; state: DelegationJobState }[];
-            const update = db.query(`
+export const markDelegationJobsLost = (
+  input: MarkDelegationJobsLostInput,
+): Effect.Effect<MarkDelegationJobsLostResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        inTransaction(db, (): MarkDelegationJobsLostResult => {
+          const live = db
+            .query(
+              `SELECT job_id, pid, state FROM delegation_jobs WHERE machine_id = ? AND ${LIVE_SQL} ORDER BY requested_at, job_id`,
+            )
+            .all(input.machineId) as { job_id: string; pid: number | null; state: DelegationJobState }[];
+          const update = db.query(`
               UPDATE delegation_jobs
               SET state = 'lost', ended_at = COALESCE(ended_at, ?), updated_at = ?, failure_reason = ?
               WHERE job_id = ? AND ${LIVE_SQL}
             `);
-            const lost: string[] = [];
-            for (const row of live) {
-              const reason =
-                typeof input.reason === 'string'
-                  ? input.reason
-                  : input.reason({ jobId: row.job_id, pid: row.pid, state: row.state });
-              update.run(
-                input.at,
-                input.at,
-                reason.slice(0, DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters),
-                row.job_id,
-              );
-              lost.push(row.job_id);
-            }
-            return { lost };
-          }),
-        catch: (cause) => usageStoreError('markDelegationJobsLost', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
+          const lost: string[] = [];
+          for (const row of live) {
+            const reason =
+              typeof input.reason === 'string'
+                ? input.reason
+                : input.reason({ jobId: row.job_id, pid: row.pid, state: row.state });
+            update.run(
+              input.at,
+              input.at,
+              reason.slice(0, DELEGATION_JOB_BOUNDS.maxFailureReasonCharacters),
+              row.job_id,
+            );
+            lost.push(row.job_id);
+          }
+          return { lost };
+        }),
+      catch: (cause) => usageStoreError('markDelegationJobsLost', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
 
-  /**
-   * Releases a lost job's reservation with the evidence that ended it, and records the outcome the
-   * launching engine observed when one arrived late. Applies only to a `lost` row; the state stays
-   * `lost` (contact was lost, that is history) and the first evidence recorded stands.
-   */
-  const releaseDelegationJobReservation = (
-    input: ReleaseDelegationJobReservationInput,
-  ): Effect.Effect<TransitionDelegationJobResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const assignments = [
-            'updated_at = ?',
-            'released_at = COALESCE(released_at, ?)',
-            'release_evidence = COALESCE(release_evidence, ?)',
-          ];
-          const values: unknown[] = [input.at, input.at, input.evidence];
-          appendPatch(
-            input.outcome ?? {},
-            new Set<keyof DelegationJobPatch>(['executedScope', 'guarantee', 'refusalReason', 'startedAt', 'state']),
-            assignments,
-            values,
-          );
-          db.query(`UPDATE delegation_jobs SET ${assignments.join(', ')} WHERE job_id = ? AND state = 'lost'`).run(
-            ...values,
-            input.jobId,
-          );
-          return { applied: changes(db) > 0 };
-        },
-        catch: (cause) => usageStoreError('releaseDelegationJobReservation', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
+/**
+ * Releases a lost job's reservation with the evidence that ended it, and records the outcome the
+ * launching engine observed when one arrived late. Applies only to a `lost` row; the state stays
+ * `lost` (contact was lost, that is history) and the first evidence recorded stands.
+ */
+export const releaseDelegationJobReservation = (
+  input: ReleaseDelegationJobReservationInput,
+): Effect.Effect<TransitionDelegationJobResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const assignments = [
+          'updated_at = ?',
+          'released_at = COALESCE(released_at, ?)',
+          'release_evidence = COALESCE(release_evidence, ?)',
+        ];
+        const values: unknown[] = [input.at, input.at, input.evidence];
+        appendPatch(
+          input.outcome ?? {},
+          new Set<keyof DelegationJobPatch>(['executedScope', 'guarantee', 'refusalReason', 'startedAt', 'state']),
+          assignments,
+          values,
+        );
+        db.query(`UPDATE delegation_jobs SET ${assignments.join(', ')} WHERE job_id = ? AND state = 'lost'`).run(
+          ...values,
+          input.jobId,
+        );
+        return { applied: changes(db) > 0 };
+      },
+      catch: (cause) => usageStoreError('releaseDelegationJobReservation', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
 
-  const recordDelegationEvaluation = (
-    input: RecordDelegationEvaluationInput,
-  ): Effect.Effect<RecordDelegationEvaluationResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () =>
-          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-          inTransaction(db, (): RecordDelegationEvaluationResult => {
-            const { evaluation } = input;
-            const row = db.query('SELECT state FROM delegation_jobs WHERE job_id = ?').get(evaluation.jobId) as {
-              state: DelegationJobState;
-            } | null;
-            if (row === null) {
-              return { kind: 'job-not-found' };
+export const recordDelegationEvaluation = (
+  input: RecordDelegationEvaluationInput,
+): Effect.Effect<RecordDelegationEvaluationResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+        inTransaction(db, (): RecordDelegationEvaluationResult => {
+          const { evaluation } = input;
+          const row = db.query('SELECT state FROM delegation_jobs WHERE job_id = ?').get(evaluation.jobId) as {
+            state: DelegationJobState;
+          } | null;
+          if (row === null) {
+            return { kind: 'job-not-found' };
+          }
+          const ended = (['cancelled', 'failed', 'finished'] as readonly DelegationJobState[]).includes(row.state);
+          if (evaluation.kind === 'acceptance' && !ended) {
+            return { kind: 'job-not-ended', state: row.state };
+          }
+          // The engine's own output check describes any ended run (inconclusive when nothing
+          // finished); a model's verification judges a result, so it needs a finished job.
+          if (evaluation.kind === 'verification') {
+            const allowed = evaluation.author === 'automated-check' ? ended : row.state === 'finished';
+            if (!allowed) {
+              return { kind: 'job-not-finished', state: row.state };
             }
-            const ended = (['cancelled', 'failed', 'finished'] as readonly DelegationJobState[]).includes(row.state);
-            if (evaluation.kind === 'acceptance' && !ended) {
-              return { kind: 'job-not-ended', state: row.state };
+          }
+          // A caller or the operator may say so only so many times per job; the count is read in
+          // the same transaction as the insert, so two edges cannot both take the last slot.
+          if (evaluation.author !== 'automated-check') {
+            const { count } = db
+              .query(
+                'SELECT COUNT(*) AS count FROM delegation_evaluations WHERE job_id = ? AND kind = ? AND author = ?',
+              )
+              .get(evaluation.jobId, evaluation.kind, evaluation.author) as { count: number };
+            if (count >= DELEGATION_STORE_BOUNDS.maxEvaluationsPerJobAuthor) {
+              return {
+                author: evaluation.author,
+                evaluationKind: evaluation.kind,
+                kind: 'limit-reached',
+                limit: DELEGATION_STORE_BOUNDS.maxEvaluationsPerJobAuthor,
+              };
             }
-            // The engine's own output check describes any ended run (inconclusive when nothing
-            // finished); a model's verification judges a result, so it needs a finished job.
-            if (evaluation.kind === 'verification') {
-              const allowed = evaluation.author === 'automated-check' ? ended : row.state === 'finished';
-              if (!allowed) {
-                return { kind: 'job-not-finished', state: row.state };
-              }
-            }
-            // A caller or the operator may say so only so many times per job; the count is read in
-            // the same transaction as the insert, so two edges cannot both take the last slot.
-            if (evaluation.author !== 'automated-check') {
-              const { count } = db
-                .query(
-                  'SELECT COUNT(*) AS count FROM delegation_evaluations WHERE job_id = ? AND kind = ? AND author = ?',
-                )
-                .get(evaluation.jobId, evaluation.kind, evaluation.author) as { count: number };
-              if (count >= DELEGATION_STORE_BOUNDS.maxEvaluationsPerJobAuthor) {
-                return {
-                  author: evaluation.author,
-                  evaluationKind: evaluation.kind,
-                  kind: 'limit-reached',
-                  limit: DELEGATION_STORE_BOUNDS.maxEvaluationsPerJobAuthor,
-                };
-              }
-            }
-            const evaluationId = evaluation.evaluationId ?? randomUUID();
-            db.query(`
+          }
+          const evaluationId = evaluation.evaluationId ?? randomUUID();
+          db.query(`
               INSERT INTO delegation_evaluations (${EVALUATION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-              evaluationId,
-              evaluation.jobId,
-              evaluation.kind,
-              evaluation.verdict,
-              evaluation.author,
-              boundedOrNull(evaluation.authorLabel, DELEGATION_JOB_BOUNDS.maxTextCharacters),
-              boundedOrNull(evaluation.note, DELEGATION_BOUNDS.maxEvaluationNoteCharacters),
-              JSON.stringify(
-                evaluation.checks
-                  .slice(0, DELEGATION_BOUNDS.maxEvaluationChecks)
-                  .map((check) => check.slice(0, DELEGATION_BOUNDS.maxEvaluationCheckCharacters)),
-              ),
-              evaluation.recordedAt,
-            );
-            return { evaluationId, kind: 'recorded' };
-          }),
-        catch: (cause) => usageStoreError('recordDelegationEvaluation', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
+            evaluationId,
+            evaluation.jobId,
+            evaluation.kind,
+            evaluation.verdict,
+            evaluation.author,
+            boundedOrNull(evaluation.authorLabel, DELEGATION_JOB_BOUNDS.maxTextCharacters),
+            boundedOrNull(evaluation.note, DELEGATION_BOUNDS.maxEvaluationNoteCharacters),
+            JSON.stringify(
+              evaluation.checks
+                .slice(0, DELEGATION_BOUNDS.maxEvaluationChecks)
+                .map((check) => check.slice(0, DELEGATION_BOUNDS.maxEvaluationCheckCharacters)),
+            ),
+            evaluation.recordedAt,
+          );
+          return { evaluationId, kind: 'recorded' };
+        }),
+      catch: (cause) => usageStoreError('recordDelegationEvaluation', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
 
-  const recordDelegationQualification = (
-    input: RecordDelegationQualificationInput,
-  ): Effect.Effect<RecordDelegationQualificationResult, UsageStoreError> =>
-    withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const json = JSON.stringify(input.qualification);
-          if (Buffer.byteLength(json) > DELEGATION_BOUNDS.maxQualificationBytes) {
-            throw usageStoreError(
-              'recordDelegationQualification',
-              input.dbPath,
-              'qualification exceeds its byte bound',
-              'invalid-input',
-            );
-          }
-          const qualifiedAt = Date.parse(input.qualification.qualifiedAt);
-          if (!Number.isFinite(qualifiedAt)) {
-            throw usageStoreError(
-              'recordDelegationQualification',
-              input.dbPath,
-              'qualification.qualifiedAt is not an instant',
-              'invalid-input',
-            );
-          }
-          return inTransaction(db, (): RecordDelegationQualificationResult => {
-            db.query(`
+export const recordDelegationQualification = (
+  input: RecordDelegationQualificationInput,
+): Effect.Effect<RecordDelegationQualificationResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const json = JSON.stringify(input.qualification);
+        if (Buffer.byteLength(json) > DELEGATION_BOUNDS.maxQualificationBytes) {
+          throw usageStoreError(
+            'recordDelegationQualification',
+            input.dbPath,
+            'qualification exceeds its byte bound',
+            'invalid-input',
+          );
+        }
+        const qualifiedAt = Date.parse(input.qualification.qualifiedAt);
+        if (!Number.isFinite(qualifiedAt)) {
+          throw usageStoreError(
+            'recordDelegationQualification',
+            input.dbPath,
+            'qualification.qualifiedAt is not an instant',
+            'invalid-input',
+          );
+        }
+        return inTransaction(db, (): RecordDelegationQualificationResult => {
+          db.query(`
               INSERT OR IGNORE INTO delegation_qualifications (
                 qualification_id, machine_id, request_digest, policy_revision, purpose, qualified_at, valid_until, qualification_json
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-              input.qualification.qualificationId,
-              input.machineId,
-              input.requestDigest,
-              input.qualification.versions.policyRevision,
-              input.purpose,
-              input.qualification.qualifiedAt,
-              input.qualification.validUntil,
-              json,
-            );
-            const inserted = changes(db) > 0;
-            const cutoff = new Date(qualifiedAt - DELEGATION_STORE_BOUNDS.qualificationRetentionMs).toISOString();
-            // Prune what no job cites: beyond the newest N per machine, or older than the retention.
-            db.query(`
+            input.qualification.qualificationId,
+            input.machineId,
+            input.requestDigest,
+            input.qualification.versions.policyRevision,
+            input.purpose,
+            input.qualification.qualifiedAt,
+            input.qualification.validUntil,
+            json,
+          );
+          const inserted = changes(db) > 0;
+          const cutoff = new Date(qualifiedAt - DELEGATION_STORE_BOUNDS.qualificationRetentionMs).toISOString();
+          // Prune what no job cites: beyond the newest N per machine, or older than the retention.
+          db.query(`
               DELETE FROM delegation_qualifications
               WHERE machine_id = ?
                 AND qualification_id NOT IN (SELECT qualification_id FROM delegation_jobs WHERE qualification_id IS NOT NULL)
@@ -1191,268 +1045,251 @@ export const createDelegationStore = (dependencies: DelegationStoreDependencies)
                   )
                 )
             `).run(input.machineId, cutoff, input.machineId, DELEGATION_STORE_BOUNDS.maxQualificationsPerMachine);
-            return { inserted, pruned: changes(db) };
-          });
-        },
-        catch: (cause) =>
-          cause instanceof UsageStoreError
-            ? cause
-            : usageStoreError('recordDelegationQualification', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
+          return { inserted, pruned: changes(db) };
+        });
+      },
+      catch: (cause) =>
+        cause instanceof UsageStoreError
+          ? cause
+          : usageStoreError('recordDelegationQualification', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
 
-  const readDelegationQualification = (
-    input: ReadDelegationQualificationInput,
-  ): Effect.Effect<ReadDelegationQualificationResult, UsageStoreError> =>
-    withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          assertDelegationTables(db, (message) =>
-            usageStoreError('readDelegationQualification', input.dbPath, message, 'schema-too-old'),
-          );
-          const row = db
-            .query(`
+export const readDelegationQualification = (
+  input: ReadDelegationQualificationInput,
+): Effect.Effect<ReadDelegationQualificationResult, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        assertDelegationTables(db, (message) =>
+          usageStoreError('readDelegationQualification', input.dbPath, message, 'schema-too-old'),
+        );
+        const row = db
+          .query(`
               SELECT request_digest, policy_revision, purpose, qualified_at, valid_until, qualification_json
               FROM delegation_qualifications WHERE machine_id = ? AND qualification_id = ?
             `)
-            .get(input.machineId, input.qualificationId) as {
-            policy_revision: string;
-            purpose: string;
-            qualification_json: string;
-            qualified_at: string;
-            request_digest: string;
-            valid_until: string;
-          } | null;
-          if (row === null) {
-            return { record: null, skipped: 0 };
-          }
-          const value = parseJsonOrNull(row.qualification_json);
-          const valid =
-            typeof value === 'object' &&
-            value !== null &&
-            (value as { schemaVersion?: unknown }).schemaVersion === 1 &&
-            (value as { qualificationId?: unknown }).qualificationId === input.qualificationId &&
-            (DELEGATION_QUALIFICATION_PURPOSES as readonly string[]).includes(row.purpose);
-          if (!valid) {
-            return { record: null, skipped: 1 };
-          }
-          return {
-            record: {
-              policyRevision: row.policy_revision,
-              purpose: row.purpose as DelegationQualificationPurpose,
-              qualification: value as DelegationQualification,
-              qualifiedAt: row.qualified_at,
-              requestDigest: row.request_digest,
-              validUntil: row.valid_until,
-            },
-            skipped: 0,
-          };
-        },
-        catch: (cause) => usageStoreReadError('readDelegationQualification', input.dbPath, cause),
-      }),
-    );
+          .get(input.machineId, input.qualificationId) as {
+          policy_revision: string;
+          purpose: string;
+          qualification_json: string;
+          qualified_at: string;
+          request_digest: string;
+          valid_until: string;
+        } | null;
+        if (row === null) {
+          return { record: null, skipped: 0 };
+        }
+        const value = parseJsonOrNull(row.qualification_json);
+        const valid =
+          typeof value === 'object' &&
+          value !== null &&
+          (value as { schemaVersion?: unknown }).schemaVersion === 1 &&
+          (value as { qualificationId?: unknown }).qualificationId === input.qualificationId &&
+          (DELEGATION_QUALIFICATION_PURPOSES as readonly string[]).includes(row.purpose);
+        if (!valid) {
+          return { record: null, skipped: 1 };
+        }
+        return {
+          record: {
+            policyRevision: row.policy_revision,
+            purpose: row.purpose as DelegationQualificationPurpose,
+            qualification: value as DelegationQualification,
+            qualifiedAt: row.qualified_at,
+            requestDigest: row.request_digest,
+            validUntil: row.valid_until,
+          },
+          skipped: 0,
+        };
+      },
+      catch: (cause) => usageStoreReadError('readDelegationQualification', input.dbPath, cause),
+    }),
+  );
 
-  const queryDelegationJobs = (
-    input: QueryDelegationJobsInput,
-  ): Effect.Effect<QueryDelegationJobsResult, UsageStoreError> => {
-    const limit = input.limit ?? 50;
-    if (!(Number.isSafeInteger(limit) && limit > 0 && limit <= DELEGATION_STORE_BOUNDS.maxListLimit)) {
-      return Effect.fail(
-        usageStoreError(
-          'queryDelegationJobs',
-          input.dbPath,
-          `Delegation job limit must be between 1 and ${DELEGATION_STORE_BOUNDS.maxListLimit}`,
-          'invalid-input',
-        ),
-      );
-    }
-    const states = input.states ?? [];
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-        try: () => {
-          assertDelegationTables(db, (message) =>
-            usageStoreError('queryDelegationJobs', input.dbPath, message, 'schema-too-old'),
-          );
-          const clauses: string[] = [];
-          const params: unknown[] = [];
-          if (input.machineId !== undefined) {
-            clauses.push('machine_id = ?');
-            params.push(input.machineId);
-          }
-          if (input.jobId !== undefined) {
-            clauses.push('job_id = ?');
-            params.push(input.jobId);
-          }
-          if (input.idempotencyKey !== undefined) {
-            clauses.push('idempotency_key = ?');
-            params.push(input.idempotencyKey);
-          }
-          if (input.checkoutPath !== undefined) {
-            clauses.push('checkout_path = ?');
-            params.push(input.checkoutPath);
-          }
-          if (input.reserving === true) {
-            clauses.push(RESERVING_SQL);
-          }
-          if (states.length > 0) {
-            clauses.push(`state IN (${states.map(() => '?').join(', ')})`);
-            params.push(...states);
-          }
-          const rows = db
-            .query(`
+export const queryDelegationJobs = (
+  input: QueryDelegationJobsInput,
+): Effect.Effect<QueryDelegationJobsResult, UsageStoreError> => {
+  const limit = input.limit ?? 50;
+  if (!(Number.isSafeInteger(limit) && limit > 0 && limit <= DELEGATION_STORE_BOUNDS.maxListLimit)) {
+    return Effect.fail(
+      usageStoreError(
+        'queryDelegationJobs',
+        input.dbPath,
+        `Delegation job limit must be between 1 and ${DELEGATION_STORE_BOUNDS.maxListLimit}`,
+        'invalid-input',
+      ),
+    );
+  }
+  const states = input.states ?? [];
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+      try: () => {
+        assertDelegationTables(db, (message) =>
+          usageStoreError('queryDelegationJobs', input.dbPath, message, 'schema-too-old'),
+        );
+        const clauses: string[] = [];
+        const params: unknown[] = [];
+        if (input.machineId !== undefined) {
+          clauses.push('machine_id = ?');
+          params.push(input.machineId);
+        }
+        if (input.jobId !== undefined) {
+          clauses.push('job_id = ?');
+          params.push(input.jobId);
+        }
+        if (input.idempotencyKey !== undefined) {
+          clauses.push('idempotency_key = ?');
+          params.push(input.idempotencyKey);
+        }
+        if (input.checkoutPath !== undefined) {
+          clauses.push('checkout_path = ?');
+          params.push(input.checkoutPath);
+        }
+        if (input.reserving === true) {
+          clauses.push(RESERVING_SQL);
+        }
+        if (states.length > 0) {
+          clauses.push(`state IN (${states.map(() => '?').join(', ')})`);
+          params.push(...states);
+        }
+        const rows = db
+          .query(`
               SELECT ${JOB_COLUMNS} FROM delegation_jobs
               ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
               ORDER BY requested_at DESC, job_id DESC
               LIMIT ?
             `)
-            .all(...params, limit + 1) as DelegationJobRecord[];
-          const jobs: DelegationJob[] = [];
-          let skipped = 0;
-          for (const row of rows.slice(0, limit)) {
-            const job = jobFromRecord(row);
-            if (job) {
-              jobs.push(job);
-            } else {
-              skipped++;
-            }
+          .all(...params, limit + 1) as DelegationJobRecord[];
+        const jobs: DelegationJob[] = [];
+        let skipped = 0;
+        for (const row of rows.slice(0, limit)) {
+          const job = jobFromRecord(row);
+          if (job) {
+            jobs.push(job);
+          } else {
+            skipped++;
           }
-          return { jobs, skipped, truncated: rows.length > limit };
-        },
-        catch: (cause) => usageStoreReadError('queryDelegationJobs', input.dbPath, cause),
-      }),
-    );
-  };
+        }
+        return { jobs, skipped, truncated: rows.length > limit };
+      },
+      catch: (cause) => usageStoreReadError('queryDelegationJobs', input.dbPath, cause),
+    }),
+  );
+};
 
-  const queryDelegationEvaluations = (
-    input: QueryDelegationEvaluationsInput,
-  ): Effect.Effect<QueryDelegationEvaluationsResult, UsageStoreError> => {
-    if (input.jobIds.length > DELEGATION_STORE_BOUNDS.maxEvaluationJobIds) {
-      return Effect.fail(
-        usageStoreError(
-          'queryDelegationEvaluations',
-          input.dbPath,
-          `At most ${DELEGATION_STORE_BOUNDS.maxEvaluationJobIds} job ids per read`,
-          'invalid-input',
-        ),
-      );
-    }
-    if (input.jobIds.length === 0) {
-      return Effect.succeed({ evaluations: [], skipped: 0 });
-    }
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          assertDelegationTables(db, (message) =>
-            usageStoreError('queryDelegationEvaluations', input.dbPath, message, 'schema-too-old'),
-          );
-          const rows = db
-            .query(`
+export const queryDelegationEvaluations = (
+  input: QueryDelegationEvaluationsInput,
+): Effect.Effect<QueryDelegationEvaluationsResult, UsageStoreError> => {
+  if (input.jobIds.length > DELEGATION_STORE_BOUNDS.maxEvaluationJobIds) {
+    return Effect.fail(
+      usageStoreError(
+        'queryDelegationEvaluations',
+        input.dbPath,
+        `At most ${DELEGATION_STORE_BOUNDS.maxEvaluationJobIds} job ids per read`,
+        'invalid-input',
+      ),
+    );
+  }
+  if (input.jobIds.length === 0) {
+    return Effect.succeed({ evaluations: [], skipped: 0 });
+  }
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        assertDelegationTables(db, (message) =>
+          usageStoreError('queryDelegationEvaluations', input.dbPath, message, 'schema-too-old'),
+        );
+        const rows = db
+          .query(`
               SELECT ${EVALUATION_COLUMNS} FROM delegation_evaluations
               WHERE job_id IN (${input.jobIds.map(() => '?').join(', ')})
               ORDER BY recorded_at DESC, evaluation_id DESC
             `)
-            .all(...input.jobIds) as DelegationEvaluationRecord[];
-          const evaluations: DelegationEvaluation[] = [];
-          let skipped = 0;
-          for (const row of rows) {
-            const evaluation = evaluationFromRecord(row);
-            if (evaluation) {
-              evaluations.push(evaluation);
-            } else {
-              skipped++;
-            }
+          .all(...input.jobIds) as DelegationEvaluationRecord[];
+        const evaluations: DelegationEvaluation[] = [];
+        let skipped = 0;
+        for (const row of rows) {
+          const evaluation = evaluationFromRecord(row);
+          if (evaluation) {
+            evaluations.push(evaluation);
+          } else {
+            skipped++;
           }
-          return { evaluations, skipped };
-        },
-        catch: (cause) => usageStoreReadError('queryDelegationEvaluations', input.dbPath, cause),
-      }),
-    );
-  };
-
-  /**
-   * The retry chain a request would join, counted with the rule of `requestDelegationJob` but
-   * outside its transaction: what a qualification shows before a launch decides. The transaction
-   * remains the authority at the insert.
-   */
-  const countDelegationRetryChain = (
-    input: CountDelegationRetryChainInput,
-  ): Effect.Effect<DelegationRetryChainCount, UsageStoreError> =>
-    withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          assertDelegationTables(db, (message) =>
-            usageStoreError('countDelegationRetryChain', input.dbPath, message, 'schema-too-old'),
-          );
-          return countRetryChain(db, input.retryOf);
-        },
-        catch: (cause) => usageStoreReadError('countDelegationRetryChain', input.dbPath, cause),
-      }),
-    );
-
-  const readFailure = (error: UsageStoreError): DelegationStoreReadFailure => {
-    switch (error.reason) {
-      case 'store-missing':
-        return { kind: 'store-missing' };
-      case 'schema-too-old':
-        return { kind: 'store-not-upgraded', message: error.message };
-      case 'corrupt':
-      case 'schema-too-new':
-        return { kind: 'incompatible-store', message: error.message, reason: error.reason };
-      default:
-        return { kind: 'unavailable', message: error.message, reason: error.reason };
-    }
-  };
-
-  /**
-   * The read an edge (MCP, CLI, Web) performs: jobs with their evaluations through the query-only
-   * reader, never creating the store, with the storage failure classified instead of thrown.
-   */
-  const readDelegationJobs = (input: QueryDelegationJobsInput): Effect.Effect<DelegationJobsRead> =>
-    Effect.gen(function* () {
-      const outcome = yield* Effect.result(
-        Effect.gen(function* () {
-          const jobs = yield* queryDelegationJobs(input);
-          const evaluations = yield* queryDelegationEvaluations({
-            dbPath: input.dbPath,
-            jobIds: jobs.jobs.map((job) => job.jobId),
-          });
-          return {
-            evaluations: evaluations.evaluations,
-            jobs: jobs.jobs,
-            kind: 'ok' as const,
-            skipped: jobs.skipped + evaluations.skipped,
-            truncated: jobs.truncated,
-          };
-        }),
-      );
-      return outcome._tag === 'Success' ? outcome.success : readFailure(outcome.failure);
-    });
-
-  const readDelegationJob = (input: ReadDelegationJobInput): Effect.Effect<DelegationJobRead> =>
-    Effect.map(readDelegationJobs({ dbPath: input.dbPath, jobId: input.jobId, limit: 1 }), (read) => {
-      if (read.kind !== 'ok') {
-        return read;
-      }
-      const job = read.jobs[0];
-      return job === undefined
-        ? { kind: 'not-found', skipped: read.skipped }
-        : { evaluations: read.evaluations, job, kind: 'ok', skipped: read.skipped };
-    });
-
-  return {
-    countDelegationRetryChain,
-    markDelegationJobsLost,
-    queryDelegationEvaluations,
-    queryDelegationJobs,
-    readDelegationJob,
-    readDelegationJobs,
-    readDelegationQualification,
-    recordDelegationEvaluation,
-    recordDelegationQualification,
-    releaseDelegationJobReservation,
-    requestDelegationCancel,
-    requestDelegationJob,
-    transitionDelegationJob,
-  };
+        }
+        return { evaluations, skipped };
+      },
+      catch: (cause) => usageStoreReadError('queryDelegationEvaluations', input.dbPath, cause),
+    }),
+  );
 };
+
+/**
+ * The retry chain a request would join, counted with the rule of `requestDelegationJob` but
+ * outside its transaction: what a qualification shows before a launch decides. The transaction
+ * remains the authority at the insert.
+ */
+export const countDelegationRetryChain = (
+  input: CountDelegationRetryChainInput,
+): Effect.Effect<DelegationRetryChainCount, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        assertDelegationTables(db, (message) =>
+          usageStoreError('countDelegationRetryChain', input.dbPath, message, 'schema-too-old'),
+        );
+        return countRetryChain(db, input.retryOf);
+      },
+      catch: (cause) => usageStoreReadError('countDelegationRetryChain', input.dbPath, cause),
+    }),
+  );
+
+const readFailure = (error: UsageStoreError): DelegationStoreReadFailure => {
+  switch (error.reason) {
+    case 'store-missing':
+      return { kind: 'store-missing' };
+    case 'schema-too-old':
+      return { kind: 'store-not-upgraded', message: error.message };
+    case 'corrupt':
+    case 'schema-too-new':
+      return { kind: 'incompatible-store', message: error.message, reason: error.reason };
+    default:
+      return { kind: 'unavailable', message: error.message, reason: error.reason };
+  }
+};
+
+/**
+ * The read an edge (MCP, CLI, Web) performs: jobs with their evaluations through the query-only
+ * reader, never creating the store, with the storage failure classified instead of thrown.
+ */
+export const readDelegationJobs = (input: QueryDelegationJobsInput): Effect.Effect<DelegationJobsRead> =>
+  Effect.gen(function* () {
+    const outcome = yield* Effect.result(
+      Effect.gen(function* () {
+        const jobs = yield* queryDelegationJobs(input);
+        const evaluations = yield* queryDelegationEvaluations({
+          dbPath: input.dbPath,
+          jobIds: jobs.jobs.map((job) => job.jobId),
+        });
+        return {
+          evaluations: evaluations.evaluations,
+          jobs: jobs.jobs,
+          kind: 'ok' as const,
+          skipped: jobs.skipped + evaluations.skipped,
+          truncated: jobs.truncated,
+        };
+      }),
+    );
+    return outcome._tag === 'Success' ? outcome.success : readFailure(outcome.failure);
+  });
+
+export const readDelegationJob = (input: ReadDelegationJobInput): Effect.Effect<DelegationJobRead> =>
+  Effect.map(readDelegationJobs({ dbPath: input.dbPath, jobId: input.jobId, limit: 1 }), (read) => {
+    if (read.kind !== 'ok') {
+      return read;
+    }
+    const job = read.jobs[0];
+    return job === undefined
+      ? { kind: 'not-found', skipped: read.skipped }
+      : { evaluations: read.evaluations, job, kind: 'ok', skipped: read.skipped };
+  });

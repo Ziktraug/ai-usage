@@ -16,14 +16,15 @@ import {
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { queryWorkThreadLinks } from '@ai-usage/usage-store/reader';
 import {
+  applyWorkThreadCommand,
   importPullRequestObservations,
   initializeUsageStore,
   publishServedReportRevision,
   reconcileWorkBranches,
+  seedWorkThreads,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
-import { applyWorkThreadCommand, seedWorkThreads } from '../../usage-store/src/index';
 import { queryWorkThreadDetail, queryWorkThreadList } from './work-thread-read';
 
 const roots: string[] = [];
