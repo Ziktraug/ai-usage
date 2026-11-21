@@ -65,6 +65,14 @@
                   "@ai-usage/*/src/**"
                 ],
                 "message": "Use workspace package imports and public package exports instead of relative workspace paths or private src paths."
+              },
+              {
+                "group": [
+                  "@ai-usage/design-system/tokens",
+                  "**/styled-system/tokens",
+                  "**/styled-system/tokens/**"
+                ],
+                "message": "Read theme tokens through extracted styles, never through the generated token() helper: Panda prunes the variables no extracted style reaches."
               }
             ]
           }
@@ -177,6 +185,14 @@
                   },
                   {
                     "group": [
+                      "@ai-usage/design-system/tokens",
+                      "**/styled-system/tokens",
+                      "**/styled-system/tokens/**"
+                    ],
+                    "message": "Read theme tokens through extracted styles, never through the generated token() helper: Panda prunes the variables no extracted style reaches."
+                  },
+                  {
+                    "group": [
                       "@tanstack/*",
                       "@orpc/*",
                       "**/rpc/**",
@@ -224,6 +240,14 @@
                       "@ai-usage/*/src/**"
                     ],
                     "message": "Use workspace package imports and public package exports instead of relative workspace paths or private src paths."
+                  },
+                  {
+                    "group": [
+                      "@ai-usage/design-system/tokens",
+                      "**/styled-system/tokens",
+                      "**/styled-system/tokens/**"
+                    ],
+                    "message": "Read theme tokens through extracted styles, never through the generated token() helper: Panda prunes the variables no extracted style reaches."
                   }
                 ]
               }

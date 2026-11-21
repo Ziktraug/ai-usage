@@ -8,7 +8,9 @@ import path from 'node:path';
  * reads a token variable by name (`var(--colors-…)` in an inline style, `style:--colors-…`,
  * `setProperty`) or through the generated `token()` helper of `styled-system/tokens`: Panda never
  * sees such a reference, so the variable it needs can be pruned and the style silently resolves to
- * nothing. This scan holds the runtime sources of the app and of the design system to that rule.
+ * nothing. Importing the token helper is refused by a `noRestrictedImports` rule in biome.json; a
+ * variable named in source text has no import to restrict, so this scan holds the runtime sources of
+ * the app and of the design system to that half of the rule.
  *
  * It reads the design system's generated `styled-system` (its preset manifest and stylesheet), which
  * `bun run test` builds first; it needs no app build.
@@ -109,9 +111,6 @@ const CSS_CUSTOM_PROPERTY_PATTERNS = [
   /(?:getPropertyValue|removeProperty|setProperty)\(\s*['"`](--[\w-]+)/g,
   /(?<![\w-])(--[a-zA-Z][\w-]*)\s*:(?!:)/g,
 ] as const;
-// The generated token helper, imported by package path or by a relative path into a styled-system.
-const TOKEN_HELPER_IMPORT_PATTERN =
-  /['"`]((?:[^'"`\s]*\/)?styled-system\/tokens(?:\/[^'"`\s]*)?|@ai-usage\/design-system\/tokens(?:\/[^'"`\s]*)?)['"`]/g;
 const TOKEN_LAYER_PATTERN = /@layer tokens\s*\{/g;
 const CUSTOM_PROPERTY_DECLARATION_PATTERN = /(--[\w-]+)\s*:/g;
 
@@ -186,7 +185,7 @@ interface TokenReferenceFindings {
   readonly local: string[];
   /** Custom properties in a CSS position that are neither theme tokens nor declared app-local. */
   readonly undeclared: string[];
-  /** Theme token variables named in source, and imports of the generated token helper. */
+  /** Theme token variables named in source. */
   readonly violations: string[];
 }
 
@@ -198,10 +197,7 @@ const tokenReferenceFindings = (
 ): TokenReferenceFindings => {
   const at = (index: number, name: string): string => `${relativePath}:${lineOf(source, index)}: ${name}`;
   const tokenVariablePattern = new RegExp(`(?<![\\w-])(?:${tokenPrefixes.map(escapeRegExp).join('|')})[\\w-]*`, 'g');
-  const violations = [
-    ...[...source.matchAll(tokenVariablePattern)].map((match) => at(match.index, match[0])),
-    ...[...source.matchAll(TOKEN_HELPER_IMPORT_PATTERN)].map((match) => at(match.index, `import ${match[1]}`)),
-  ];
+  const violations = [...source.matchAll(tokenVariablePattern)].map((match) => at(match.index, match[0]));
   const undeclared: string[] = [];
   const local: string[] = [];
   for (const pattern of CSS_CUSTOM_PROPERTY_PATTERNS) {
@@ -244,7 +240,7 @@ describe('theme token variables stay inside the extracted styles', () => {
     expect(themeVariables.filter((name) => !prefixes.some((prefix) => name.startsWith(prefix)))).toEqual([]);
   });
 
-  test('no runtime source names a theme token variable or imports the generated token helper', async () => {
+  test('no runtime source names a theme token variable', async () => {
     const violations: string[] = [];
     const undeclared: string[] = [];
     const local = new Set<string>();
@@ -272,15 +268,13 @@ describe('theme token variables stay inside the extracted styles', () => {
     expect([...APP_LOCAL_CUSTOM_PROPERTIES].filter((name) => !local.has(name))).toEqual([]);
   });
 
-  test('flags a planted token reference, token helper import or undeclared variable', () => {
+  test('flags a planted token reference or undeclared variable', () => {
     const source = [
       "const ring = css({ outline: '1px solid var(--colors-accent)' });",
       '<span style:--colors-accent={value}></span>',
       // biome-ignore lint/suspicious/noTemplateCurlyInString: sample source naming a token variable it builds.
       'element.style.setProperty(`--spacing-${step}`, size);',
       "const fill = 'color-mix(in srgb, var(--colors-chart-c1) 40%, transparent)';",
-      "import { token } from '@ai-usage/design-system/tokens';",
-      "import { token as raw } from '../../styled-system/tokens/index.mjs';",
       "const width = css({ w: 'var(--made-up-width)' });",
       "const height = css({ h: 'var(--session-surface-height, 100dvh)' });",
       "Bun.spawn(['gh', 'pr', 'list', '--repo', repository, '--json']);",
@@ -293,10 +287,8 @@ describe('theme token variables stay inside the extracted styles', () => {
       'apps/web/src/planted.svelte:2: --colors-accent',
       'apps/web/src/planted.svelte:3: --spacing-',
       'apps/web/src/planted.svelte:4: --colors-chart-c1',
-      'apps/web/src/planted.svelte:5: import @ai-usage/design-system/tokens',
-      'apps/web/src/planted.svelte:6: import ../../styled-system/tokens/index.mjs',
     ]);
-    expect(findings.undeclared).toEqual(['apps/web/src/planted.svelte:7: --made-up-width']);
+    expect(findings.undeclared).toEqual(['apps/web/src/planted.svelte:5: --made-up-width']);
     expect(findings.local).toEqual(['--session-surface-height']);
   });
 });
