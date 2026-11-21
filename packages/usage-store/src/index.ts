@@ -5,7 +5,6 @@ import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from 
 import { readUsageLocalMachineWithDatabase } from './machine-fleet';
 import { createProviderQuotaStore } from './provider-quota-store';
 import { readUsageStoreGenerations } from './report-rows';
-import { createReviewAttemptStore } from './review-attempt-store';
 import { createServedReportStore } from './served-report-store';
 import { createSkillObservationStore } from './skill-observation-store';
 import { createWorkFactStore } from './work-fact-store';
@@ -123,7 +122,7 @@ export const {
   withUsageStoreReader,
   withUsageStoreWriter,
 });
-export const {
+export {
   markReviewAttemptsLost,
   queryReviewAttempts,
   queryReviewReservations,
@@ -131,12 +130,7 @@ export const {
   releaseReviewAttemptReservation,
   requestReviewAttempt,
   transitionReviewAttempt,
-} = createReviewAttemptStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
+} from './review-attempt-store';
 export const {
   countDelegationRetryChain,
   markDelegationJobsLost,
