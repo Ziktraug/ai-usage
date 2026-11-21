@@ -26,7 +26,8 @@ export const USAGE_STORE_SCHEMA_VERSION = 5;
 
 /**
  * Raised by `migrate()` when the store was written by a newer schema. The writer open maps it to the
- * `schema-too-new` reason; every other failure raised inside `migrate()` is a `migration-failure`.
+ * `schema-too-new` reason; lock contention (`SQLITE_BUSY`/`SQLITE_LOCKED`) keeps `storage-failure`, and every
+ * other failure raised inside `migrate()` is a `migration-failure`.
  */
 export class UsageStoreSchemaTooNewError extends Error {
   override readonly name = 'UsageStoreSchemaTooNewError';
