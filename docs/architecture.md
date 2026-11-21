@@ -315,7 +315,7 @@ The inventory↔observation join happens entirely in the web server layer —
 `skill-observation-join.ts` decides every verdict — never inside
 `@ai-usage/skills`, which stays a filesystem-projection domain with no
 usage-store dependency, and never in the browser, which receives one
-already-decided answer and imports only the contract (ADR 0010/0012). A store this read
+already-decided answer and imports only the contract (ADR 0076). A store this read
 cannot open fails the observation section explicitly rather than degrading to an
 empty dataset, because an empty dataset would draw every observable harness as a
 zero.

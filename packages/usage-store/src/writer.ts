@@ -74,13 +74,11 @@ export type {
   QueryExecutorAccountChangesInput,
   QueryExecutorAccountChangesResult,
 } from './executor-observation-store';
-export type { UsageStore } from './index';
 export {
   applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
   countDelegationRetryChain,
-  createUsageStore,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importCodexWorkObservations,
@@ -162,7 +160,7 @@ export type {
   PreviewPeerMergeBundleInput,
   PreviewPeerMergeBundleResult,
 } from './peer-merge';
-export { confirmPeerMergeBundle, importPeerMergeBundle, previewPeerMergeBundle } from './peer-merge';
+export { confirmPeerMergeBundle, previewPeerMergeBundle } from './peer-merge';
 export type {
   ImportProviderQuotaBatchInput,
   ProviderQuotaCheckpointUpdate,

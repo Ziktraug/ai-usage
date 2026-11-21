@@ -42,7 +42,7 @@ and external systems; reuse authorization already granted for the current scope.
    `apps/usage-engine` opens the database read-write. Web and CLI read through
    read-only `query_only` connections. The control plane never carries report
    data.
-2. **Contract-first browser boundary** (ADR 0010/0012): browser code imports
+2. **Contract-first browser boundary** (ADR 0076): browser code imports
    only the oRPC contract, never server modules; TanStack Query owns browser
    server state with one named policy per data identity.
 
@@ -73,10 +73,16 @@ style. What Biome cannot check, and reviews here care about:
   engine down) — never swallowed.
 - Explicit types where they clarify seams; `unknown` over `any`; narrow instead
   of asserting.
+- Extend before adding: find the module, export, table, helper or ADR that
+  already owns the concern and extend or amend it, and delete what the change
+  leaves unused. A PR that adds a module or public export says why no existing
+  one fits.
 - Accessibility is a hard gate: axe runs in e2e, keyboard/AT equivalence is an
-  accepted decision (ADR 0005/0013).
+  accepted decision (ADR 0013).
 - Tests accompany behavior changes; browser regressions belong in the single
-  Playwright stack (ADR 0006). No `.only`/`.skip` committed.
+  Playwright stack (ADR 0006). No `.only`/`.skip` committed. Assert behaviour
+  through a model, store, HTTP or browser seam, never by reading a source file
+  and matching its text.
 - Biome caps cognitive complexity at 20 and non-test files at 1,000 lines.
   `legacy, plan 127` suppressions mark existing debt: remove one when its code
   is fixed, and never add one for new code.
