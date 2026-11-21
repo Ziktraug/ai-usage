@@ -1306,3 +1306,26 @@ file in the same process leaves `document`, `CSS` or `getComputedStyle` on
 `globalThis`; and the test compile plugin keeps the campaign rune modules
 client-compiled for the rest of the process, so a future Bun test that renders
 `campaigns-page.svelte` through Bun's loader would mix runtimes.
+
+### 2026-11-21 — Final gate on the integration branch
+
+On `refactor/structural-cleanliness` with all five packets merged, run one
+after the other: `bun run check`, `bun run lint`, `bun run typecheck`,
+`bun run test`, `bun run build`, `bun run test:web-bundle`,
+`bun run test:web-client-manifest` and the browser e2e suite each exited 0.
+E2e: 411 passed on the main Playwright config and 3 on the work-pagination
+config, none failed, flaky or skipped. Web tests: 2,460 pass in 286 files.
+In this last run Turbo replayed the non-web package tests from its cache; they
+had executed fresh on the same inputs in the previous run of the same branch
+(P1, P2, P3 and P5 merged), where every package passed, including
+`usage-store` at 466 and `usage-engine-runtime` at 393. P4 changed only
+`apps/web`, which re-executed.
+
+Debt counters at the end: 264 complexity suppressions (271 after P1), 33
+file-length suppressions (34 after P1). `packages/usage-store/src/index.ts`
+is 305 lines. `apps/web/src` holds only `app.d.ts` and `hooks.server.ts` at
+its root. Nothing was pushed and nothing was merged into `main`.
+
+Not done by this plan, by design: the open operator decision on synthetic
+data in the browser closure, the operator actions (local mailmap, empty
+leftover directories), and the 264 remaining suppressed functions.
