@@ -228,5 +228,5 @@ export type {
   QueryWorkThreadSessionEvidenceInput,
   WorkThreadSessionEvidence,
   WorkThreadSessionEvidenceBatchEntry,
-} from './work-thread-store';
-export { queryWorkThreadSessionEvidence } from './work-thread-store';
+} from './work-thread-session-evidence';
+export { queryWorkThreadSessionEvidence } from './work-thread-session-evidence';

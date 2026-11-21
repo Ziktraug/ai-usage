@@ -35,7 +35,7 @@ import { applyWorkThreadCommand } from './work-thread-commands';
 import type { WorkThreadCombineSuggestionEntry } from './work-thread-reads';
 import { workThreadSchemaSql } from './work-thread-schema';
 import { seedWorkThreads, type WorkThreadSeed } from './work-thread-seeding';
-import { queryWorkThreadSessionEvidence } from './work-thread-store';
+import { queryWorkThreadSessionEvidence } from './work-thread-session-evidence';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
