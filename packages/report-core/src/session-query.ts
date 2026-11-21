@@ -1,5 +1,4 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
-
 import { buildCampaignChronology, type CampaignChronology } from './campaign-chronology';
 import { rtkSavingsPct } from './csv';
 import { isRecord } from './datasets';

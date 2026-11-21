@@ -1,4 +1,3 @@
-import { isRecord } from '@ai-usage/report-core/datasets';
 /**
  * Re-applying a form's edits onto newer settings. A draft is bound to the revision it was read
  * from (its base); when the settings move on while it is dirty, the operator chooses: drop the
@@ -18,6 +17,8 @@ import { isRecord } from '@ai-usage/report-core/datasets';
  * of its own), and the latest is returned keyed as the merged draft is (`base`), so that the next
  * merge, based on it, matches the operator's entries by key again.
  */
+
+import { isRecord } from '@ai-usage/report-core/datasets';
 
 export interface DraftConflict {
   /** The operator's value, worded for the notice. */
