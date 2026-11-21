@@ -1991,298 +1991,362 @@ const createPullRequestSource = (input: WorkFactSourceInput): ScheduledSource =>
   run: (context) => runPullRequestSource(input, context),
 });
 
+type JiraDiscovery = Effect.Success<ReturnType<typeof discoverJiraIssues>>;
+type JiraSync = Effect.Success<ReturnType<typeof prepareJiraSync>>;
+type JiraIssueBatchObservations = Effect.Success<ReturnType<typeof observeJiraIssues>>['observations'];
+
+const recordJiraRunDisabled = (input: WorkFactSourceInput, message: string) =>
+  recordWorkFactRun({
+    dbPath: input.dbPath,
+    disabled: true,
+    failed: 0,
+    machineId: input.machine.id,
+    message,
+    observed: 0,
+    ranAt: input.now(),
+    sourceId: 'jira.issues',
+  }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+
+const jiraDiscoveryWarnings = (discovery: JiraDiscovery): SourceWarning[] =>
+  discovery.outcome === 'observed'
+    ? []
+    : [
+        {
+          code: `jira-discovery-${discovery.outcome}`,
+          message: discovery.outcomeMessage ?? 'Jira issue discovery failed.',
+        },
+      ];
+
+const gatherJiraCandidates = (input: WorkFactSourceInput, desktop: DesktopWorkFactInputs, discovery: JiraDiscovery) =>
+  Effect.gen(function* () {
+    const threadLinks = yield* servedInputsOrEmpty(
+      'jira.issues',
+      queryActiveWorkThreadLinks({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        kind: 'jira-issue',
+        jiraSite: 'default',
+        limit: JIRA_ISSUE_CANDIDATE_LIMIT,
+      }),
+      { links: [], truncated: false },
+    );
+    const threadKeys = threadLinks.links.flatMap((link) => {
+      const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+      // The current Jira observation authority is the CLI's default site only.
+      return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
+    });
+    const branchKeys = yield* servedInputsOrEmpty(
+      'jira.issues',
+      pullRequestBranchJiraKeys(input.dbPath, input.machine.id),
+      { keys: [], truncated: false },
+    );
+    const candidateKeys = [...new Set([...threadKeys, ...branchKeys.keys, ...desktop.jiraKeys, ...discovery.keys])];
+    const candidates = candidateKeys.slice(0, MAX_WORK_FACT_QUERY_LIMIT);
+    const truncated =
+      candidateKeys.length > candidates.length || discovery.truncated || threadLinks.truncated || branchKeys.truncated;
+    return { candidates, truncated };
+  });
+
+/** The operator's workflow names its handed-off statuses; the observation records the verdict. */
+const markHandedOffJiraIssues = (config: AiUsageConfig, batchObservations: JiraIssueBatchObservations) => {
+  const handedOff = new Set((config.jira?.handedOffStatuses ?? []).map((status) => status.trim().toLowerCase()));
+  return batchObservations.map((observation) =>
+    observation.status !== null && handedOff.has(observation.status.trim().toLowerCase())
+      ? { ...observation, handedOff: true as const }
+      : observation,
+  );
+};
+
+/**
+ * A persisted 404 completes this read. Other failures (including unreadable output)
+ * move behind unattempted keys and remain durable for retry at normal cadence.
+ */
+const pendingJiraKeys = (
+  syncPendingKeys: readonly string[],
+  keys: readonly string[],
+  observations: ReturnType<typeof markHandedOffJiraIssues>,
+) => {
+  const completed = new Set(
+    observations
+      .filter((observation) => observation.outcome === 'observed' || observation.outcome === 'not-found')
+      .map((observation) => observation.key),
+  );
+  const attempted = new Set(keys);
+  const pendingKeys = [
+    ...syncPendingKeys.filter((key) => !attempted.has(key)),
+    ...keys.filter((key) => !completed.has(key)),
+  ];
+  return { attempted, pendingKeys };
+};
+
+const jiraWaitWarnings = (wait: { truncated: boolean; unproven: number }): SourceWarning[] => [
+  ...(wait.truncated
+    ? [
+        {
+          code: 'work-thread-waits-truncated',
+          message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
+        },
+      ]
+    : []),
+  ...(wait.unproven > 0
+    ? [
+        {
+          code: 'jira-wait-unproven',
+          message: `Stored observations cannot prove a status change for ${String(wait.unproven)} identified waits; they remain waiting.`,
+        },
+      ]
+    : []),
+];
+
+const jiraRunMessage = (
+  notInstalled: boolean,
+  truncation: string | null,
+  pending: string | null,
+  warnings: {
+    discovery: readonly SourceWarning[];
+    sync: JiraSync['warnings'];
+    detail: readonly SourceWarning[];
+    wait: readonly SourceWarning[];
+  },
+): string | null =>
+  notInstalled
+    ? JIRA_NOT_INSTALLED_MESSAGE
+    : [
+        truncation,
+        pending,
+        ...warnings.discovery.map((warning) => warning.message),
+        ...warnings.sync.map((warning) => warning.message),
+        ...warnings.detail.map((warning) => warning.message),
+        ...warnings.wait.map((warning) => warning.message),
+      ]
+        .filter(Boolean)
+        .join(' ') || null;
+
+const jiraPendingMessage = (pendingKeys: readonly string[]): string | null =>
+  pendingKeys.length > 0
+    ? `${pendingKeys.length} Jira ${pendingKeys.length === 1 ? 'ticket' : 'tickets'} awaiting details.`
+    : null;
+
+const jiraOutcomeCode = (discovery: JiraDiscovery, sync: JiraSync): 'unauthenticated' | null =>
+  discovery.outcome === 'unauthenticated' ||
+  sync.warnings.some((warning) => warning.code === 'jira-changes-unauthenticated')
+    ? 'unauthenticated'
+    : null;
+
+const shouldContinueJiraSoon = (
+  pendingKeys: readonly string[],
+  attempted: ReadonlySet<string>,
+  observed: number,
+  discoveryWarnings: readonly SourceWarning[],
+  sync: JiraSync,
+  observations: ReturnType<typeof markHandedOffJiraIssues>,
+): boolean =>
+  pendingKeys.some((key) => !attempted.has(key)) &&
+  observed > 0 &&
+  discoveryWarnings.length === 0 &&
+  sync.warnings.length === 0 &&
+  observations.every((observation) => ['observed', 'invalid', 'not-found'].includes(observation.outcome));
+
+const runJiraIssueSource = (
+  input: WorkFactSourceInput,
+  context: SourceRunContext,
+): Effect.Effect<SourceRunResult, SourceRunError> =>
+  Effect.gen(function* () {
+    yield* reportProgress(context, { phase: 'discovering' });
+    const availability = yield* input.detect;
+    if (availability.availability !== 'detected') {
+      if (availability.availability === 'not-detected') {
+        yield* recordJiraRunDisabled(input, JIRA_NOT_INSTALLED_MESSAGE);
+      }
+      return { ...sourceUnavailableResult(), unavailable: availability.reason };
+    }
+    const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
+      Effect.provideService(LocalHistoryStorage, input.storage),
+      Effect.catchDefect((cause: unknown) => Effect.fail(cause)),
+      Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
+    );
+    if (config.jira?.enabled === false) {
+      const message = 'jira.enabled is false in the local config.';
+      yield* recordJiraRunDisabled(input, message);
+      return {
+        changed: false,
+        inputCount: 0,
+        outputCount: 0,
+        unavailable: { code: 'policy-disabled', message },
+        warnings: [],
+      };
+    }
+    const desktop = yield* desktopWorkFactInputs({
+      dbPath: input.dbPath,
+      machineId: input.machine.id,
+      now: input.now,
+    });
+    yield* abortIfRequested(context.signal);
+    const discovery = yield* discoverJiraIssues({
+      ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+    });
+    yield* abortIfRequested(context.signal);
+    if (discovery.outcome === 'unavailable') {
+      yield* recordJiraRunDisabled(input, JIRA_NOT_INSTALLED_MESSAGE);
+      return {
+        changed: false,
+        inputCount: 0,
+        outputCount: 0,
+        unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE },
+        warnings: desktop.warnings,
+      };
+    }
+    return yield* observeJiraCandidates(input, context, config, desktop, discovery);
+  });
+
+/** The bounded detail read of a pass: the sync plan, the waits it may settle, and the issue reads. */
+const readJiraIssueDetails = (
+  input: WorkFactSourceInput,
+  context: SourceRunContext,
+  discovery: JiraDiscovery,
+  candidates: readonly string[],
+  truncated: boolean,
+) =>
+  Effect.gen(function* () {
+    const sync = yield* prepareJiraSync({
+      dbPath: input.dbPath,
+      machineId: input.machine.id,
+      candidates,
+      now: input.now(),
+      completeCandidates: discovery.outcome === 'observed' && !truncated,
+      ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+    }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+    const keys = sync.keys;
+    const waits = yield* servedInputsOrEmpty(
+      'jira.issues',
+      queryWorkThreadWaitCandidates({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        kind: 'jira-update',
+        linkKeys: keys.map((key) => `jira:default/${key}`),
+      }),
+      { candidates: [], truncated: false },
+    );
+    yield* reportProgress(context, { completed: 0, phase: 'reading', total: sync.state.pendingKeys.length });
+    const batch = yield* observeJiraIssues({
+      concurrency: 3,
+      keys,
+      machineId: input.machine.id,
+      now: input.now,
+      ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+    });
+    yield* abortIfRequested(context.signal);
+    yield* reportProgress(context, { completed: 0, phase: 'importing', total: batch.observations.length });
+    return { batch, keys, sync, waits };
+  });
+
+const observeJiraCandidates = (
+  input: WorkFactSourceInput,
+  context: SourceRunContext,
+  config: AiUsageConfig,
+  desktop: DesktopWorkFactInputs,
+  discovery: JiraDiscovery,
+): Effect.Effect<SourceRunResult, SourceRunError> =>
+  Effect.gen(function* () {
+    const discoveryWarnings = jiraDiscoveryWarnings(discovery);
+    const { candidates, truncated } = yield* gatherJiraCandidates(input, desktop, discovery);
+    const { batch, keys, sync, waits } = yield* readJiraIssueDetails(input, context, discovery, candidates, truncated);
+    const observations = markHandedOffJiraIssues(config, batch.observations);
+    yield* importJiraIssueObservations({ dbPath: input.dbPath, observations }).pipe(
+      Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
+    );
+    const { attempted, pendingKeys } = pendingJiraKeys(sync.state.pendingKeys, keys, observations);
+
+    const waitResult =
+      waits.candidates.length === 0
+        ? { satisfied: 0, unchanged: 0, unproven: 0 }
+        : yield* applyWorkThreadWaitObservations({
+            dbPath: input.dbPath,
+            machineId: input.machine.id,
+            now: input.now().toISOString(),
+            candidates: waits.candidates,
+            jiraIssues: batch.observations,
+          }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+    yield* recordJiraSyncState({
+      dbPath: input.dbPath,
+      machineId: input.machine.id,
+      state: { ...sync.state, pendingKeys },
+    }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+    const waitWarnings = jiraWaitWarnings({ truncated: waits.truncated, unproven: waitResult.unproven });
+    // Assignment alone is not a commitment (ADR 0079): assigned issues enter the Work intake,
+    // where the operator follows, attaches or dismisses them. A failed search proves nothing.
+    if (discovery.outcome === 'observed') {
+      yield* recordJiraIntake({
+        complete: !discovery.truncated,
+        dbPath: input.dbPath,
+        keys: discovery.keys,
+        machineId: input.machine.id,
+        now: input.now().toISOString(),
+      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+    }
+    const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
+    const detailFailures = batch.observations.filter(
+      ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled' && outcome !== 'not-found',
+    ).length;
+    const detailWarnings =
+      detailFailures > 0
+        ? [{ code: 'jira-details-incomplete', message: `Jira detail reads failed: ${detailFailures}.` }]
+        : [];
+    const failed = discoveryWarnings.length + sync.warnings.length + detailFailures;
+    const notInstalled =
+      batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
+    const truncation = truncated ? 'Jira candidate discovery is incomplete; additional issues may be omitted.' : null;
+    const pending = jiraPendingMessage(pendingKeys);
+    yield* recordWorkFactRun({
+      dbPath: input.dbPath,
+      disabled: notInstalled,
+      failed,
+      machineId: input.machine.id,
+      message: jiraRunMessage(notInstalled, truncation, pending, {
+        discovery: discoveryWarnings,
+        sync: sync.warnings,
+        detail: detailWarnings,
+        wait: waitWarnings,
+      }),
+      observed,
+      ranAt: input.now(),
+      outcomeCode: jiraOutcomeCode(discovery, sync),
+      sourceId: 'jira.issues',
+    }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
+    return {
+      changed: false,
+      inputCount: keys.length,
+      outputCount: batch.observations.length,
+      ...(shouldContinueJiraSoon(pendingKeys, attempted, observed, discoveryWarnings, sync, observations)
+        ? { continueSoon: true }
+        : {}),
+      ...(notInstalled ? { unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE } } : {}),
+      warnings: [
+        ...discoveryWarnings,
+        ...sync.warnings,
+        ...detailWarnings,
+        ...desktop.warnings,
+        ...waitWarnings,
+        ...(pending === null ? [] : [{ code: 'jira-sync-pending', message: pending }]),
+        ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
+      ],
+    };
+  });
+
 /**
  * The Jira issue producer (ADR 0054): personal assigned-issue discovery joins explicit Desktop
  * branch keys before bounded issue reads through the operator's own CLI session. The run records itself
  * `disabled` when `jira.enabled` is false, and also when every read found no `acli` (the binary
  * left between detection and the run), so the Work view can name the reason.
  */
-const createJiraIssueSource = (input: {
-  dbPath: string;
-  detect: Effect.Effect<SourceDetectionResult>;
-  machine: UsageMachine;
-  now: () => Date;
-  options: SourceAdapterOptions;
-  storage: LocalHistoryStorageService;
-}): ScheduledSource => ({
+const createJiraIssueSource = (input: WorkFactSourceInput): ScheduledSource => ({
   cadence: Duration.millis(getCollectionSourceDefinition('jira.issues').cadenceMs),
   detect: input.detect,
   id: 'jira.issues',
-  run: (context) =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    Effect.gen(function* () {
-      yield* reportProgress(context, { phase: 'discovering' });
-      const availability = yield* input.detect;
-      if (availability.availability !== 'detected') {
-        if (availability.availability === 'not-detected') {
-          yield* recordWorkFactRun({
-            dbPath: input.dbPath,
-            disabled: true,
-            failed: 0,
-            machineId: input.machine.id,
-            message: JIRA_NOT_INSTALLED_MESSAGE,
-            observed: 0,
-            ranAt: input.now(),
-            sourceId: 'jira.issues',
-          }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-        }
-        return { ...sourceUnavailableResult(), unavailable: availability.reason };
-      }
-      const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
-        Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.catchDefect((cause: unknown) => Effect.fail(cause)),
-        Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
-      );
-      if (config.jira?.enabled === false) {
-        const message = 'jira.enabled is false in the local config.';
-        yield* recordWorkFactRun({
-          dbPath: input.dbPath,
-          disabled: true,
-          failed: 0,
-          machineId: input.machine.id,
-          message,
-          observed: 0,
-          ranAt: input.now(),
-          sourceId: 'jira.issues',
-        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-        return {
-          changed: false,
-          inputCount: 0,
-          outputCount: 0,
-          unavailable: { code: 'policy-disabled', message },
-          warnings: [],
-        };
-      }
-      const desktop = yield* desktopWorkFactInputs({
-        dbPath: input.dbPath,
-        machineId: input.machine.id,
-        now: input.now,
-      });
-      yield* abortIfRequested(context.signal);
-      const discovery = yield* discoverJiraIssues({
-        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
-        ...(context.signal === undefined ? {} : { signal: context.signal }),
-      });
-      yield* abortIfRequested(context.signal);
-      if (discovery.outcome === 'unavailable') {
-        yield* recordWorkFactRun({
-          dbPath: input.dbPath,
-          disabled: true,
-          failed: 0,
-          machineId: input.machine.id,
-          message: JIRA_NOT_INSTALLED_MESSAGE,
-          observed: 0,
-          ranAt: input.now(),
-          sourceId: 'jira.issues',
-        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-        return {
-          changed: false,
-          inputCount: 0,
-          outputCount: 0,
-          unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE },
-          warnings: desktop.warnings,
-        };
-      }
-      const discoveryWarnings =
-        discovery.outcome === 'observed'
-          ? []
-          : [
-              {
-                code: `jira-discovery-${discovery.outcome}`,
-                message: discovery.outcomeMessage ?? 'Jira issue discovery failed.',
-              },
-            ];
-      const threadLinks = yield* servedInputsOrEmpty(
-        'jira.issues',
-        queryActiveWorkThreadLinks({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          kind: 'jira-issue',
-          jiraSite: 'default',
-          limit: JIRA_ISSUE_CANDIDATE_LIMIT,
-        }),
-        { links: [], truncated: false },
-      );
-      const threadKeys = threadLinks.links.flatMap((link) => {
-        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
-        // The current Jira observation authority is the CLI's default site only.
-        return parsed?.kind === 'jira-issue' && parsed.site === 'default' ? [parsed.key] : [];
-      });
-      const branchKeys = yield* servedInputsOrEmpty(
-        'jira.issues',
-        pullRequestBranchJiraKeys(input.dbPath, input.machine.id),
-        { keys: [], truncated: false },
-      );
-      const candidateKeys = [...new Set([...threadKeys, ...branchKeys.keys, ...desktop.jiraKeys, ...discovery.keys])];
-      const candidates = candidateKeys.slice(0, MAX_WORK_FACT_QUERY_LIMIT);
-      const truncated =
-        candidateKeys.length > candidates.length ||
-        discovery.truncated ||
-        threadLinks.truncated ||
-        branchKeys.truncated;
-      const sync = yield* prepareJiraSync({
-        dbPath: input.dbPath,
-        machineId: input.machine.id,
-        candidates,
-        now: input.now(),
-        completeCandidates: discovery.outcome === 'observed' && !truncated,
-        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
-        ...(context.signal === undefined ? {} : { signal: context.signal }),
-      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-      const keys = sync.keys;
-      const waits = yield* servedInputsOrEmpty(
-        'jira.issues',
-        queryWorkThreadWaitCandidates({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          kind: 'jira-update',
-          linkKeys: keys.map((key) => `jira:default/${key}`),
-        }),
-        { candidates: [], truncated: false },
-      );
-      yield* reportProgress(context, { completed: 0, phase: 'reading', total: sync.state.pendingKeys.length });
-      const batch = yield* observeJiraIssues({
-        concurrency: 3,
-        keys,
-        machineId: input.machine.id,
-        now: input.now,
-        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
-        ...(context.signal === undefined ? {} : { signal: context.signal }),
-      });
-      yield* abortIfRequested(context.signal);
-      yield* reportProgress(context, { completed: 0, phase: 'importing', total: batch.observations.length });
-      // The operator's workflow names its handed-off statuses; the observation records the verdict.
-      const handedOff = new Set((config.jira?.handedOffStatuses ?? []).map((status) => status.trim().toLowerCase()));
-      const observations = batch.observations.map((observation) =>
-        observation.status !== null && handedOff.has(observation.status.trim().toLowerCase())
-          ? { ...observation, handedOff: true as const }
-          : observation,
-      );
-      yield* importJiraIssueObservations({ dbPath: input.dbPath, observations }).pipe(
-        Effect.mapError((cause) => sourceFailure('jira.issues', cause)),
-      );
-      const completed = new Set(
-        observations
-          .filter((observation) => observation.outcome === 'observed' || observation.outcome === 'not-found')
-          .map((observation) => observation.key),
-      );
-      // A persisted 404 completes this read. Other failures (including unreadable output)
-      // move behind unattempted keys and remain durable for retry at normal cadence.
-      const attempted = new Set(keys);
-      const pendingKeys = [
-        ...sync.state.pendingKeys.filter((key) => !attempted.has(key)),
-        ...keys.filter((key) => !completed.has(key)),
-      ];
-
-      const waitResult =
-        waits.candidates.length === 0
-          ? { satisfied: 0, unchanged: 0, unproven: 0 }
-          : yield* applyWorkThreadWaitObservations({
-              dbPath: input.dbPath,
-              machineId: input.machine.id,
-              now: input.now().toISOString(),
-              candidates: waits.candidates,
-              jiraIssues: batch.observations,
-            }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-      yield* recordJiraSyncState({
-        dbPath: input.dbPath,
-        machineId: input.machine.id,
-        state: { ...sync.state, pendingKeys },
-      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-      const waitWarnings = [
-        ...(waits.truncated
-          ? [
-              {
-                code: 'work-thread-waits-truncated',
-                message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
-              },
-            ]
-          : []),
-        ...(waitResult.unproven > 0
-          ? [
-              {
-                code: 'jira-wait-unproven',
-                message: `Stored observations cannot prove a status change for ${String(waitResult.unproven)} identified waits; they remain waiting.`,
-              },
-            ]
-          : []),
-      ];
-      // Assignment alone is not a commitment (ADR 0079): assigned issues enter the Work intake,
-      // where the operator follows, attaches or dismisses them. A failed search proves nothing.
-      if (discovery.outcome === 'observed') {
-        yield* recordJiraIntake({
-          complete: !discovery.truncated,
-          dbPath: input.dbPath,
-          keys: discovery.keys,
-          machineId: input.machine.id,
-          now: input.now().toISOString(),
-        }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-      }
-      const observed = batch.observations.filter(({ outcome }) => outcome === 'observed').length;
-      const detailFailures = batch.observations.filter(
-        ({ outcome }) => outcome !== 'observed' && outcome !== 'disabled' && outcome !== 'not-found',
-      ).length;
-      const detailWarnings =
-        detailFailures > 0
-          ? [{ code: 'jira-details-incomplete', message: `Jira detail reads failed: ${detailFailures}.` }]
-          : [];
-      const failed = discoveryWarnings.length + sync.warnings.length + detailFailures;
-      const notInstalled =
-        batch.observations.length > 0 && batch.observations.every(({ outcome }) => outcome === 'disabled');
-      const truncation = truncated ? 'Jira candidate discovery is incomplete; additional issues may be omitted.' : null;
-      const pending =
-        pendingKeys.length > 0
-          ? `${pendingKeys.length} Jira ${pendingKeys.length === 1 ? 'ticket' : 'tickets'} awaiting details.`
-          : null;
-      yield* recordWorkFactRun({
-        dbPath: input.dbPath,
-        disabled: notInstalled,
-        failed,
-        machineId: input.machine.id,
-        message: notInstalled
-          ? JIRA_NOT_INSTALLED_MESSAGE
-          : [
-              truncation,
-              pending,
-              ...discoveryWarnings.map((warning) => warning.message),
-              ...sync.warnings.map((warning) => warning.message),
-              ...detailWarnings.map((warning) => warning.message),
-              ...waitWarnings.map((warning) => warning.message),
-            ]
-              .filter(Boolean)
-              .join(' ') || null,
-        observed,
-        ranAt: input.now(),
-        outcomeCode:
-          discovery.outcome === 'unauthenticated' ||
-          sync.warnings.some((warning) => warning.code === 'jira-changes-unauthenticated')
-            ? 'unauthenticated'
-            : null,
-        sourceId: 'jira.issues',
-      }).pipe(Effect.mapError((cause) => sourceFailure('jira.issues', cause)));
-      return {
-        changed: false,
-        inputCount: keys.length,
-        outputCount: batch.observations.length,
-        ...(pendingKeys.some((key) => !attempted.has(key)) &&
-        observed > 0 &&
-        discoveryWarnings.length === 0 &&
-        sync.warnings.length === 0 &&
-        observations.every((observation) => ['observed', 'invalid', 'not-found'].includes(observation.outcome))
-          ? { continueSoon: true }
-          : {}),
-        ...(notInstalled ? { unavailable: { code: 'input-missing', message: JIRA_NOT_INSTALLED_MESSAGE } } : {}),
-        warnings: [
-          ...discoveryWarnings,
-          ...sync.warnings,
-          ...detailWarnings,
-          ...desktop.warnings,
-          ...waitWarnings,
-          ...(pending === null ? [] : [{ code: 'jira-sync-pending', message: pending }]),
-          ...(truncation === null ? [] : [{ code: 'jira-issues-truncated', message: truncation }]),
-        ],
-      };
-    }),
+  run: (context) => runJiraIssueSource(input, context),
 });
 
 const harnessAdapter = (
