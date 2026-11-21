@@ -17,7 +17,6 @@
     workRootId,
     workSearchCoverage,
   } from '../work-attention-model';
-  import WorkAttentionRow from './work-attention-row.svelte';
   import {
     workChipButton,
     workChipCount,
@@ -36,6 +35,7 @@
     workStack,
     workSubsectionTitle,
   } from '../work-styles';
+  import WorkAttentionRow from './work-attention-row.svelte';
 
   let {
     dataset,

@@ -17,6 +17,18 @@
   } from '../../../rpc/delegation-client';
   import { formatExactInstant, formatRelativeAge } from '../work-attention-model';
   import {
+    workButton,
+    workExcerpt,
+    workFactList,
+    workHeading,
+    workInput,
+    workMuted,
+    workPanel,
+    workRow,
+    workStack,
+    workSubsectionTitle,
+  } from '../work-styles';
+  import {
     ACCEPTANCE_ACTIONS,
     acceptanceOutcome,
     acceptedLabel,
@@ -44,18 +56,6 @@
     verifiedLabel,
     WORK_DELEGATIONS_LIMIT,
   } from './work-delegations-model';
-  import {
-    workButton,
-    workExcerpt,
-    workFactList,
-    workHeading,
-    workInput,
-    workMuted,
-    workPanel,
-    workRow,
-    workStack,
-    workSubsectionTitle,
-  } from '../work-styles';
 
   let {
     jobs,

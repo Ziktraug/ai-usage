@@ -3,9 +3,6 @@
   import type { WorkThreadLink } from '@ai-usage/report-core/work-thread';
   import type { WorkThreadEpisode } from '@ai-usage/report-core/work-thread-view';
   import { untrack } from 'svelte';
-  import WorkHarnessGlyph from './work-harness-glyph.svelte';
-  import Episode from './work-thread-episode.svelte';
-  import WorkThreadEpisodeDetail from './work-thread-episode-detail.svelte';
   import {
     episodeDuration,
     episodeDurationDetail,
@@ -13,6 +10,9 @@
     episodeTimeRange,
     harnessName,
   } from '../work-thread-model';
+  import WorkHarnessGlyph from './work-harness-glyph.svelte';
+  import Episode from './work-thread-episode.svelte';
+  import WorkThreadEpisodeDetail from './work-thread-episode-detail.svelte';
 
   let {
     episode,

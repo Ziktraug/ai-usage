@@ -11,11 +11,8 @@
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
-  import WorkCombineSuggestions from './work-combine-suggestions.svelte';
-  import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import WorkJiraIntake from '../jira/work-jira-intake.svelte';
   import WorkMilestoneGlyph from '../work-milestone-glyph.svelte';
-  import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import {
     bucketThreadMarks,
     groupThreadRows,
@@ -32,6 +29,9 @@
     threadWaitSince,
   } from '../work-thread-model';
   import WorkThreadSources from '../work-thread-sources.svelte';
+  import WorkCombineSuggestions from './work-combine-suggestions.svelte';
+  import WorkHarnessGlyph from './work-harness-glyph.svelte';
+  import WorkThreadArtifacts from './work-thread-artifacts.svelte';
 
   const LEGEND_MILESTONES = [
     ['pull-request-opened', 'PR opened'],

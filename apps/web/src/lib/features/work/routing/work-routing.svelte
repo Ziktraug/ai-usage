@@ -32,14 +32,6 @@
     startReviewLabel,
     stopOutcomeText,
   } from '../attempts/work-attempts-model';
-  import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
-  import { projectWorkEvidence } from './work-evidence';
-  import {
-    identityLine,
-    qualificationFreshnessText,
-    qualificationHeadline,
-    routingSummary,
-  } from './work-routing-model';
   import {
     workButton,
     workHeading,
@@ -51,6 +43,14 @@
     workStack,
   } from '../work-styles';
   import { WORK_DEMO_TIME } from '../work-synthetic';
+  import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
+  import { projectWorkEvidence } from './work-evidence';
+  import {
+    identityLine,
+    qualificationFreshnessText,
+    qualificationHeadline,
+    routingSummary,
+  } from './work-routing-model';
 
   let {
     attempts,

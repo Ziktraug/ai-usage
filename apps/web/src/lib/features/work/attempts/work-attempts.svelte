@@ -3,6 +3,17 @@
   import type { WorkAttemptsListOutput } from '@ai-usage/web-contract/work-attempts';
   import { displayTitle } from '../../../foundation/presentation/display-title';
   import { sessionRoutePathname } from '../../sessions/detail/session-route';
+  import { formatExactInstant, formatRelativeAge } from '../work-attention-model';
+  import {
+    workButton,
+    workExcerpt,
+    workFactList,
+    workHeading,
+    workLink,
+    workMuted,
+    workPanel,
+    workStack,
+  } from '../work-styles';
   import {
     attemptProgressLabel,
     canRequestStop,
@@ -15,17 +26,6 @@
     scopeSummary,
     shortAttemptId,
   } from './work-attempts-model';
-  import { formatExactInstant, formatRelativeAge } from '../work-attention-model';
-  import {
-    workButton,
-    workExcerpt,
-    workFactList,
-    workHeading,
-    workLink,
-    workMuted,
-    workPanel,
-    workStack,
-  } from '../work-styles';
 
   let {
     attempts,

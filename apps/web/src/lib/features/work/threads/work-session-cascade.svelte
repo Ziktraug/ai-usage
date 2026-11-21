@@ -4,8 +4,8 @@
   import type { WorkThreadLink } from '@ai-usage/report-core/work-thread';
   import type { Snippet } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import WorkMilestoneGlyph from '../work-milestone-glyph.svelte';
+  import WorkHarnessGlyph from './work-harness-glyph.svelte';
   import {
     type CascadeAxis,
     type CascadeBlock,
@@ -21,7 +21,6 @@
     readsNoParent,
   } from './work-session-cascade';
   import './work-session-cascade.css';
-  import WorkThreadEpisodeDetail from './work-thread-episode-detail.svelte';
   import {
     formatEpisodeDuration,
     harnessName,
@@ -32,6 +31,7 @@
     threadTime,
     threadTimeRange,
   } from '../work-thread-model';
+  import WorkThreadEpisodeDetail from './work-thread-episode-detail.svelte';
 
   /**
    * The sessions of a task as a trace: one row per session on an hour axis, child sessions under

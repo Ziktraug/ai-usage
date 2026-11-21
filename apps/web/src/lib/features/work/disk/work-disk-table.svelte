@@ -2,8 +2,8 @@
   import type { WorkThreadRow, WorkThreadSourceStatus } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
   import { formatExactInstant, formatRelativeAge } from '../work-attention-model';
-  import { type DiskCheckout, describeDiskPullRequest, describeDiskSource, diskLensOf } from './work-disk-model';
   import { observedWebUrl, threadDate } from '../work-thread-model';
+  import { type DiskCheckout, describeDiskPullRequest, describeDiskSource, diskLensOf } from './work-disk-model';
   import './work-disk.css';
 
   let {

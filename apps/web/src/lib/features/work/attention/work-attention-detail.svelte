@@ -21,6 +21,7 @@
   import { workRequest } from '../../../query/options/work';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { sessionRoutePathname } from '../../sessions/detail/session-route';
+  import WorkRouting from '../routing/work-routing.svelte';
   import {
     formatExactInstant,
     formatRelativeAge,
@@ -38,7 +39,6 @@
     workRootObservedActivity,
     workRootStanding,
   } from '../work-attention-model';
-  import WorkRouting from '../routing/work-routing.svelte';
   import {
     workButton,
     workCloseButton,
