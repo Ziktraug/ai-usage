@@ -3,13 +3,8 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { ghostButton, ghostButtonStyle } from '@ai-usage/design-system/report';
   import { page as pageClass, shell } from '@ai-usage/design-system/svelte';
-  import { buildCampaignMap, campaignMapTitle } from '@ai-usage/report-core/campaign-map';
-  import {
-    parseSessionLookupRequest,
-    type SessionPresentationRow,
-    SessionQueryValidationError,
-    sessionQueryFingerprint,
-  } from '@ai-usage/report-core/session-query';
+  import { campaignMapTitle } from '@ai-usage/report-core/campaign-map';
+  import { type SessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
   import {
     createInfiniteQuery,
     createQuery,
@@ -23,7 +18,7 @@
   import { page } from '$app/state';
   import { campaignDisplayLabelFor, indexCampaignLabelOverrides } from '../../foundation/campaign-label-overrides';
   import { campaignMapFixtureGeneratedAt } from '../../foundation/campaign-map-fixture';
-  import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../foundation/dashboard/dashboard-search';
+  import { dashboardSearchDefaultsFor } from '../../foundation/dashboard/dashboard-search';
   import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
   import { displayTitle } from '../../foundation/presentation/display-title';
   import { fmtCompact } from '../../foundation/presentation/format';
@@ -54,6 +49,22 @@
   import type { CampaignScrollState } from './campaign-virtual-window';
   import type { CampaignsPageData } from './campaigns-load';
   import {
+    bootstrapCampaignRevision,
+    campaignMapFor,
+    campaignTimelineContext,
+    detailNavigationRowsFor,
+    filteredSearchFrom,
+    inheritedFiltersFor,
+    MULTIPLE_HARNESSES,
+    matchingRestorationFor,
+    mergeRowsById,
+    optionalSessionLookupRequest,
+    recordedAt,
+    refreshAnchorsFor,
+    sessionCount,
+    syntheticCampaignRevision,
+  } from './campaigns-page-model';
+  import {
     type CampaignExplorationAnchors,
     type CampaignExplorationData,
     campaignMatchingMembersOptions,
@@ -63,8 +74,6 @@
   } from './campaigns-query';
   import { readCampaignSelection } from './campaigns-selection';
   import { createSyntheticCampaignClient } from './campaigns-synthetic';
-
-  const MULTIPLE_HARNESSES = 'inherited-harnesses';
 
   let { data }: { data: CampaignsPageData } = $props();
   const queryClient = useQueryClient();
@@ -141,14 +150,9 @@
     campaignLabelOverridesQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
   );
   const labels = $derived(indexCampaignLabelOverrides(data.mode === 'live' ? (labelsQuery.data ?? []) : []));
-  const latest = $derived.by(() => {
-    if (data.mode !== 'live') {
-      return { revision: 'synthetic-campaign-map-v1', generatedAt: campaignMapFixtureGeneratedAt };
-    }
-    return bootstrap
-      ? { revision: bootstrap.manifest.revision, generatedAt: bootstrap.bootstrap.support.generatedAt }
-      : null;
-  });
+  const latest = $derived.by(() =>
+    data.mode === 'live' ? bootstrapCampaignRevision(bootstrap) : syntheticCampaignRevision(),
+  );
   const revision = $derived(inspected?.revision ?? latest?.revision);
   // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
   const pageUrl = $derived(new URL(page.url.href));
@@ -156,12 +160,7 @@
   const scope = $derived(JSON.stringify(search));
   const harnessSelection = $derived(search.harness.length > 1 ? MULTIPLE_HARNESSES : (search.harness[0] ?? ''));
   const campaignView = $derived(page.url.searchParams.get('campaignView') === 'timeline' ? 'timeline' : 'list');
-  const inheritedFilters = $derived([
-    ...Object.entries(search.filters).map(([name, value]) => `${name}: ${value}`),
-    ...search.machine.map((value) => `machine: ${value}`),
-    ...search.origin.map((value) => `origin: ${value}`),
-    ...(search.timeCell ? [`local time: ${search.timeCell}`] : []),
-  ]);
+  const inheritedFilters = $derived(inheritedFiltersFor(search));
   const request = $derived(
     campaignsRequest(
       search,
@@ -225,9 +224,7 @@
   );
   // Placeholders and the retained Query value carry their own presentation context. Never fit
   // an old response to the newly requested period while its replacement is still being acquired.
-  const timelineContext = $derived(
-    visible ? JSON.stringify([sessionQueryFingerprint(visible.request), visible.timelineRange]) : '',
-  );
+  const timelineContext = $derived(campaignTimelineContext(visible));
   const timeline = $derived(
     buildCampaignTimeline(
       items,
@@ -238,16 +235,7 @@
   const memberPages = $derived(visible?.members.find((entry) => entry.campaignKey === selectedKey)?.data.pages ?? []);
   const root = $derived(memberPages[0]?.root);
   const mapRevision = $derived(memberPages[0]?.revision);
-  const map = $derived(
-    root
-      ? buildCampaignMap({
-          campaignKey: selectedKey,
-          children: memberPages.flatMap((entry) => entry.items),
-          root,
-          totalCount: (memberPages[0]?.itemCount ?? 0) + 1,
-        })
-      : null,
-  );
+  const map = $derived(root ? campaignMapFor(selectedKey, root, memberPages) : null);
   const rows = $derived(map?.nodes.map((node) => node.row) ?? []);
   const presentedMap = $derived(
     map ? { ...map, title: campaignDisplayLabelFor(labels, selectedKey, map.title) } : null,
@@ -271,13 +259,7 @@
       : [],
   );
   const matchRows = $derived(matchedRows.map((row) => ({ key: row.rowId, row })));
-  const detailRows = $derived.by(() => {
-    const known = new Map(rows.map((row) => [row.rowId, row]));
-    for (const row of matchedRows) {
-      known.set(row.rowId, row);
-    }
-    return [...known.values()];
-  });
+  const detailRows = $derived(mergeRowsById(rows, matchedRows));
   const rowRevisionFor = (rowId: string): string | undefined =>
     matchedRows.some((row) => row.rowId === rowId) ? matching.data?.pages[0]?.revision : mapRevision;
   const localDetailSelection = $derived(
@@ -294,14 +276,7 @@
     if (localDetailSelection.kind !== 'loading' || !visibleRevision) {
       return;
     }
-    try {
-      return parseSessionLookupRequest({ revision: visibleRevision, rowId: selectedSessionId });
-    } catch (cause) {
-      if (cause instanceof SessionQueryValidationError) {
-        return;
-      }
-      throw cause;
-    }
+    return optionalSessionLookupRequest(visibleRevision, selectedSessionId);
   });
   const selectedLookup = createQuery(() =>
     optionalSessionLookupQueryOptions(clients.session, selectedLookupRequest, { browser }),
@@ -322,21 +297,12 @@
     if (!selectionRevision) {
       return [];
     }
-    const compatible = new Map((mapRevision === selectionRevision ? rows : []).map((row) => [row.rowId, row]));
-    if (matching.data?.pages[0]?.revision === selectionRevision) {
-      for (const row of matchedRows) {
-        compatible.set(row.rowId, row);
-      }
-    }
-    return [...compatible.values()];
+    return mergeRowsById(
+      mapRevision === selectionRevision ? rows : [],
+      matching.data?.pages[0]?.revision === selectionRevision ? matchedRows : [],
+    );
   });
-  // A directly looked-up session has no acquired neighbors yet. Do not make
-  // j/k jump from an absent index to the first loaded campaign member.
-  const detailNavigationRows = $derived(
-    selection && !compatibleMemberRows.some((row) => row.rowId === selection.row.rowId)
-      ? [selection.row]
-      : compatibleMemberRows,
-  );
+  const detailNavigationRows = $derived(detailNavigationRowsFor(selection, compatibleMemberRows));
   const detailLookupFailed = $derived(
     detailSelection.kind === 'loading' && (selectedLookup.isError || selectedLookup.data?.ok === false),
   );
@@ -447,39 +413,21 @@
     }
     matchingRestoration =
       search.q && matching.data
-        ? {
-            campaignKey: selectedKey,
-            depth: matching.data.pages.length,
-            rowIds: [searchNavigation.anchor?.key, selectedSessionId].filter(
-              (key): key is string => Boolean(key) && matchedRows.some((row) => row.rowId === key),
-            ),
-          }
+        ? matchingRestorationFor(
+            selectedKey,
+            matching.data.pages.length,
+            [searchNavigation.anchor?.key, selectedSessionId],
+            matchedRows,
+          )
         : null;
-    const campaignAnchor = listNavigation.anchor?.key;
-    const timelineAnchor = timelineNavigation.anchor?.key;
-    let timelineCampaignAnchor: string | undefined;
-    if (timelineAnchor?.startsWith('campaign:')) {
-      timelineCampaignAnchor = timelineAnchor.slice('campaign:'.length);
-    } else if (timelineAnchor?.startsWith('project-continuation:')) {
-      timelineCampaignAnchor = timelineAnchor.slice('project-continuation:'.length);
-    } else if (timelineAnchor?.startsWith('project:')) {
-      timelineCampaignAnchor = items.find(
-        (item) => item.row.projectKey === timelineAnchor.slice('project:'.length),
-      )?.campaignKey;
-    } else if (timelineAnchor && rows.some((row) => row.rowId === timelineAnchor)) {
-      timelineCampaignAnchor = selectedKey;
-    }
-    const memberAnchor = campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key;
-    anchors = {
-      campaignKeys: [...new Set([campaignAnchor, timelineCampaignAnchor].filter((key): key is string => Boolean(key)))],
-      memberRowIds: selectedKey
-        ? {
-            [selectedKey]: [rows.some((row) => row.rowId === memberAnchor) ? memberAnchor : undefined].filter(
-              (key): key is string => Boolean(key),
-            ),
-          }
-        : {},
-    };
+    anchors = refreshAnchorsFor({
+      campaignAnchor: listNavigation.anchor?.key,
+      items,
+      memberAnchor: campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key,
+      rows,
+      selectedKey,
+      timelineAnchor: timelineNavigation.anchor?.key,
+    });
     topDepth = Math.max(topDepth, listPages.length);
     memberDepths = { ...memberDepths, [selectedKey]: Math.max(memberDepths[selectedKey] ?? 1, memberPages.length) };
     inspected = latest;
@@ -549,22 +497,7 @@
     if (!(event.currentTarget instanceof HTMLFormElement)) {
       return;
     }
-    const form = new FormData(event.currentTarget);
-    const range = form.get('range');
-    const harness = String(form.get('harness') ?? '');
-    let nextHarness = harness ? [harness] : [];
-    if (harness === MULTIPLE_HARNESSES) {
-      nextHarness = search.harness;
-    }
-    const next: DashboardSearch = {
-      ...search,
-      q: String(form.get('q') ?? ''),
-      harness: nextHarness,
-      range:
-        range === 'custom'
-          ? search.range
-          : { mode: range === '7d' || range === '90d' || range === 'all' || range === 'today' ? range : '30d' },
-    };
+    const next = filteredSearchFrom(search, new FormData(event.currentTarget));
     const url = dashboardUrlFor(pageUrl, next, dashboardSearchCodec);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
@@ -714,27 +647,6 @@
     detailOpenerId = saved.detailOpenerId;
   };
   snapshot({ capture, id: 'campaigns-page', restore });
-
-  const recordedAt = (row: SessionPresentationRow): string => {
-    const value = row.activeDate ?? row.endDate ?? row.date;
-    const date = new Date(value ?? '');
-    if (!Number.isFinite(date.getTime())) {
-      return 'Time not recorded';
-    }
-    const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][
-      date.getUTCMonth()
-    ];
-    const clock = date.toISOString().slice(11, 16);
-    return `${date.getUTCDate()} ${month} ${date.getUTCFullYear()}, ${clock} UTC`;
-  };
-  const sessionCount = (row: SessionPresentationRow): string => {
-    const total = row.campaignTotalCount ?? 1;
-    const visibleCount = row.campaignVisibleCount ?? total;
-    if (visibleCount !== total) {
-      return `${visibleCount} of ${total} sessions`;
-    }
-    return `${total} ${total === 1 ? 'session' : 'sessions'}`;
-  };
 
   const toolbar = css({ display: 'flex', alignItems: 'end', flexWrap: 'wrap', gap: '12px', mb: '24px' });
   const viewControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', mt: '2px', mb: '20px' });
