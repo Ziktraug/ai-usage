@@ -251,11 +251,11 @@ export type {
   AttachDeclaredWorkThreadSessionsInput,
   AttachDeclaredWorkThreadSessionsResult,
   DeclaredWorkThreadSession,
-  ReconcileWorkBranchesInput,
-  ReconcileWorkBranchesResult,
   WorkThreadSeed,
-} from './work-thread-store';
-export { attachDeclaredWorkThreadSessions, reconcileWorkBranches, seedWorkThreads } from './work-thread-store';
+} from './work-thread-seeding';
+export { attachDeclaredWorkThreadSessions, seedWorkThreads } from './work-thread-seeding';
+export type { ReconcileWorkBranchesInput, ReconcileWorkBranchesResult } from './work-thread-store';
+export { reconcileWorkBranches } from './work-thread-store';
 export type {
   ApplyWorkThreadWaitObservationsInput,
   ApplyWorkThreadWaitObservationsResult,

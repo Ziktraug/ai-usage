@@ -3,4 +3,4 @@
 // functions by relative path (`../../usage-store/src/index`); once they import
 // `@ai-usage/usage-store/writer`, this file can go.
 export { applyWorkThreadCommand } from './work-thread-commands';
-export { seedWorkThreads } from './work-thread-store';
+export { seedWorkThreads } from './work-thread-seeding';

@@ -41,7 +41,7 @@ import {
   type ServedRevisionQueryTrace,
   type ServedRevisionReadDatabase,
 } from './served-revision';
-import type { DeclaredWorkThreadSession } from './work-thread-store';
+import type { DeclaredWorkThreadSession } from './work-thread-seeding';
 
 export interface ServedReportRevisionManifest {
   readonly captureFingerprint: string;
@@ -191,7 +191,7 @@ export interface QueryServedSessionPullRequestLinksInput extends Omit<QueryServe
 
 export interface ServedSessionPullRequestLinks {
   /** Exact declaring session/PR pairs, independently bounded to 500 per read. */
-  readonly declarations: readonly import('./work-thread-store').DeclaredWorkThreadSession[];
+  readonly declarations: readonly import('./work-thread-seeding').DeclaredWorkThreadSession[];
   readonly links: readonly ServedSessionPullRequestLink[];
   readonly revision: string;
   readonly scannedRows: number;
