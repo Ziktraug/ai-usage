@@ -205,6 +205,7 @@ export {
   querySessionRowsBySourceSessionIds,
 } from './work-session-join';
 export { MAX_WORK_SCOPE_CHECKOUTS, type WorkSessionReadScope } from './work-session-scope';
+export { queryJiraIntake } from './work-thread-jira-intake';
 export type {
   QueryWorkThreadByIdInput,
   QueryWorkThreadLinksInput,
@@ -228,4 +229,4 @@ export type {
   WorkThreadSessionEvidence,
   WorkThreadSessionEvidenceBatchEntry,
 } from './work-thread-store';
-export { queryJiraIntake, queryWorkThreadSessionEvidence } from './work-thread-store';
+export { queryWorkThreadSessionEvidence } from './work-thread-store';

@@ -244,6 +244,7 @@ export {
   recordWorkFactRun,
 } from './work-fact-store';
 export { applyWorkThreadCommand } from './work-thread-commands';
+export { queryJiraIntake, recordJiraIntake } from './work-thread-jira-intake';
 export type { QueryActiveWorkThreadLinksInput, QueryActiveWorkThreadLinksResult } from './work-thread-reads';
 export { queryActiveWorkThreadLinks, queryWorkThreadsPage } from './work-thread-reads';
 export type {
@@ -262,9 +263,7 @@ export type {
 export {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
-  queryJiraIntake,
   queryWorkThreadWaitCandidates,
   reconcileWorkBranches,
-  recordJiraIntake,
   seedWorkThreads,
 } from './work-thread-store';
