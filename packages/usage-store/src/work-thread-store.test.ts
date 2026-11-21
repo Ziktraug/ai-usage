@@ -16,8 +16,8 @@ import {
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import { UsageStoreError } from './errors';
-import { applyWorkThreadCommand, seedWorkThreads } from './index';
+import { resetUsageStoreConnectionsForTesting, setUsageStoreConnectionsForTesting } from './connections';
+import type { UsageStoreError } from './errors';
 import {
   countWorkThreads,
   queryJiraIntake,
@@ -32,7 +32,13 @@ import {
 } from './reader';
 import { workFactSchemaSql } from './work-fact-schema';
 import { workThreadSchemaSql } from './work-thread-schema';
-import { createWorkThreadStore, type WorkThreadCombineSuggestionEntry, type WorkThreadSeed } from './work-thread-store';
+import {
+  applyWorkThreadCommand,
+  queryWorkThreadSessionEvidence,
+  seedWorkThreads,
+  type WorkThreadCombineSuggestionEntry,
+  type WorkThreadSeed,
+} from './work-thread-store';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
@@ -306,6 +312,7 @@ describe('declared sessions join existing Work threads', () => {
 });
 
 afterEach(async () => {
+  resetUsageStoreConnectionsForTesting();
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
 
@@ -416,28 +423,30 @@ const evidenceFixture = async () => {
   db.query('INSERT INTO served_report_revisions VALUES (?, ?, 1)').run('fixture', NOW);
   let connections = 0;
   let queries = 0;
-  const store = createWorkThreadStore({
-    usageStoreError: (operation, _path, cause, reason) =>
-      new UsageStoreError({ operation, message: String(cause), reason }),
-    usageStoreReadError: (operation, _path, cause) =>
-      cause instanceof UsageStoreError
-        ? cause
-        : new UsageStoreError({ operation, message: String(cause), reason: 'storage-failure' }),
+  setUsageStoreConnectionsForTesting(dbPath, {
     withUsageStoreReader: (_path, use) =>
       Effect.suspend(() => {
         connections++;
         const reader = new Database(dbPath, { readonly: true });
         reader.exec('PRAGMA query_only = ON');
         return use({
-          exec: (sql) => reader.exec(sql),
-          query: (sql) => {
+          exec: (sql: string) => reader.exec(sql),
+          query: (sql: string) => {
             queries++;
             return reader.query(sql) as unknown as ReturnType<Parameters<typeof use>[0]['query']>;
           },
-        }).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
+        } as unknown as Parameters<typeof use>[0]).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
       }),
     withUsageStoreWriter: (_path, use) => use(db as unknown as Parameters<typeof use>[0]),
   });
+  const store = {
+    applyWorkThreadCommand,
+    queryActiveWorkThreadLinks,
+    queryWorkThreadEvents,
+    queryWorkThreadLinks,
+    queryWorkThreadSessionEvidence,
+    queryWorkThreadsPage,
+  };
   let ordinal = 0;
   const addSession = (
     id: string,

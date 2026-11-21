@@ -35,7 +35,8 @@ import {
 } from '@ai-usage/report-core/work-thread';
 import { WORK_THREAD_VIEW_BOUNDS, type WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import { UsageStoreError, type UsageStoreErrorReason } from './errors';
+import { withUsageStoreReader, withUsageStoreWriter } from './connections';
+import { UsageStoreError, usageStoreError, usageStoreReadError } from './errors';
 import { MAX_WORK_DELEGATIONS_JSON, readWorkSessionDelegations } from './work-session-join';
 import { WORK_THREAD_TABLES } from './work-thread-schema';
 
@@ -46,24 +47,6 @@ interface SqliteDatabase {
     get: (...params: unknown[]) => unknown;
     run: (...params: unknown[]) => unknown;
   };
-}
-
-interface WorkThreadStoreDependencies {
-  readonly usageStoreError: (
-    operation: string,
-    dbPath: string,
-    cause: unknown,
-    reason: UsageStoreErrorReason,
-  ) => UsageStoreError;
-  readonly usageStoreReadError: (operation: string, dbPath: string, cause: unknown) => UsageStoreError;
-  readonly withUsageStoreReader: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
-  readonly withUsageStoreWriter: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
 }
 
 export interface ApplyWorkThreadCommandInput {
@@ -1815,239 +1798,234 @@ interface BranchCandidate {
   readonly title: string | null;
 }
 
-export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies) => {
-  const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
-  const write = <Value>(
-    dbPath: string,
-    operation: string,
-    use: (db: SqliteDatabase) => Value,
-  ): Effect.Effect<Value, UsageStoreError> =>
-    withUsageStoreWriter(dbPath, (db) =>
-      Effect.try({
-        try: () => immediate(db, () => use(db)),
-        catch: (cause) =>
-          cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, 'storage-failure'),
-      }),
-    );
-  const read = <Value>(
-    dbPath: string,
-    operation: string,
-    use: (db: SqliteDatabase) => Value,
-  ): Effect.Effect<Value, UsageStoreError> =>
-    withUsageStoreReader(dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          if (
-            WORK_THREAD_TABLES.some(
-              (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-            )
-          ) {
-            throw usageStoreError(
-              operation,
-              dbPath,
-              new Error('The engine must migrate the work thread tables before they can be read'),
-              'schema-too-old',
-            );
-          }
-          return use(db);
-        },
-        catch: (cause) => (cause instanceof UsageStoreError ? cause : usageStoreReadError(operation, dbPath, cause)),
-      }),
-    );
-
-  // A task command's result names its task; only an intake decision answers without one.
-  function applyWorkThreadCommand(
-    input: ApplyWorkThreadCommandInput & { readonly command: WorkThreadTaskCommand },
-  ): Effect.Effect<WorkThreadCommandResult, UsageStoreError>;
-  function applyWorkThreadCommand(
-    input: ApplyWorkThreadCommandInput,
-  ): Effect.Effect<WorkThreadCommandResult | WorkIntakeCommandResult, UsageStoreError>;
-  function applyWorkThreadCommand(
-    input: ApplyWorkThreadCommandInput,
-  ): Effect.Effect<WorkThreadCommandResult | WorkIntakeCommandResult, UsageStoreError> {
-    return write(input.dbPath, 'applyWorkThreadCommand', (db) => {
-      if (!isWorkThreadId(input.command.commandId)) {
-        return invalidInput('Invalid work thread command id');
-      }
-      const existing = db
-        .query('SELECT result_json FROM work_thread_commands WHERE command_id = ?')
-        .get(input.command.commandId);
-      if (existing !== null) {
-        return replayResult(existing);
-      }
-      const now = instant(input.now);
-      const result = executeCommand(db, input, now);
-      db.query('INSERT INTO work_thread_commands(command_id, result_json, recorded_at) VALUES (?, ?, ?)').run(
-        input.command.commandId,
-        JSON.stringify(result),
-        now,
-      );
-      return result;
-    });
-  }
-
-  const seedWorkThreads = (input: SeedWorkThreadsInput): Effect.Effect<SeedWorkThreadsResult, UsageStoreError> =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    write(input.dbPath, 'seedWorkThreads', (db) => {
-      const now = instant(input.now);
-      let created = 0;
-      let existing = 0;
-      let uncertain = 0;
-      // Compute every candidate before adding any PR: batch order cannot change identity.
-      const candidates = reconciliationCandidates(db, input);
-      for (const seed of input.seeds) {
-        const originKey = canonicalLinkKey(seed.linkKind, seed.originKey);
-        if (seed.origin !== seed.linkKind || !parseWorkThreadLinkKey(seed.linkKind, originKey)) {
-          return invalidInput('Seed origin and qualified link key must match');
-        }
-        if (hasKnownWorkThreadLink(db, seed.linkKind, originKey)) {
-          existing++;
-          continue;
-        }
-        const candidate = candidates.get(originKey);
-        if (candidate === null) {
-          uncertain++;
-        }
-        if (candidate) {
-          attachReconciledPullRequest(db, candidate, originKey, now);
-          existing++;
-          continue;
-        }
-        const branchKey = seed.branchKey ? canonicalLinkKey('branch', seed.branchKey) : null;
-        if (branchKey !== null && !parseWorkThreadLinkKey('branch', branchKey)) {
-          return invalidInput('A PR head branch key must be qualified');
-        }
-        // Branch equality is stronger evidence than a ticket key: the PR is that branch's work.
-        const branchHolder = branchKey === null || seed.intent === 'review' ? null : openBranchHolder(db, branchKey);
+const write = <Value>(
+  dbPath: string,
+  operation: string,
+  use: (db: SqliteDatabase) => Value,
+): Effect.Effect<Value, UsageStoreError> =>
+  withUsageStoreWriter(dbPath, (db) =>
+    Effect.try({
+      try: () => immediate(db, () => use(db)),
+      catch: (cause) =>
+        cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, 'storage-failure'),
+    }),
+  );
+const read = <Value>(
+  dbPath: string,
+  operation: string,
+  use: (db: SqliteDatabase) => Value,
+): Effect.Effect<Value, UsageStoreError> =>
+  withUsageStoreReader(dbPath, (db) =>
+    Effect.try({
+      try: () => {
         if (
-          branchHolder !== null &&
-          activeLinkCount(db, branchHolder.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
+          WORK_THREAD_TABLES.some(
+            (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
+          )
         ) {
-          addLink(db, {
-            createdAt: now,
-            key: originKey,
-            kind: 'pull-request',
-            provenance: 'declared',
-            threadId: branchHolder.threadId,
-          });
-          saveThread(db, { ...branchHolder, updatedAt: now });
-          addEvent(db, branchHolder, now, 'link-added', {
-            linkKey: originKey,
-            reason: `Head branch ${branchKey?.slice(branchKey.indexOf('@') + 1)}`,
-          });
-          existing++;
-          continue;
+          throw usageStoreError(
+            operation,
+            dbPath,
+            new Error('The engine must migrate the work thread tables before they can be read'),
+            'schema-too-old',
+          );
         }
-        const routingKey =
-          seed.origin === 'pull-request' && seed.routingJiraKey
-            ? canonicalLinkKey('jira-issue', seed.routingJiraKey)
-            : null;
-        if (routingKey !== null && !parseWorkThreadLinkKey('jira-issue', routingKey)) {
-          return invalidInput('A routing Jira key must be qualified');
-        }
-        // One ticket, one delivery task: an authored PR joins the single open task that follows
-        // its branch's ticket. Several followers, or a Done one, stay visible as separate tasks.
-        const followers = routingKey === null ? null : jiraKeyFollowers(db, input.machineId, routingKey);
-        const [joined] = followers?.open ?? [];
-        if (
-          routingKey !== null &&
-          followers?.open.length === 1 &&
-          joined &&
-          activeLinkCount(db, joined.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
-        ) {
-          addLink(db, {
-            createdAt: now,
-            key: originKey,
-            kind: 'pull-request',
-            provenance: 'declared',
-            threadId: joined.threadId,
-          });
-          saveThread(db, { ...joined, updatedAt: now });
-          addEvent(db, joined, now, 'link-added', { linkKey: originKey, reason: branchEvidence(routingKey) });
-          existing++;
-          continue;
-        }
-        const discoveredAt = instant(seed.discoveredAt);
-        const thread = newThread({
-          ...seed,
-          originKey,
-          machineId: input.machineId,
-          now: discoveredAt,
-          objective: null,
+        return use(db);
+      },
+      catch: (cause) => (cause instanceof UsageStoreError ? cause : usageStoreReadError(operation, dbPath, cause)),
+    }),
+  );
+
+// A task command's result names its task; only an intake decision answers without one.
+export function applyWorkThreadCommand(
+  input: ApplyWorkThreadCommandInput & { readonly command: WorkThreadTaskCommand },
+): Effect.Effect<WorkThreadCommandResult, UsageStoreError>;
+export function applyWorkThreadCommand(
+  input: ApplyWorkThreadCommandInput,
+): Effect.Effect<WorkThreadCommandResult | WorkIntakeCommandResult, UsageStoreError>;
+export function applyWorkThreadCommand(
+  input: ApplyWorkThreadCommandInput,
+): Effect.Effect<WorkThreadCommandResult | WorkIntakeCommandResult, UsageStoreError> {
+  return write(input.dbPath, 'applyWorkThreadCommand', (db) => {
+    if (!isWorkThreadId(input.command.commandId)) {
+      return invalidInput('Invalid work thread command id');
+    }
+    const existing = db
+      .query('SELECT result_json FROM work_thread_commands WHERE command_id = ?')
+      .get(input.command.commandId);
+    if (existing !== null) {
+      return replayResult(existing);
+    }
+    const now = instant(input.now);
+    const result = executeCommand(db, input, now);
+    db.query('INSERT INTO work_thread_commands(command_id, result_json, recorded_at) VALUES (?, ?, ?)').run(
+      input.command.commandId,
+      JSON.stringify(result),
+      now,
+    );
+    return result;
+  });
+}
+
+export const seedWorkThreads = (input: SeedWorkThreadsInput): Effect.Effect<SeedWorkThreadsResult, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+  write(input.dbPath, 'seedWorkThreads', (db) => {
+    const now = instant(input.now);
+    let created = 0;
+    let existing = 0;
+    let uncertain = 0;
+    // Compute every candidate before adding any PR: batch order cannot change identity.
+    const candidates = reconciliationCandidates(db, input);
+    for (const seed of input.seeds) {
+      const originKey = canonicalLinkKey(seed.linkKind, seed.originKey);
+      if (seed.origin !== seed.linkKind || !parseWorkThreadLinkKey(seed.linkKind, originKey)) {
+        return invalidInput('Seed origin and qualified link key must match');
+      }
+      if (hasKnownWorkThreadLink(db, seed.linkKind, originKey)) {
+        existing++;
+        continue;
+      }
+      const candidate = candidates.get(originKey);
+      if (candidate === null) {
+        uncertain++;
+      }
+      if (candidate) {
+        attachReconciledPullRequest(db, candidate, originKey, now);
+        existing++;
+        continue;
+      }
+      const branchKey = seed.branchKey ? canonicalLinkKey('branch', seed.branchKey) : null;
+      if (branchKey !== null && !parseWorkThreadLinkKey('branch', branchKey)) {
+        return invalidInput('A PR head branch key must be qualified');
+      }
+      // Branch equality is stronger evidence than a ticket key: the PR is that branch's work.
+      const branchHolder = branchKey === null || seed.intent === 'review' ? null : openBranchHolder(db, branchKey);
+      if (branchHolder !== null && activeLinkCount(db, branchHolder.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread) {
+        addLink(db, {
+          createdAt: now,
+          key: originKey,
+          kind: 'pull-request',
+          provenance: 'declared',
+          threadId: branchHolder.threadId,
         });
-        saveThread(db, { ...thread, updatedAt: now });
+        saveThread(db, { ...branchHolder, updatedAt: now });
+        addEvent(db, branchHolder, now, 'link-added', {
+          linkKey: originKey,
+          reason: `Head branch ${branchKey?.slice(branchKey.indexOf('@') + 1)}`,
+        });
+        existing++;
+        continue;
+      }
+      const routingKey =
+        seed.origin === 'pull-request' && seed.routingJiraKey
+          ? canonicalLinkKey('jira-issue', seed.routingJiraKey)
+          : null;
+      if (routingKey !== null && !parseWorkThreadLinkKey('jira-issue', routingKey)) {
+        return invalidInput('A routing Jira key must be qualified');
+      }
+      // One ticket, one delivery task: an authored PR joins the single open task that follows
+      // its branch's ticket. Several followers, or a Done one, stay visible as separate tasks.
+      const followers = routingKey === null ? null : jiraKeyFollowers(db, input.machineId, routingKey);
+      const [joined] = followers?.open ?? [];
+      if (
+        routingKey !== null &&
+        followers?.open.length === 1 &&
+        joined &&
+        activeLinkCount(db, joined.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
+      ) {
+        addLink(db, {
+          createdAt: now,
+          key: originKey,
+          kind: 'pull-request',
+          provenance: 'declared',
+          threadId: joined.threadId,
+        });
+        saveThread(db, { ...joined, updatedAt: now });
+        addEvent(db, joined, now, 'link-added', { linkKey: originKey, reason: branchEvidence(routingKey) });
+        existing++;
+        continue;
+      }
+      const discoveredAt = instant(seed.discoveredAt);
+      const thread = newThread({
+        ...seed,
+        originKey,
+        machineId: input.machineId,
+        now: discoveredAt,
+        objective: null,
+      });
+      saveThread(db, { ...thread, updatedAt: now });
+      addLink(db, {
+        createdAt: discoveredAt,
+        key: originKey,
+        kind: seed.linkKind,
+        provenance: 'origin',
+        threadId: thread.threadId,
+      });
+      addEvent(db, thread, discoveredAt, 'created', { toState: 'following' });
+      if (branchKey !== null && !hasKnownWorkThreadLink(db, 'branch', branchKey)) {
         addLink(db, {
           createdAt: discoveredAt,
-          key: originKey,
-          kind: seed.linkKind,
-          provenance: 'origin',
+          key: branchKey,
+          kind: 'branch',
+          provenance: 'declared',
           threadId: thread.threadId,
         });
-        addEvent(db, thread, discoveredAt, 'created', { toState: 'following' });
-        if (branchKey !== null && !hasKnownWorkThreadLink(db, 'branch', branchKey)) {
-          addLink(db, {
-            createdAt: discoveredAt,
-            key: branchKey,
-            kind: 'branch',
-            provenance: 'declared',
-            threadId: thread.threadId,
-          });
-        }
-        if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
-          // The new task now follows the ticket, so later PRs and the Jira intake find it.
-          addLink(db, {
-            createdAt: discoveredAt,
-            key: routingKey,
-            kind: 'jira-issue',
-            provenance: 'declared',
-            threadId: thread.threadId,
-          });
-          addEvent(db, thread, discoveredAt, 'link-added', { linkKey: routingKey, reason: branchEvidence(routingKey) });
-        }
-        created++;
       }
-      // Observation-only PRs never create a task. They may still enrich a proven followed session.
-      const seededKeys = new Set(input.seeds.map((seed) => canonicalLinkKey(seed.linkKind, seed.originKey)));
-      for (const [key, candidate] of candidates) {
-        if (seededKeys.has(key) || hasKnownWorkThreadLink(db, 'pull-request', key)) {
-          continue;
-        }
-        if (candidate === null) {
-          uncertain++;
-        } else {
-          attachReconciledPullRequest(db, candidate, key, now);
-          existing++;
-        }
+      if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
+        // The new task now follows the ticket, so later PRs and the Jira intake find it.
+        addLink(db, {
+          createdAt: discoveredAt,
+          key: routingKey,
+          kind: 'jira-issue',
+          provenance: 'declared',
+          threadId: thread.threadId,
+        });
+        addEvent(db, thread, discoveredAt, 'link-added', { linkKey: routingKey, reason: branchEvidence(routingKey) });
       }
-      return { created, existing, uncertain };
-    });
+      created++;
+    }
+    // Observation-only PRs never create a task. They may still enrich a proven followed session.
+    const seededKeys = new Set(input.seeds.map((seed) => canonicalLinkKey(seed.linkKind, seed.originKey)));
+    for (const [key, candidate] of candidates) {
+      if (seededKeys.has(key) || hasKnownWorkThreadLink(db, 'pull-request', key)) {
+        continue;
+      }
+      if (candidate === null) {
+        uncertain++;
+      } else {
+        attachReconciledPullRequest(db, candidate, key, now);
+        existing++;
+      }
+    }
+    return { created, existing, uncertain };
+  });
 
-  /**
-   * Branch evidence (ADR 0081), in one writer transaction: index the served revision's recorded
-   * branches, give PR tasks their head branch, then route or create a task for each branch with
-   * recent interactive work. Bounded; whatever is left over is reported truncated, never dropped.
-   */
-  const reconcileWorkBranches = (
-    input: ReconcileWorkBranchesInput,
-  ): Effect.Effect<ReconcileWorkBranchesResult, UsageStoreError> =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    write(input.dbPath, 'reconcileWorkBranches', (db) => {
-      const now = instant(input.now);
-      const aliases: Record<string, string> = {};
-      for (const [alias, host] of Object.entries(input.hostAliases ?? {})) {
-        aliases[alias.toLowerCase()] = host.toLowerCase();
-      }
-      const shared = new Set([...SHARED_BRANCH_NAMES, ...(input.sharedBranches ?? [])]);
-      const result = { branchLinks: 0, created: 0, indexed: false, suppressed: 0, truncated: false };
-      const revision = currentServedRevision(db);
-      if (revision === null) {
-        return result;
-      }
-      result.indexed = rebuildSessionBranches(db, revision, aliases, now);
+/**
+ * Branch evidence (ADR 0081), in one writer transaction: index the served revision's recorded
+ * branches, give PR tasks their head branch, then route or create a task for each branch with
+ * recent interactive work. Bounded; whatever is left over is reported truncated, never dropped.
+ */
+export const reconcileWorkBranches = (
+  input: ReconcileWorkBranchesInput,
+): Effect.Effect<ReconcileWorkBranchesResult, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+  write(input.dbPath, 'reconcileWorkBranches', (db) => {
+    const now = instant(input.now);
+    const aliases: Record<string, string> = {};
+    for (const [alias, host] of Object.entries(input.hostAliases ?? {})) {
+      aliases[alias.toLowerCase()] = host.toLowerCase();
+    }
+    const shared = new Set([...SHARED_BRANCH_NAMES, ...(input.sharedBranches ?? [])]);
+    const result = { branchLinks: 0, created: 0, indexed: false, suppressed: 0, truncated: false };
+    const revision = currentServedRevision(db);
+    if (revision === null) {
+      return result;
+    }
+    result.indexed = rebuildSessionBranches(db, revision, aliases, now);
 
-      // 1. A followed PR names its head branch: the task holds it, unless a fork's or vetoed.
-      const heads = db
-        .query(`WITH latest AS (
+    // 1. A followed PR names its head branch: the task holds it, unless a fork's or vetoed.
+    const heads = db
+      .query(`WITH latest AS (
           SELECT lower(host) AS host, lower(repository) AS repository, number, head_ref, cross_repository,
             ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
           FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed'
@@ -2058,298 +2036,296 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
         WHERE l.kind = 'pull-request' AND l.detached_at IS NULL AND latest.cross_repository = 0
           AND latest.head_ref IS NOT NULL
         ORDER BY l.created_at, l.link_id LIMIT ?`)
-        .all(input.machineId, input.machineId, MAX_HEAD_BRANCH_LINKS + 1)
-        .map(record);
-      result.truncated ||= heads.length > MAX_HEAD_BRANCH_LINKS;
-      for (const head of heads.slice(0, MAX_HEAD_BRANCH_LINKS)) {
-        const ref = String(head.head_ref);
-        const key = `branch:${String(head.host)}/${String(head.repository)}@${ref}`;
-        if (
-          !isBranchRefName(ref) ||
-          shared.has(ref) ||
-          parseWorkThreadLinkKey('branch', key) === null ||
-          hasKnownWorkThreadLink(db, 'branch', key)
-        ) {
-          continue;
-        }
-        const task = effectiveThread(db, validated(readThread(db, String(head.thread_id)), 'PR task'));
-        if (activeLinkCount(db, task.threadId) >= WORK_THREAD_BOUNDS.maxLinksPerThread) {
-          result.truncated = true;
-          continue;
-        }
-        addLink(db, { createdAt: now, key, kind: 'branch', provenance: 'declared', threadId: task.threadId });
-        addEvent(db, task, now, 'link-added', {
-          linkKey: key,
-          reason: `Head branch of ${String(head.pull_request_key)}`,
-        });
-        result.branchLinks++;
+      .all(input.machineId, input.machineId, MAX_HEAD_BRANCH_LINKS + 1)
+      .map(record);
+    result.truncated ||= heads.length > MAX_HEAD_BRANCH_LINKS;
+    for (const head of heads.slice(0, MAX_HEAD_BRANCH_LINKS)) {
+      const ref = String(head.head_ref);
+      const key = `branch:${String(head.host)}/${String(head.repository)}@${ref}`;
+      if (
+        !isBranchRefName(ref) ||
+        shared.has(ref) ||
+        parseWorkThreadLinkKey('branch', key) === null ||
+        hasKnownWorkThreadLink(db, 'branch', key)
+      ) {
+        continue;
       }
+      const task = effectiveThread(db, validated(readThread(db, String(head.thread_id)), 'PR task'));
+      if (activeLinkCount(db, task.threadId) >= WORK_THREAD_BOUNDS.maxLinksPerThread) {
+        result.truncated = true;
+        continue;
+      }
+      addLink(db, { createdAt: now, key, kind: 'branch', provenance: 'declared', threadId: task.threadId });
+      addEvent(db, task, now, 'link-added', {
+        linkKey: key,
+        reason: `Head branch of ${String(head.pull_request_key)}`,
+      });
+      result.branchLinks++;
+    }
 
-      // 2. A branch with recent interactive work and no task: route it to its ticket, or create one.
-      if (db.query('SELECT 1 FROM work_branch_reconciliation WHERE machine_id = ?').get(input.machineId) === null) {
-        // The window is fixed when the feature first runs: older history never creates a task later.
-        const cutoff = new Date(Date.parse(now) - BRANCH_TASK_CREATION_WINDOW_DAYS * 86_400_000).toISOString();
-        db.query('INSERT INTO work_branch_reconciliation(machine_id, creation_cutoff_at) VALUES (?, ?)').run(
-          input.machineId,
-          cutoff,
-        );
-      }
-      const cutoff = String(
-        record(
-          db
-            .query('SELECT creation_cutoff_at FROM work_branch_reconciliation WHERE machine_id = ?')
-            .get(input.machineId),
-        ).creation_cutoff_at,
+    // 2. A branch with recent interactive work and no task: route it to its ticket, or create one.
+    if (db.query('SELECT 1 FROM work_branch_reconciliation WHERE machine_id = ?').get(input.machineId) === null) {
+      // The window is fixed when the feature first runs: older history never creates a task later.
+      const cutoff = new Date(Date.parse(now) - BRANCH_TASK_CREATION_WINDOW_DAYS * 86_400_000).toISOString();
+      db.query('INSERT INTO work_branch_reconciliation(machine_id, creation_cutoff_at) VALUES (?, ?)').run(
+        input.machineId,
+        cutoff,
       );
-      // A branch some observed PR has as its head is that PR's work: it waits for the PR's task to
-      // hold it (once GitHub says the head is not a fork) rather than becoming a second task.
-      const pullRequestHeads = new Set(
-        db
-          .query(`SELECT DISTINCT lower(host) || '/' || lower(repository) || '@' || head_ref AS head
+    }
+    const cutoff = String(
+      record(
+        db.query('SELECT creation_cutoff_at FROM work_branch_reconciliation WHERE machine_id = ?').get(input.machineId),
+      ).creation_cutoff_at,
+    );
+    // A branch some observed PR has as its head is that PR's work: it waits for the PR's task to
+    // hold it (once GitHub says the head is not a fork) rather than becoming a second task.
+    const pullRequestHeads = new Set(
+      db
+        .query(`SELECT DISTINCT lower(host) || '/' || lower(repository) || '@' || head_ref AS head
             FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed' AND head_ref IS NOT NULL
               AND (cross_repository IS NULL OR cross_repository = 0)`)
-          .all(input.machineId)
-          .map((row) => String(record(row).head)),
-      );
-      const openBases = new Set(
-        db
-          .query(`WITH latest AS (
+        .all(input.machineId)
+        .map((row) => String(record(row).head)),
+    );
+    const openBases = new Set(
+      db
+        .query(`WITH latest AS (
             SELECT lower(host) AS host, lower(repository) AS repository, base_ref, state,
               ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
             FROM pull_request_observations WHERE machine_id = ? AND outcome = 'observed'
           ) SELECT host || '/' || repository || '@' || base_ref AS base FROM latest
             WHERE rank = 1 AND state = 'OPEN' AND base_ref IS NOT NULL`)
-          .all(input.machineId)
-          .map((row) => String(record(row).base)),
-      );
-      const candidates = db
-        .query(`WITH ranked AS (
+        .all(input.machineId)
+        .map((row) => String(record(row).base)),
+    );
+    const candidates = db
+      .query(`WITH ranked AS (
           SELECT link_key, started_at, repository_label, title, source_path,
             ROW_NUMBER() OVER (PARTITION BY link_key ORDER BY started_at, session_id) AS rank
           FROM work_session_branches
           WHERE revision = ? AND machine_id = ? AND role = 'interactive' AND started_at >= ?
         ) SELECT * FROM ranked WHERE rank = 1 ORDER BY started_at, link_key LIMIT ?`)
-        .all(revision, input.machineId, cutoff, MAX_BRANCH_CANDIDATES + 1)
-        .map((value): BranchCandidate => {
-          const row = record(value);
-          return {
-            firstAt: validated(normalizeIsoTimestamp(row.started_at), 'branch session start'),
-            key: String(row.link_key),
-            repositoryLabel: String(row.repository_label),
-            sourcePath: typeof row.source_path === 'string' ? row.source_path : null,
-            title: typeof row.title === 'string' && row.title.trim() ? row.title.trim() : null,
-          };
-        });
-      result.truncated ||= candidates.length > MAX_BRANCH_CANDIDATES;
-      const defaults = new Map<string, string | null>();
-      const defaultBranchOf = (sourcePath: string | null): string | null => {
-        if (sourcePath === null || input.defaultBranchOf === undefined) {
-          return null;
-        }
-        if (!defaults.has(sourcePath)) {
-          defaults.set(sourcePath, input.defaultBranchOf(sourcePath));
-        }
-        return defaults.get(sourcePath) ?? null;
-      };
-      let created = 0;
-      for (const candidate of candidates.slice(0, MAX_BRANCH_CANDIDATES)) {
-        const parsed = parseWorkThreadLinkKey('branch', candidate.key);
-        if (parsed?.kind !== 'branch' || hasKnownWorkThreadLink(db, 'branch', candidate.key)) {
-          continue;
-        }
-        // Exclusions only stop creation; a session on such a branch still joins a task holding it.
-        const branchOfRepository = `${parsed.host}/${parsed.repository}@${parsed.ref}`;
-        if (
-          shared.has(parsed.ref) ||
-          defaultBranchOf(candidate.sourcePath) === parsed.ref ||
-          openBases.has(branchOfRepository) ||
-          pullRequestHeads.has(branchOfRepository)
-        ) {
-          result.suppressed++;
-          continue;
-        }
-        const ticketKeys = jiraKeysInBranch(parsed.ref);
-        const [ticket] = ticketKeys;
-        const routingKey =
-          ticketKeys.length === 1 && ticket !== undefined ? jiraIssueLinkKey({ key: ticket, site: 'default' }) : null;
-        const followers = routingKey === null ? null : jiraKeyFollowers(db, input.machineId, routingKey);
-        const [follower] = followers?.open ?? [];
-        if (
-          followers?.open.length === 1 &&
-          follower &&
-          activeLinkCount(db, follower.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
-        ) {
-          addLink(db, {
-            createdAt: now,
-            key: candidate.key,
-            kind: 'branch',
-            provenance: 'declared',
-            threadId: follower.threadId,
-          });
-          addEvent(db, follower, now, 'link-added', { linkKey: candidate.key, reason: `Branch names ${ticket}` });
-          result.branchLinks++;
-          continue;
-        }
-        if (created >= MAX_BRANCH_TASKS_PER_RUN) {
-          result.truncated = true;
-          continue;
-        }
-        const thread = newThread({
-          intent: 'change',
-          machineId: input.machineId,
-          now: candidate.firstAt,
-          objective: null,
-          origin: 'session',
-          originKey: candidate.key,
-          projectLabel: candidate.repositoryLabel.slice(0, WORK_THREAD_BOUNDS.maxTitle),
-          title: (candidate.title ?? parsed.ref).slice(0, WORK_THREAD_BOUNDS.maxTitle),
-        });
-        saveThread(db, { ...thread, updatedAt: now });
+      .all(revision, input.machineId, cutoff, MAX_BRANCH_CANDIDATES + 1)
+      .map((value): BranchCandidate => {
+        const row = record(value);
+        return {
+          firstAt: validated(normalizeIsoTimestamp(row.started_at), 'branch session start'),
+          key: String(row.link_key),
+          repositoryLabel: String(row.repository_label),
+          sourcePath: typeof row.source_path === 'string' ? row.source_path : null,
+          title: typeof row.title === 'string' && row.title.trim() ? row.title.trim() : null,
+        };
+      });
+    result.truncated ||= candidates.length > MAX_BRANCH_CANDIDATES;
+    const defaults = new Map<string, string | null>();
+    const defaultBranchOf = (sourcePath: string | null): string | null => {
+      if (sourcePath === null || input.defaultBranchOf === undefined) {
+        return null;
+      }
+      if (!defaults.has(sourcePath)) {
+        defaults.set(sourcePath, input.defaultBranchOf(sourcePath));
+      }
+      return defaults.get(sourcePath) ?? null;
+    };
+    let created = 0;
+    for (const candidate of candidates.slice(0, MAX_BRANCH_CANDIDATES)) {
+      const parsed = parseWorkThreadLinkKey('branch', candidate.key);
+      if (parsed?.kind !== 'branch' || hasKnownWorkThreadLink(db, 'branch', candidate.key)) {
+        continue;
+      }
+      // Exclusions only stop creation; a session on such a branch still joins a task holding it.
+      const branchOfRepository = `${parsed.host}/${parsed.repository}@${parsed.ref}`;
+      if (
+        shared.has(parsed.ref) ||
+        defaultBranchOf(candidate.sourcePath) === parsed.ref ||
+        openBases.has(branchOfRepository) ||
+        pullRequestHeads.has(branchOfRepository)
+      ) {
+        result.suppressed++;
+        continue;
+      }
+      const ticketKeys = jiraKeysInBranch(parsed.ref);
+      const [ticket] = ticketKeys;
+      const routingKey =
+        ticketKeys.length === 1 && ticket !== undefined ? jiraIssueLinkKey({ key: ticket, site: 'default' }) : null;
+      const followers = routingKey === null ? null : jiraKeyFollowers(db, input.machineId, routingKey);
+      const [follower] = followers?.open ?? [];
+      if (
+        followers?.open.length === 1 &&
+        follower &&
+        activeLinkCount(db, follower.threadId) < WORK_THREAD_BOUNDS.maxLinksPerThread
+      ) {
         addLink(db, {
-          createdAt: candidate.firstAt,
+          createdAt: now,
           key: candidate.key,
           kind: 'branch',
-          provenance: 'origin',
+          provenance: 'declared',
+          threadId: follower.threadId,
+        });
+        addEvent(db, follower, now, 'link-added', { linkKey: candidate.key, reason: `Branch names ${ticket}` });
+        result.branchLinks++;
+        continue;
+      }
+      if (created >= MAX_BRANCH_TASKS_PER_RUN) {
+        result.truncated = true;
+        continue;
+      }
+      const thread = newThread({
+        intent: 'change',
+        machineId: input.machineId,
+        now: candidate.firstAt,
+        objective: null,
+        origin: 'session',
+        originKey: candidate.key,
+        projectLabel: candidate.repositoryLabel.slice(0, WORK_THREAD_BOUNDS.maxTitle),
+        title: (candidate.title ?? parsed.ref).slice(0, WORK_THREAD_BOUNDS.maxTitle),
+      });
+      saveThread(db, { ...thread, updatedAt: now });
+      addLink(db, {
+        createdAt: candidate.firstAt,
+        key: candidate.key,
+        kind: 'branch',
+        provenance: 'origin',
+        threadId: thread.threadId,
+      });
+      addEvent(db, thread, candidate.firstAt, 'created', {
+        toState: 'following',
+        reason: `Sessions recorded branch ${parsed.ref}`,
+      });
+      if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
+        addLink(db, {
+          createdAt: candidate.firstAt,
+          key: routingKey,
+          kind: 'jira-issue',
+          provenance: 'declared',
           threadId: thread.threadId,
         });
-        addEvent(db, thread, candidate.firstAt, 'created', {
-          toState: 'following',
-          reason: `Sessions recorded branch ${parsed.ref}`,
+        addEvent(db, thread, candidate.firstAt, 'link-added', {
+          linkKey: routingKey,
+          reason: `Branch names ${ticket}`,
         });
-        if (routingKey !== null && followers?.open.length === 0 && followers.done === 0) {
-          addLink(db, {
-            createdAt: candidate.firstAt,
-            key: routingKey,
-            kind: 'jira-issue',
-            provenance: 'declared',
-            threadId: thread.threadId,
-          });
-          addEvent(db, thread, candidate.firstAt, 'link-added', {
-            linkKey: routingKey,
-            reason: `Branch names ${ticket}`,
-          });
-        }
-        created++;
       }
-      result.created = created;
-      return result;
-    });
+      created++;
+    }
+    result.created = created;
+    return result;
+  });
 
-  const attachDeclaredWorkThreadSessions = (
-    input: AttachDeclaredWorkThreadSessionsInput,
-  ): Effect.Effect<AttachDeclaredWorkThreadSessionsResult, UsageStoreError> =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    write(input.dbPath, 'attachDeclaredWorkThreadSessions', (db) => {
-      const now = instant(input.now);
-      const declarations = new Map<string, DeclaredWorkThreadSession>();
-      for (const declaration of input.declarations.slice(0, MAX_DECLARED_SESSION_LINKS)) {
-        const pullRequestKey = canonicalLinkKey('pull-request', declaration.pullRequestKey);
-        const session = parseWorkThreadLinkKey('session', declaration.sessionKey);
-        if (
-          !parseWorkThreadLinkKey('pull-request', pullRequestKey) ||
-          session?.kind !== 'session' ||
-          session.machineId !== input.machineId
-        ) {
-          return invalidInput('Declared sessions require qualified pull request and same-machine session keys');
-        }
-        declarations.set(JSON.stringify([pullRequestKey, declaration.sessionKey]), {
-          pullRequestKey,
-          sessionKey: declaration.sessionKey,
-        });
+export const attachDeclaredWorkThreadSessions = (
+  input: AttachDeclaredWorkThreadSessionsInput,
+): Effect.Effect<AttachDeclaredWorkThreadSessionsResult, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+  write(input.dbPath, 'attachDeclaredWorkThreadSessions', (db) => {
+    const now = instant(input.now);
+    const declarations = new Map<string, DeclaredWorkThreadSession>();
+    for (const declaration of input.declarations.slice(0, MAX_DECLARED_SESSION_LINKS)) {
+      const pullRequestKey = canonicalLinkKey('pull-request', declaration.pullRequestKey);
+      const session = parseWorkThreadLinkKey('session', declaration.sessionKey);
+      if (
+        !parseWorkThreadLinkKey('pull-request', pullRequestKey) ||
+        session?.kind !== 'session' ||
+        session.machineId !== input.machineId
+      ) {
+        return invalidInput('Declared sessions require qualified pull request and same-machine session keys');
       }
-      const result = {
-        linked: 0,
-        existing: 0,
-        detached: 0,
-        truncated: input.declarations.length > MAX_DECLARED_SESSION_LINKS,
-      };
-      for (const { pullRequestKey, sessionKey } of declarations.values()) {
-        // Keep detached history as an operator-owned veto; a later poll may only fill previously absent links.
-        const scope = `FROM work_threads t WHERE t.machine_id = ? AND EXISTS (
+      declarations.set(JSON.stringify([pullRequestKey, declaration.sessionKey]), {
+        pullRequestKey,
+        sessionKey: declaration.sessionKey,
+      });
+    }
+    const result = {
+      linked: 0,
+      existing: 0,
+      detached: 0,
+      truncated: input.declarations.length > MAX_DECLARED_SESSION_LINKS,
+    };
+    for (const { pullRequestKey, sessionKey } of declarations.values()) {
+      // Keep detached history as an operator-owned veto; a later poll may only fill previously absent links.
+      const scope = `FROM work_threads t WHERE t.machine_id = ? AND EXISTS (
           SELECT 1 FROM work_thread_links p WHERE p.thread_id = t.thread_id
           AND p.kind = 'pull-request' AND lower(p.link_key) = ? AND p.detached_at IS NULL)`;
-        const history = `SELECT 1 FROM work_thread_links s WHERE s.thread_id = t.thread_id
+      const history = `SELECT 1 FROM work_thread_links s WHERE s.thread_id = t.thread_id
           AND s.kind = 'session' AND s.link_key = ?`;
-        const activeCount =
-          '(SELECT COUNT(*) FROM work_thread_links a WHERE a.thread_id = t.thread_id AND a.detached_at IS NULL)';
-        const stats = record(
-          db
-            .query(`SELECT
+      const activeCount =
+        '(SELECT COUNT(*) FROM work_thread_links a WHERE a.thread_id = t.thread_id AND a.detached_at IS NULL)';
+      const stats = record(
+        db
+          .query(`SELECT
           COUNT(CASE WHEN EXISTS (${history} AND s.detached_at IS NULL) THEN 1 END) AS existing,
           COUNT(CASE WHEN EXISTS (${history} AND s.detached_at IS NOT NULL) THEN 1 END) AS detached,
           COUNT(CASE WHEN NOT EXISTS (${history}) AND ${activeCount} >= ? THEN 1 END) AS full
           ${scope}`)
-            .get(
-              sessionKey,
-              sessionKey,
-              sessionKey,
-              WORK_THREAD_BOUNDS.maxLinksPerThread,
-              input.machineId,
-              pullRequestKey,
-            ),
-        );
-        result.existing += validated(typeof stats.existing === 'number' ? stats.existing : null, 'existing link count');
-        result.detached += validated(typeof stats.detached === 'number' ? stats.detached : null, 'detached link count');
-        result.truncated ||= validated(typeof stats.full === 'number' ? stats.full : null, 'full thread count') > 0;
-        const remaining = MAX_DECLARED_SESSION_LINKS - result.linked;
-        const candidates = db
-          .query(`SELECT t.* ${scope} AND NOT EXISTS (${history})
+          .get(
+            sessionKey,
+            sessionKey,
+            sessionKey,
+            WORK_THREAD_BOUNDS.maxLinksPerThread,
+            input.machineId,
+            pullRequestKey,
+          ),
+      );
+      result.existing += validated(typeof stats.existing === 'number' ? stats.existing : null, 'existing link count');
+      result.detached += validated(typeof stats.detached === 'number' ? stats.detached : null, 'detached link count');
+      result.truncated ||= validated(typeof stats.full === 'number' ? stats.full : null, 'full thread count') > 0;
+      const remaining = MAX_DECLARED_SESSION_LINKS - result.linked;
+      const candidates = db
+        .query(`SELECT t.* ${scope} AND NOT EXISTS (${history})
           AND ${activeCount} < ? ORDER BY t.thread_id LIMIT ?`)
-          .all(input.machineId, pullRequestKey, sessionKey, WORK_THREAD_BOUNDS.maxLinksPerThread, remaining + 1);
-        result.truncated ||= candidates.length > remaining;
-        for (const candidate of candidates.slice(0, remaining)) {
-          // A combined task's sessions belong to the kept task; skip one that already holds it.
-          const thread = effectiveThread(db, threadFromRecord(candidate));
-          if (
-            db
-              .query(
-                `SELECT 1 FROM work_thread_links WHERE kind = 'session' AND link_key = ?
+        .all(input.machineId, pullRequestKey, sessionKey, WORK_THREAD_BOUNDS.maxLinksPerThread, remaining + 1);
+      result.truncated ||= candidates.length > remaining;
+      for (const candidate of candidates.slice(0, remaining)) {
+        // A combined task's sessions belong to the kept task; skip one that already holds it.
+        const thread = effectiveThread(db, threadFromRecord(candidate));
+        if (
+          db
+            .query(
+              `SELECT 1 FROM work_thread_links WHERE kind = 'session' AND link_key = ?
                 AND thread_id IN (SELECT value FROM json_each(?))`,
-              )
-              .get(sessionKey, JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)])) !== null
-          ) {
-            continue;
-          }
-          addLink(db, {
-            threadId: thread.threadId,
-            kind: 'session',
-            key: sessionKey,
-            provenance: 'declared',
-            createdAt: now,
-          });
-          saveThread(db, { ...thread, updatedAt: now });
-          addEvent(db, thread, now, 'link-added', { linkKey: sessionKey });
-          result.linked++;
+            )
+            .get(sessionKey, JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)])) !== null
+        ) {
+          continue;
         }
+        addLink(db, {
+          threadId: thread.threadId,
+          kind: 'session',
+          key: sessionKey,
+          provenance: 'declared',
+          createdAt: now,
+        });
+        saveThread(db, { ...thread, updatedAt: now });
+        addEvent(db, thread, now, 'link-added', { linkKey: sessionKey });
+        result.linked++;
       }
-      return result;
-    });
+    }
+    return result;
+  });
 
-  const queryWorkThreadWaitCandidates = (
-    input: QueryWorkThreadWaitCandidatesInput,
-  ): Effect.Effect<QueryWorkThreadWaitCandidatesResult, UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadWaitCandidates', (db) => {
-      if (
-        !(input.machineId && ['pull-request-review', 'jira-update'].includes(input.kind)) ||
-        input.linkKeys.length > MAX_WAIT_CANDIDATES
-      ) {
-        return invalidInput('Invalid work thread wait scope');
-      }
-      const kind = waitLinkKind(input.kind);
-      const keys = [...new Set(input.linkKeys.map((key) => canonicalLinkKey(kind, key)))];
-      if (keys.some((key) => !parseWorkThreadLinkKey(kind, key))) {
-        return invalidInput('Invalid work thread wait link');
-      }
-      if (keys.length === 0) {
-        return { candidates: [], truncated: false };
-      }
-      const linkKey = kind === 'pull-request' ? 'lower(l.link_key)' : 'l.link_key';
-      const waitKey =
-        kind === 'pull-request'
-          ? "lower(json_extract(t.waiting_on_json, '$.linkKey'))"
-          : "json_extract(t.waiting_on_json, '$.linkKey')";
-      const rows = db
-        .query(`SELECT * FROM (
+export const queryWorkThreadWaitCandidates = (
+  input: QueryWorkThreadWaitCandidatesInput,
+): Effect.Effect<QueryWorkThreadWaitCandidatesResult, UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadWaitCandidates', (db) => {
+    if (
+      !(input.machineId && ['pull-request-review', 'jira-update'].includes(input.kind)) ||
+      input.linkKeys.length > MAX_WAIT_CANDIDATES
+    ) {
+      return invalidInput('Invalid work thread wait scope');
+    }
+    const kind = waitLinkKind(input.kind);
+    const keys = [...new Set(input.linkKeys.map((key) => canonicalLinkKey(kind, key)))];
+    if (keys.some((key) => !parseWorkThreadLinkKey(kind, key))) {
+      return invalidInput('Invalid work thread wait link');
+    }
+    if (keys.length === 0) {
+      return { candidates: [], truncated: false };
+    }
+    const linkKey = kind === 'pull-request' ? 'lower(l.link_key)' : 'l.link_key';
+    const waitKey =
+      kind === 'pull-request'
+        ? "lower(json_extract(t.waiting_on_json, '$.linkKey'))"
+        : "json_extract(t.waiting_on_json, '$.linkKey')";
+    const rows = db
+      .query(`SELECT * FROM (
         SELECT t.*, l.link_id AS waited_link_id, ROW_NUMBER() OVER (
           PARTITION BY t.thread_id ORDER BY l.created_at, l.link_id) AS candidate_rank
         FROM work_threads t JOIN work_thread_links l ON l.thread_id IN ${taskThreadsSql('t')}
@@ -2357,230 +2333,230 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           AND json_extract(t.waiting_on_json, '$.kind') = ? AND l.kind = ? AND l.detached_at IS NULL
           AND ${linkKey} = ${waitKey} AND ${linkKey} IN (SELECT value FROM json_each(?))
       ) WHERE candidate_rank = 1 ORDER BY updated_at, thread_id LIMIT ?`)
-        .all(input.machineId, input.kind, kind, JSON.stringify(keys), MAX_WAIT_CANDIDATES + 1);
-      const historyByKey = new Map<string, readonly WorkThreadWaitFact[]>();
-      const candidates = rows.slice(0, MAX_WAIT_CANDIDATES).map((row): WorkThreadWaitCandidate => {
-        const thread = threadFromRecord(row);
-        const waitingOn = validated(thread.waitingOn, 'wait candidate');
-        const normalizedWait = { ...waitingOn, linkKey: canonicalLinkKey(kind, waitingOn.linkKey) };
-        if (!historyByKey.has(normalizedWait.linkKey)) {
-          historyByKey.set(normalizedWait.linkKey, storedWaitFacts(db, input.machineId, normalizedWait));
-        }
-        return {
-          threadId: thread.threadId,
-          followRevision: thread.followRevision,
-          waitingOn: normalizedWait,
-          linkId: validated(
-            isWorkThreadId(record(row).waited_link_id) ? String(record(row).waited_link_id) : null,
-            'wait link',
-          ),
-          history: historyByKey.get(normalizedWait.linkKey) ?? [],
-        };
-      });
-      return { candidates, truncated: rows.length > MAX_WAIT_CANDIDATES };
-    });
-
-  const applyWorkThreadWaitObservations = (
-    input: ApplyWorkThreadWaitObservationsInput,
-  ): Effect.Effect<ApplyWorkThreadWaitObservationsResult, UsageStoreError> =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    write(input.dbPath, 'applyWorkThreadWaitObservations', (db) => {
-      const now = instant(input.now);
-      if (
-        !input.machineId ||
-        input.candidates.length > MAX_WAIT_CANDIDATES ||
-        (input.pullRequests?.length ?? 0) > MAX_WAIT_CANDIDATES ||
-        (input.jiraIssues?.length ?? 0) > MAX_WAIT_CANDIDATES
-      ) {
-        return invalidInput('Invalid or over-bound work thread wait observations');
+      .all(input.machineId, input.kind, kind, JSON.stringify(keys), MAX_WAIT_CANDIDATES + 1);
+    const historyByKey = new Map<string, readonly WorkThreadWaitFact[]>();
+    const candidates = rows.slice(0, MAX_WAIT_CANDIDATES).map((row): WorkThreadWaitCandidate => {
+      const thread = threadFromRecord(row);
+      const waitingOn = validated(thread.waitingOn, 'wait candidate');
+      const normalizedWait = { ...waitingOn, linkKey: canonicalLinkKey(kind, waitingOn.linkKey) };
+      if (!historyByKey.has(normalizedWait.linkKey)) {
+        historyByKey.set(normalizedWait.linkKey, storedWaitFacts(db, input.machineId, normalizedWait));
       }
-      const incoming = new Map<string, WorkThreadWaitFact>();
-      const add = (key: string, fact: WorkThreadWaitFact): void => {
-        if (fact.observedAt <= now && (!incoming.has(key) || incoming.get(key)!.observedAt < fact.observedAt)) {
-          incoming.set(key, fact);
-        }
+      return {
+        threadId: thread.threadId,
+        followRevision: thread.followRevision,
+        waitingOn: normalizedWait,
+        linkId: validated(
+          isWorkThreadId(record(row).waited_link_id) ? String(record(row).waited_link_id) : null,
+          'wait link',
+        ),
+        history: historyByKey.get(normalizedWait.linkKey) ?? [],
       };
-      for (const value of input.pullRequests ?? []) {
-        const observation = parsePullRequestObservation(value) ?? invalidInput('Invalid pull request wait observation');
-        if (observation.machineId === input.machineId && observation.outcome === 'observed') {
-          add(`${observation.host.toLowerCase()}/${observation.repository.toLowerCase()}#${observation.number}`, {
-            observedAt: observation.observedAt,
-            updatedAt: observation.updatedAt,
-            mergedAt: observation.mergedAt,
-            state: observation.state,
-            value: observation.reviewDecision,
-          });
-        }
-      }
-      for (const value of input.jiraIssues ?? []) {
-        const observation = parseJiraIssueObservation(value) ?? invalidInput('Invalid Jira wait observation');
-        if (observation.machineId === input.machineId && observation.outcome === 'observed') {
-          add(`jira:default/${observation.key}`, {
-            observedAt: observation.observedAt,
-            updatedAt: observation.updatedAt,
-            mergedAt: null,
-            state: null,
-            value: observation.status,
-          });
-        }
-      }
-      const result = { satisfied: 0, unchanged: 0, unproven: 0 };
-      for (const candidate of input.candidates) {
-        const thread = readThread(db, candidate.threadId);
-        const wait = thread?.waitingOn;
-        const kind = waitLinkKind(candidate.waitingOn.kind);
-        if (
-          !thread ||
-          thread.machineId !== input.machineId ||
-          thread.followState !== 'waiting' ||
-          thread.followRevision !== candidate.followRevision ||
-          wait === null ||
-          wait === undefined ||
-          wait.kind !== candidate.waitingOn.kind ||
-          wait.since !== candidate.waitingOn.since ||
-          canonicalLinkKey(kind, wait.linkKey) !== candidate.waitingOn.linkKey ||
-          keptThreadIdOf(db, thread.threadId) !== null ||
-          db
-            .query(
-              `SELECT 1 FROM work_thread_links WHERE link_id = ? AND detached_at IS NULL
-              AND thread_id IN (SELECT value FROM json_each(?))`,
-            )
-            .get(candidate.linkId, JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)])) ===
-            null
-        ) {
-          result.unchanged++;
-          continue;
-        }
-        const fact = incoming.get(candidate.waitingOn.linkKey);
-        const facts = [...candidate.history];
-        // Only facts successfully imported by the writer may satisfy an expectation.
-        if (fact !== undefined) {
-          const stored = storedWaitFacts(db, input.machineId, candidate.waitingOn, fact.observedAt);
-          if (
-            stored.some(
-              (item) =>
-                item.observedAt === fact.observedAt &&
-                item.updatedAt === fact.updatedAt &&
-                item.mergedAt === fact.mergedAt &&
-                item.state === fact.state &&
-                item.value === fact.value,
-            )
-          ) {
-            facts.push(fact);
-          }
-        }
-        const evidence = waitEvidence(candidate, facts, now);
-        if (evidence.reason === null) {
-          result.unchanged++;
-          result.unproven += Number(evidence.unproven);
-          continue;
-        }
-        const next: WorkThread = {
-          ...thread,
-          followState: 'following',
-          followRevision: thread.followRevision + 1,
-          waitingFor: null,
-          waitingOn: null,
-          updatedAt: now,
-        };
-        saveThread(db, next);
-        addEvent(db, next, now, 'wait-satisfied', {
-          fromState: 'waiting',
-          toState: 'following',
-          linkKey: candidate.waitingOn.linkKey,
-          reason: evidence.reason,
-        });
-        result.satisfied++;
-      }
-      return result;
     });
+    return { candidates, truncated: rows.length > MAX_WAIT_CANDIDATES };
+  });
 
-  const queryWorkThreadsPage = (
-    input: QueryWorkThreadsPageInput,
-  ): Effect.Effect<QueryWorkThreadsPageResult, UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadsPage', (db) => {
-      const { sql, params } = pageFilter(input.query);
-      const records = db
-        .query(`WITH ${sourceActivitySql}, activity AS MATERIALIZED (SELECT t.*, ${threadActivitySql} AS activity_at,
+export const applyWorkThreadWaitObservations = (
+  input: ApplyWorkThreadWaitObservationsInput,
+): Effect.Effect<ApplyWorkThreadWaitObservationsResult, UsageStoreError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+  write(input.dbPath, 'applyWorkThreadWaitObservations', (db) => {
+    const now = instant(input.now);
+    if (
+      !input.machineId ||
+      input.candidates.length > MAX_WAIT_CANDIDATES ||
+      (input.pullRequests?.length ?? 0) > MAX_WAIT_CANDIDATES ||
+      (input.jiraIssues?.length ?? 0) > MAX_WAIT_CANDIDATES
+    ) {
+      return invalidInput('Invalid or over-bound work thread wait observations');
+    }
+    const incoming = new Map<string, WorkThreadWaitFact>();
+    const add = (key: string, fact: WorkThreadWaitFact): void => {
+      if (fact.observedAt <= now && (!incoming.has(key) || incoming.get(key)!.observedAt < fact.observedAt)) {
+        incoming.set(key, fact);
+      }
+    };
+    for (const value of input.pullRequests ?? []) {
+      const observation = parsePullRequestObservation(value) ?? invalidInput('Invalid pull request wait observation');
+      if (observation.machineId === input.machineId && observation.outcome === 'observed') {
+        add(`${observation.host.toLowerCase()}/${observation.repository.toLowerCase()}#${observation.number}`, {
+          observedAt: observation.observedAt,
+          updatedAt: observation.updatedAt,
+          mergedAt: observation.mergedAt,
+          state: observation.state,
+          value: observation.reviewDecision,
+        });
+      }
+    }
+    for (const value of input.jiraIssues ?? []) {
+      const observation = parseJiraIssueObservation(value) ?? invalidInput('Invalid Jira wait observation');
+      if (observation.machineId === input.machineId && observation.outcome === 'observed') {
+        add(`jira:default/${observation.key}`, {
+          observedAt: observation.observedAt,
+          updatedAt: observation.updatedAt,
+          mergedAt: null,
+          state: null,
+          value: observation.status,
+        });
+      }
+    }
+    const result = { satisfied: 0, unchanged: 0, unproven: 0 };
+    for (const candidate of input.candidates) {
+      const thread = readThread(db, candidate.threadId);
+      const wait = thread?.waitingOn;
+      const kind = waitLinkKind(candidate.waitingOn.kind);
+      if (
+        !thread ||
+        thread.machineId !== input.machineId ||
+        thread.followState !== 'waiting' ||
+        thread.followRevision !== candidate.followRevision ||
+        wait === null ||
+        wait === undefined ||
+        wait.kind !== candidate.waitingOn.kind ||
+        wait.since !== candidate.waitingOn.since ||
+        canonicalLinkKey(kind, wait.linkKey) !== candidate.waitingOn.linkKey ||
+        keptThreadIdOf(db, thread.threadId) !== null ||
+        db
+          .query(
+            `SELECT 1 FROM work_thread_links WHERE link_id = ? AND detached_at IS NULL
+              AND thread_id IN (SELECT value FROM json_each(?))`,
+          )
+          .get(candidate.linkId, JSON.stringify([thread.threadId, ...memberThreadIdsOf(db, thread.threadId)])) === null
+      ) {
+        result.unchanged++;
+        continue;
+      }
+      const fact = incoming.get(candidate.waitingOn.linkKey);
+      const facts = [...candidate.history];
+      // Only facts successfully imported by the writer may satisfy an expectation.
+      if (fact !== undefined) {
+        const stored = storedWaitFacts(db, input.machineId, candidate.waitingOn, fact.observedAt);
+        if (
+          stored.some(
+            (item) =>
+              item.observedAt === fact.observedAt &&
+              item.updatedAt === fact.updatedAt &&
+              item.mergedAt === fact.mergedAt &&
+              item.state === fact.state &&
+              item.value === fact.value,
+          )
+        ) {
+          facts.push(fact);
+        }
+      }
+      const evidence = waitEvidence(candidate, facts, now);
+      if (evidence.reason === null) {
+        result.unchanged++;
+        result.unproven += Number(evidence.unproven);
+        continue;
+      }
+      const next: WorkThread = {
+        ...thread,
+        followState: 'following',
+        followRevision: thread.followRevision + 1,
+        waitingFor: null,
+        waitingOn: null,
+        updatedAt: now,
+      };
+      saveThread(db, next);
+      addEvent(db, next, now, 'wait-satisfied', {
+        fromState: 'waiting',
+        toState: 'following',
+        linkKey: candidate.waitingOn.linkKey,
+        reason: evidence.reason,
+      });
+      result.satisfied++;
+    }
+    return result;
+  });
+
+export const queryWorkThreadsPage = (
+  input: QueryWorkThreadsPageInput,
+): Effect.Effect<QueryWorkThreadsPageResult, UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadsPage', (db) => {
+    const { sql, params } = pageFilter(input.query);
+    const records = db
+      .query(`WITH ${sourceActivitySql}, activity AS MATERIALIZED (SELECT t.*, ${threadActivitySql} AS activity_at,
           ${threadProjectSql('t')} AS effective_project FROM work_threads t)
         SELECT t.* FROM activity t WHERE ${sql}
         ORDER BY t.activity_at DESC, t.thread_id ASC LIMIT ?`)
-        .all(...params, input.query.limit + 1);
-      const rows = records.slice(0, input.query.limit).map(
-        (value): WorkThreadPageRow => ({
-          lastActivityAt: parseCanonicalInstant(record(value).activity_at),
-          thread: threadFromRecord(value),
-        }),
-      );
-      const last = rows.at(-1);
-      const nextCursor =
-        records.length > input.query.limit && last
-          ? Buffer.from(
-              JSON.stringify({
-                at: last.lastActivityAt,
-                scope: cursorScope(input.query),
-                threadId: last.thread.threadId,
-              }),
-            ).toString('base64url')
-          : null;
-      return { nextCursor, rows };
-    });
+      .all(...params, input.query.limit + 1);
+    const rows = records.slice(0, input.query.limit).map(
+      (value): WorkThreadPageRow => ({
+        lastActivityAt: parseCanonicalInstant(record(value).activity_at),
+        thread: threadFromRecord(value),
+      }),
+    );
+    const last = rows.at(-1);
+    const nextCursor =
+      records.length > input.query.limit && last
+        ? Buffer.from(
+            JSON.stringify({
+              at: last.lastActivityAt,
+              scope: cursorScope(input.query),
+              threadId: last.thread.threadId,
+            }),
+          ).toString('base64url')
+        : null;
+    return { nextCursor, rows };
+  });
 
-  const queryWorkThreadById = (input: QueryWorkThreadByIdInput): Effect.Effect<WorkThread | null, UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadById', (db) => {
-      const row = db
-        .query(`SELECT t.*, ${threadProjectSql('t')} AS effective_project FROM work_threads t WHERE t.thread_id = ?`)
-        .get(input.threadId);
-      return row === null ? null : threadFromRecord(row);
-    });
+export const queryWorkThreadById = (
+  input: QueryWorkThreadByIdInput,
+): Effect.Effect<WorkThread | null, UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadById', (db) => {
+    const row = db
+      .query(`SELECT t.*, ${threadProjectSql('t')} AS effective_project FROM work_threads t WHERE t.thread_id = ?`)
+      .get(input.threadId);
+    return row === null ? null : threadFromRecord(row);
+  });
 
-  const queryWorkThreadLinks = (
-    input: QueryWorkThreadLinksInput,
-  ): Effect.Effect<readonly WorkThreadLink[], UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadLinks', (db) => {
-      const ids = [...new Set(input.threadIds)];
-      if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
-        return invalidInput('Invalid work thread link scope');
-      }
-      // Active links are all returned; detached history is the latest maxEventsPerThread per thread.
-      return db
-        .query(`SELECT * FROM (
+export const queryWorkThreadLinks = (
+  input: QueryWorkThreadLinksInput,
+): Effect.Effect<readonly WorkThreadLink[], UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadLinks', (db) => {
+    const ids = [...new Set(input.threadIds)];
+    if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
+      return invalidInput('Invalid work thread link scope');
+    }
+    // Active links are all returned; detached history is the latest maxEventsPerThread per thread.
+    return db
+      .query(`SELECT * FROM (
           SELECT *, ROW_NUMBER() OVER (
             PARTITION BY thread_id, (detached_at IS NULL) ORDER BY detached_at DESC, rowid DESC
           ) AS rank FROM work_thread_links WHERE thread_id IN (SELECT value FROM json_each(?))
         ) WHERE detached_at IS NULL OR rank <= ? ORDER BY thread_id, created_at, link_id`)
-        .all(JSON.stringify(ids), WORK_THREAD_BOUNDS.maxEventsPerThread)
-        .map(linkFromRecord);
-    });
+      .all(JSON.stringify(ids), WORK_THREAD_BOUNDS.maxEventsPerThread)
+      .map(linkFromRecord);
+  });
 
-  const queryActiveWorkThreadLinks = (
-    input: QueryActiveWorkThreadLinksInput,
-  ): Effect.Effect<QueryActiveWorkThreadLinksResult, UsageStoreError> =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    read(input.dbPath, 'queryActiveWorkThreadLinks', (db) => {
-      if (
-        !input.machineId ||
-        (input.kind !== 'pull-request' && input.kind !== 'jira-issue') ||
-        !Number.isSafeInteger(input.limit) ||
-        input.limit < 1 ||
-        input.limit > 500 ||
-        (input.excludeObservedMerged !== undefined && typeof input.excludeObservedMerged !== 'boolean') ||
-        (input.excludeObservedMerged === true && input.kind !== 'pull-request') ||
-        (input.jiraSite !== undefined &&
-          (input.kind !== 'jira-issue' || !parseWorkThreadLinkKey('jira-issue', `jira:${input.jiraSite}/TEST-1`)))
-      ) {
-        return invalidInput('Invalid active work thread link scope');
-      }
-      const pendingPullRequests = input.excludeObservedMerged === true;
-      const latestObservations = pendingPullRequests
-        ? `WITH latest_observations AS MATERIALIZED (
+export const queryActiveWorkThreadLinks = (
+  input: QueryActiveWorkThreadLinksInput,
+): Effect.Effect<QueryActiveWorkThreadLinksResult, UsageStoreError> =>
+  read(input.dbPath, 'queryActiveWorkThreadLinks', (db) => {
+    if (
+      !input.machineId ||
+      (input.kind !== 'pull-request' && input.kind !== 'jira-issue') ||
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > 500 ||
+      (input.excludeObservedMerged !== undefined && typeof input.excludeObservedMerged !== 'boolean') ||
+      (input.excludeObservedMerged === true && input.kind !== 'pull-request') ||
+      (input.jiraSite !== undefined &&
+        (input.kind !== 'jira-issue' || !parseWorkThreadLinkKey('jira-issue', `jira:${input.jiraSite}/TEST-1`)))
+    ) {
+      return invalidInput('Invalid active work thread link scope');
+    }
+    const pendingPullRequests = input.excludeObservedMerged === true;
+    const latestObservations = pendingPullRequests
+      ? `WITH latest_observations AS MATERIALIZED (
         SELECT lower(host) || '/' || lower(repository) || '#' || number AS link_key, outcome, state, merged_at, history,
           ROW_NUMBER() OVER (PARTITION BY lower(host), lower(repository), number ORDER BY observed_at DESC, id DESC) AS rank
         FROM pull_request_observations WHERE machine_id = ?
       )`
-        : '';
-      const eligibility = pendingPullRequests
-        ? `AND NOT EXISTS (
+      : '';
+    const eligibility = pendingPullRequests
+      ? `AND NOT EXISTS (
         SELECT 1 FROM latest_observations observation WHERE observation.link_key = lower(links.link_key)
           AND observation.rank = 1 AND observation.outcome = 'observed' AND observation.state = 'MERGED'
           AND observation.history IS NOT NULL
@@ -2589,15 +2565,15 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
             AND lower(json_extract(threads.waiting_on_json, '$.linkKey')) = lower(links.link_key)
             AND observation.merged_at > json_extract(threads.waiting_on_json, '$.since')), 0)
       )`
-        : '';
-      const params: unknown[] = pendingPullRequests ? [input.machineId] : [];
-      params.push(input.machineId, input.kind);
-      if (input.jiraSite !== undefined) {
-        params.push(`jira:${input.jiraSite}/`);
-      }
-      params.push(input.limit + 1);
-      const rows = db
-        .query(`${latestObservations} SELECT * FROM (
+      : '';
+    const params: unknown[] = pendingPullRequests ? [input.machineId] : [];
+    params.push(input.machineId, input.kind);
+    if (input.jiraSite !== undefined) {
+      params.push(`jira:${input.jiraSite}/`);
+    }
+    params.push(input.limit + 1);
+    const rows = db
+      .query(`${latestObservations} SELECT * FROM (
         SELECT links.*, ROW_NUMBER() OVER (PARTITION BY ${input.kind === 'pull-request' ? 'lower(link_key)' : 'link_key'}
           ORDER BY links.created_at DESC, links.link_id) AS rank
         FROM work_thread_links links
@@ -2609,221 +2585,197 @@ export const createWorkThreadStore = (dependencies: WorkThreadStoreDependencies)
           ${eligibility}
           ${input.jiraSite === undefined ? '' : 'AND instr(links.link_key, ?) = 1'}
       ) WHERE rank = 1 ORDER BY created_at DESC, link_id LIMIT ?`)
-        .all(...params);
-      return { links: rows.slice(0, input.limit).map(linkFromRecord), truncated: rows.length > input.limit };
-    });
+      .all(...params);
+    return { links: rows.slice(0, input.limit).map(linkFromRecord), truncated: rows.length > input.limit };
+  });
 
-  const queryWorkThreadEvents = (
-    input: QueryWorkThreadByIdInput | QueryWorkThreadLinksInput,
-  ): Effect.Effect<readonly WorkThreadEvent[], UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadEvents', (db) => {
-      const ids = [...new Set('threadIds' in input ? input.threadIds : [input.threadId])];
-      if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
-        return invalidInput('Invalid work thread event scope');
-      }
-      return db
-        .query(`SELECT event_json FROM (
+export const queryWorkThreadEvents = (
+  input: QueryWorkThreadByIdInput | QueryWorkThreadLinksInput,
+): Effect.Effect<readonly WorkThreadEvent[], UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadEvents', (db) => {
+    const ids = [...new Set('threadIds' in input ? input.threadIds : [input.threadId])];
+    if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
+      return invalidInput('Invalid work thread event scope');
+    }
+    return db
+      .query(`SELECT event_json FROM (
           SELECT thread_id, event_json, at, rowid AS sequence,
             ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, rowid DESC) AS rank
           FROM work_thread_events WHERE thread_id IN (SELECT value FROM json_each(?))
         ) WHERE rank <= ? ORDER BY thread_id, at, sequence`)
-        .all(JSON.stringify(ids), WORK_THREAD_BOUNDS.maxEventsPerThread)
-        .map((value) => validated(parseWorkThreadEvent(json(record(value).event_json)), 'event'));
-    });
+      .all(JSON.stringify(ids), WORK_THREAD_BOUNDS.maxEventsPerThread)
+      .map((value) => validated(parseWorkThreadEvent(json(record(value).event_json)), 'event'));
+  });
 
-  const countWorkThreads = (input: {
-    readonly dbPath: string;
-  }): Effect.Effect<{ readonly done: number; readonly open: number }, UsageStoreError> =>
-    read(input.dbPath, 'countWorkThreads', (db) => {
-      const row = record(
-        db
-          .query(`SELECT COUNT(CASE WHEN follow_state = 'done' THEN 1 END) AS done,
+export const countWorkThreads = (input: {
+  readonly dbPath: string;
+}): Effect.Effect<{ readonly done: number; readonly open: number }, UsageStoreError> =>
+  read(input.dbPath, 'countWorkThreads', (db) => {
+    const row = record(
+      db
+        .query(`SELECT COUNT(CASE WHEN follow_state = 'done' THEN 1 END) AS done,
         COUNT(CASE WHEN follow_state IN ('following', 'waiting') THEN 1 END) AS open FROM work_threads t
         WHERE ${notCombinedMemberSql('t')}`)
-          .get(),
-      );
-      return {
-        done: validated(typeof row.done === 'number' ? row.done : null, 'count'),
-        open: validated(typeof row.open === 'number' ? row.open : null, 'count'),
-      };
-    });
-
-  const queryWorkThreadProjects = (input: {
-    readonly dbPath: string;
-  }): Effect.Effect<readonly string[], UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadProjects', (db) =>
-      db
-        .query(`SELECT DISTINCT project_label FROM (SELECT ${threadProjectSql('t')} AS project_label FROM work_threads t
-      WHERE ${notCombinedMemberSql('t')}) WHERE project_label IS NOT NULL ORDER BY project_label LIMIT ?`)
-        .all(WORK_THREAD_VIEW_BOUNDS.maxProjects)
-        .map((value) =>
-          validated(
-            typeof record(value).project_label === 'string' ? String(record(value).project_label) : null,
-            'project',
-          ),
-        ),
+        .get(),
     );
+    return {
+      done: validated(typeof row.done === 'number' ? row.done : null, 'count'),
+      open: validated(typeof row.open === 'number' ? row.open : null, 'count'),
+    };
+  });
 
-  /** Assignment is recorded, never turned into a task: the operator chooses what to follow. */
-  const recordJiraIntake = (input: RecordJiraIntakeInput): Effect.Effect<number, UsageStoreError> =>
-    write(input.dbPath, 'recordJiraIntake', (db) => {
-      const now = instant(input.now);
-      if (input.keys.length > MAX_JIRA_INTAKE_KEYS) {
-        return invalidInput('Too many assigned Jira issues for one intake record');
-      }
-      const keys = [...new Set(input.keys)].map((key) => jiraIssueLinkKey({ key, site: 'default' }));
-      if (keys.some((key) => !parseWorkThreadLinkKey('jira-issue', key))) {
-        return invalidInput('Assigned Jira issues must be qualified keys');
-      }
-      for (const key of keys) {
-        db.query(`INSERT INTO work_jira_intake(machine_id, link_key, first_seen_at, assigned, assigned_at)
+export const queryWorkThreadProjects = (input: {
+  readonly dbPath: string;
+}): Effect.Effect<readonly string[], UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadProjects', (db) =>
+    db
+      .query(`SELECT DISTINCT project_label FROM (SELECT ${threadProjectSql('t')} AS project_label FROM work_threads t
+      WHERE ${notCombinedMemberSql('t')}) WHERE project_label IS NOT NULL ORDER BY project_label LIMIT ?`)
+      .all(WORK_THREAD_VIEW_BOUNDS.maxProjects)
+      .map((value) =>
+        validated(
+          typeof record(value).project_label === 'string' ? String(record(value).project_label) : null,
+          'project',
+        ),
+      ),
+  );
+
+/** Assignment is recorded, never turned into a task: the operator chooses what to follow. */
+export const recordJiraIntake = (input: RecordJiraIntakeInput): Effect.Effect<number, UsageStoreError> =>
+  write(input.dbPath, 'recordJiraIntake', (db) => {
+    const now = instant(input.now);
+    if (input.keys.length > MAX_JIRA_INTAKE_KEYS) {
+      return invalidInput('Too many assigned Jira issues for one intake record');
+    }
+    const keys = [...new Set(input.keys)].map((key) => jiraIssueLinkKey({ key, site: 'default' }));
+    if (keys.some((key) => !parseWorkThreadLinkKey('jira-issue', key))) {
+      return invalidInput('Assigned Jira issues must be qualified keys');
+    }
+    for (const key of keys) {
+      db.query(`INSERT INTO work_jira_intake(machine_id, link_key, first_seen_at, assigned, assigned_at)
           VALUES (?, ?, ?, 1, ?)
           ON CONFLICT(machine_id, link_key) DO UPDATE SET assigned = 1, assigned_at = excluded.assigned_at`).run(
-          input.machineId,
-          key,
-          now,
-          now,
-        );
-      }
-      if (input.complete) {
-        db.query(
-          `UPDATE work_jira_intake SET assigned = 0 WHERE machine_id = ? AND assigned = 1
+        input.machineId,
+        key,
+        now,
+        now,
+      );
+    }
+    if (input.complete) {
+      db.query(
+        `UPDATE work_jira_intake SET assigned = 0 WHERE machine_id = ? AND assigned = 1
           AND link_key NOT IN (SELECT value FROM json_each(?))`,
-        ).run(input.machineId, JSON.stringify(keys));
-      }
-      return keys.length;
-    });
+      ).run(input.machineId, JSON.stringify(keys));
+    }
+    return keys.length;
+  });
 
-  /** Assigned, undismissed issues that no open task follows, newest assignment first. */
-  const queryJiraIntake = (input: QueryJiraIntakeInput): Effect.Effect<QueryJiraIntakeResult, UsageStoreError> =>
-    read(input.dbPath, 'queryJiraIntake', (db) => {
-      if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MAX_JIRA_INTAKE_KEYS) {
-        return invalidInput('Invalid Jira intake limit');
-      }
-      const rows = db
-        .query(
-          `SELECT link_key, first_seen_at FROM work_jira_intake
+/** Assigned, undismissed issues that no open task follows, newest assignment first. */
+export const queryJiraIntake = (input: QueryJiraIntakeInput): Effect.Effect<QueryJiraIntakeResult, UsageStoreError> =>
+  read(input.dbPath, 'queryJiraIntake', (db) => {
+    if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > MAX_JIRA_INTAKE_KEYS) {
+      return invalidInput('Invalid Jira intake limit');
+    }
+    const rows = db
+      .query(
+        `SELECT link_key, first_seen_at FROM work_jira_intake
           WHERE machine_id = ? AND assigned = 1 AND dismissed_at IS NULL
           ORDER BY first_seen_at DESC, link_key LIMIT ?`,
-        )
-        .all(input.machineId, MAX_JIRA_INTAKE_KEYS + 1);
-      const items: JiraIntakeEntry[] = [];
-      for (const row of rows.slice(0, MAX_JIRA_INTAKE_KEYS)) {
-        const value = record(row);
-        const key = String(value.link_key);
-        if (jiraKeyFollowers(db, input.machineId, key).open.length === 0) {
-          items.push({ firstSeenAt: instant(String(value.first_seen_at)), key });
-        }
+      )
+      .all(input.machineId, MAX_JIRA_INTAKE_KEYS + 1);
+    const items: JiraIntakeEntry[] = [];
+    for (const row of rows.slice(0, MAX_JIRA_INTAKE_KEYS)) {
+      const value = record(row);
+      const key = String(value.link_key);
+      if (jiraKeyFollowers(db, input.machineId, key).open.length === 0) {
+        items.push({ firstSeenAt: instant(String(value.first_seen_at)), key });
       }
-      return {
-        items: items.slice(0, input.limit),
-        truncated: items.length > input.limit || rows.length > MAX_JIRA_INTAKE_KEYS,
-      };
-    });
+    }
+    return {
+      items: items.slice(0, input.limit),
+      truncated: items.length > input.limit || rows.length > MAX_JIRA_INTAKE_KEYS,
+    };
+  });
 
-  /** Active combinations touching these tasks, kept or member, with both titles. */
-  const queryWorkThreadCombinations = (
-    input: QueryWorkThreadLinksInput,
-  ): Effect.Effect<readonly WorkThreadCombination[], UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadCombinations', (db) => {
-      const ids = [...new Set(input.threadIds)];
-      if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
-        return invalidInput('Invalid work thread combination scope');
-      }
-      return db
-        .query(
-          `SELECT c.kept_thread_id, kept.title AS kept_title, c.member_thread_id, member.title AS member_title, c.ticket_key
+/** Active combinations touching these tasks, kept or member, with both titles. */
+export const queryWorkThreadCombinations = (
+  input: QueryWorkThreadLinksInput,
+): Effect.Effect<readonly WorkThreadCombination[], UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadCombinations', (db) => {
+    const ids = [...new Set(input.threadIds)];
+    if (ids.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize || !ids.every(isWorkThreadId)) {
+      return invalidInput('Invalid work thread combination scope');
+    }
+    return db
+      .query(
+        `SELECT c.kept_thread_id, kept.title AS kept_title, c.member_thread_id, member.title AS member_title, c.ticket_key
           FROM work_thread_combinations c
           JOIN work_threads kept ON kept.thread_id = c.kept_thread_id
           JOIN work_threads member ON member.thread_id = c.member_thread_id
           WHERE c.separated_at IS NULL AND (c.kept_thread_id IN (SELECT value FROM json_each(?))
             OR c.member_thread_id IN (SELECT value FROM json_each(?)))
           ORDER BY c.combination_id`,
-        )
-        .all(JSON.stringify(ids), JSON.stringify(ids))
-        .map((row): WorkThreadCombination => {
-          const value = record(row);
-          return {
-            keptThreadId: String(value.kept_thread_id),
-            keptTitle: String(value.kept_title),
-            memberThreadId: String(value.member_thread_id),
-            memberTitle: String(value.member_title),
-            ticketKey: String(value.ticket_key),
-          };
-        });
-    });
+      )
+      .all(JSON.stringify(ids), JSON.stringify(ids))
+      .map((row): WorkThreadCombination => {
+        const value = record(row);
+        return {
+          keptThreadId: String(value.kept_thread_id),
+          keptTitle: String(value.kept_title),
+          memberThreadId: String(value.member_thread_id),
+          memberTitle: String(value.member_title),
+          ticketKey: String(value.ticket_key),
+        };
+      });
+  });
 
-  /**
-   * Tickets followed by several open tasks, each with the task that would be kept and what blocks
-   * the combination. Groups already combined into one task are not proposed again.
-   */
-  const queryWorkThreadCombineSuggestions = (input: {
-    readonly dbPath: string;
-    readonly machineId: string;
-  }): Effect.Effect<QueryWorkThreadCombineSuggestionsResult, UsageStoreError> =>
-    read(input.dbPath, 'queryWorkThreadCombineSuggestions', (db) => {
-      const items: WorkThreadCombineSuggestionEntry[] = [];
-      let oversized = false;
-      for (const [ticketKey, threads] of openTasksByTicket(db, input.machineId)) {
-        const effective = new Set(threads.map((thread) => keptThreadIdOf(db, thread.threadId) ?? thread.threadId));
-        const kept = keptThreadFor(threads, ticketKey);
-        if (effective.size < 2 || !kept) {
-          continue;
-        }
-        if (threads.length > WORK_THREAD_VIEW_BOUNDS.maxCombineParticipants) {
-          oversized = true;
-          continue;
-        }
-        items.push({
-          blockers: combineBlockers(db, threads).slice(0, WORK_THREAD_VIEW_BOUNDS.maxCombineBlockers),
-          keptThreadId: kept.threadId,
-          participants: threads.map((thread) => {
-            const links = db
-              .query(
-                `SELECT kind, link_key FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL
-                AND kind IN ('pull-request', 'session')`,
-              )
-              .all(thread.threadId)
-              .map(record);
-            return {
-              pullRequestKeys: links
-                .filter((link) => link.kind === 'pull-request')
-                .map((link) => String(link.link_key)),
-              sessionCount: links.filter((link) => link.kind === 'session').length,
-              thread,
-            };
-          }),
-          ticketKey,
-        });
+/**
+ * Tickets followed by several open tasks, each with the task that would be kept and what blocks
+ * the combination. Groups already combined into one task are not proposed again.
+ */
+export const queryWorkThreadCombineSuggestions = (input: {
+  readonly dbPath: string;
+  readonly machineId: string;
+}): Effect.Effect<QueryWorkThreadCombineSuggestionsResult, UsageStoreError> =>
+  read(input.dbPath, 'queryWorkThreadCombineSuggestions', (db) => {
+    const items: WorkThreadCombineSuggestionEntry[] = [];
+    let oversized = false;
+    for (const [ticketKey, threads] of openTasksByTicket(db, input.machineId)) {
+      const effective = new Set(threads.map((thread) => keptThreadIdOf(db, thread.threadId) ?? thread.threadId));
+      const kept = keptThreadFor(threads, ticketKey);
+      if (effective.size < 2 || !kept) {
+        continue;
       }
-      items.sort((left, right) => left.ticketKey.localeCompare(right.ticketKey));
-      return {
-        items: items.slice(0, WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions),
-        truncated: oversized || items.length > WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions,
-      };
-    });
-
-  return {
-    ...createWorkThreadSessionEvidenceStore(dependencies),
-    queryJiraIntake,
-    queryWorkThreadCombinations,
-    queryWorkThreadCombineSuggestions,
-    recordJiraIntake,
-    applyWorkThreadCommand,
-    applyWorkThreadWaitObservations,
-    attachDeclaredWorkThreadSessions,
-    reconcileWorkBranches,
-    countWorkThreads,
-    queryActiveWorkThreadLinks,
-    queryWorkThreadById,
-    queryWorkThreadEvents,
-    queryWorkThreadLinks,
-    queryWorkThreadProjects,
-    queryWorkThreadWaitCandidates,
-    queryWorkThreadsPage,
-    seedWorkThreads,
-  };
-};
+      if (threads.length > WORK_THREAD_VIEW_BOUNDS.maxCombineParticipants) {
+        oversized = true;
+        continue;
+      }
+      items.push({
+        blockers: combineBlockers(db, threads).slice(0, WORK_THREAD_VIEW_BOUNDS.maxCombineBlockers),
+        keptThreadId: kept.threadId,
+        participants: threads.map((thread) => {
+          const links = db
+            .query(
+              `SELECT kind, link_key FROM work_thread_links WHERE thread_id = ? AND detached_at IS NULL
+                AND kind IN ('pull-request', 'session')`,
+            )
+            .all(thread.threadId)
+            .map(record);
+          return {
+            pullRequestKeys: links.filter((link) => link.kind === 'pull-request').map((link) => String(link.link_key)),
+            sessionCount: links.filter((link) => link.kind === 'session').length,
+            thread,
+          };
+        }),
+        ticketKey,
+      });
+    }
+    items.sort((left, right) => left.ticketKey.localeCompare(right.ticketKey));
+    return {
+      items: items.slice(0, WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions),
+      truncated: oversized || items.length > WORK_THREAD_VIEW_BOUNDS.maxCombineSuggestions,
+    };
+  });
 
 /** Exact linked-session evidence. Bounds apply after identity selection, never to a global recent list. */
 export interface WorkThreadSessionEvidence {
@@ -3378,55 +3330,52 @@ const withBranchEvidence = (
   };
 };
 
-export const createWorkThreadSessionEvidenceStore = (dependencies: WorkThreadStoreDependencies) => {
-  function queryWorkThreadSessionEvidence(
-    input: QueryWorkThreadSessionEvidenceInput,
-  ): Effect.Effect<WorkThreadSessionEvidence, UsageStoreError>;
-  function queryWorkThreadSessionEvidence(
-    input: QueryWorkThreadSessionEvidenceBatchInput,
-  ): Effect.Effect<readonly WorkThreadSessionEvidenceBatchEntry[], UsageStoreError>;
-  function queryWorkThreadSessionEvidence(
-    input: QueryWorkThreadSessionEvidenceInput | QueryWorkThreadSessionEvidenceBatchInput,
-  ): Effect.Effect<WorkThreadSessionEvidence | readonly WorkThreadSessionEvidenceBatchEntry[], UsageStoreError> {
-    return dependencies.withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          db.exec('BEGIN');
-          try {
-            if ('threads' in input) {
-              if (
-                input.threads.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize ||
-                new Set(input.threads.map((thread) => thread.threadId)).size !== input.threads.length ||
-                input.threads.some(
-                  (thread) =>
-                    !isWorkThreadId(thread.threadId) || thread.links.some((link) => link.threadId !== thread.threadId),
-                )
-              ) {
-                return invalidInput('Invalid work thread session evidence batch');
-              }
-              if (input.threads.length === 0) {
-                return [];
-              }
-              const scopes = input.threads.map((thread) => withBranchSessions(db, thread, thread.threadId));
-              const page = readSessionEvidencePage(db, scopes);
-              return scopes.map((thread) => ({
-                threadId: thread.threadId,
-                evidence: withBranchEvidence(readThreadSessionEvidence(page, thread), thread),
-              }));
+export function queryWorkThreadSessionEvidence(
+  input: QueryWorkThreadSessionEvidenceInput,
+): Effect.Effect<WorkThreadSessionEvidence, UsageStoreError>;
+export function queryWorkThreadSessionEvidence(
+  input: QueryWorkThreadSessionEvidenceBatchInput,
+): Effect.Effect<readonly WorkThreadSessionEvidenceBatchEntry[], UsageStoreError>;
+export function queryWorkThreadSessionEvidence(
+  input: QueryWorkThreadSessionEvidenceInput | QueryWorkThreadSessionEvidenceBatchInput,
+): Effect.Effect<WorkThreadSessionEvidence | readonly WorkThreadSessionEvidenceBatchEntry[], UsageStoreError> {
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        db.exec('BEGIN');
+        try {
+          if ('threads' in input) {
+            if (
+              input.threads.length > WORK_THREAD_VIEW_BOUNDS.maxPageSize ||
+              new Set(input.threads.map((thread) => thread.threadId)).size !== input.threads.length ||
+              input.threads.some(
+                (thread) =>
+                  !isWorkThreadId(thread.threadId) || thread.links.some((link) => link.threadId !== thread.threadId),
+              )
+            ) {
+              return invalidInput('Invalid work thread session evidence batch');
             }
-            const threadId = input.links[0]?.threadId;
-            const scope =
-              threadId === undefined
-                ? { ...input, branchLinks: [], branchTruncated: false }
-                : withBranchSessions(db, input, threadId);
-            return withBranchEvidence(readThreadSessionEvidence(readSessionEvidencePage(db, [scope]), scope), scope);
-          } finally {
-            db.exec('COMMIT');
+            if (input.threads.length === 0) {
+              return [];
+            }
+            const scopes = input.threads.map((thread) => withBranchSessions(db, thread, thread.threadId));
+            const page = readSessionEvidencePage(db, scopes);
+            return scopes.map((thread) => ({
+              threadId: thread.threadId,
+              evidence: withBranchEvidence(readThreadSessionEvidence(page, thread), thread),
+            }));
           }
-        },
-        catch: (cause) => dependencies.usageStoreReadError('queryWorkThreadSessionEvidence', input.dbPath, cause),
-      }),
-    );
-  }
-  return { queryWorkThreadSessionEvidence };
-};
+          const threadId = input.links[0]?.threadId;
+          const scope =
+            threadId === undefined
+              ? { ...input, branchLinks: [], branchTruncated: false }
+              : withBranchSessions(db, input, threadId);
+          return withBranchEvidence(readThreadSessionEvidence(readSessionEvidencePage(db, [scope]), scope), scope);
+        } finally {
+          db.exec('COMMIT');
+        }
+      },
+      catch: (cause) => usageStoreReadError('queryWorkThreadSessionEvidence', input.dbPath, cause),
+    }),
+  );
+}

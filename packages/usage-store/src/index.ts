@@ -1,7 +1,3 @@
-import { withUsageStoreReader, withUsageStoreWriter } from './connections';
-import { usageStoreError, usageStoreReadError } from './errors';
-import { createWorkThreadStore } from './work-thread-store';
-
 export {
   countClaudeDesktopSessions,
   importClaudeDesktopSessions,
@@ -105,8 +101,8 @@ export {
   recordJiraSyncState,
   recordWorkFactRun,
 } from './work-fact-store';
-
-export const {
+export { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } from './work-session-join';
+export {
   applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
@@ -119,17 +115,10 @@ export const {
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   queryWorkThreadProjects,
-  queryWorkThreadWaitCandidates,
   queryWorkThreadSessionEvidence,
   queryWorkThreadsPage,
+  queryWorkThreadWaitCandidates,
   reconcileWorkBranches,
   recordJiraIntake,
   seedWorkThreads,
-} = createWorkThreadStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
-
-export { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } from './work-session-join';
+} from './work-thread-store';
