@@ -22,6 +22,10 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => rm(fixture, { force: true, recursive: true })));
 });
 
+// A fixture holds only the packages its test is about, so the guarded packages the real repository must contain
+// are checked only when present. The real-tree test and the CLI keep the default, which requires them.
+const collectFixtureViolations = (root: string) => collectViolations(root, { guardedPackages: 'when-present' });
+
 const createFixture = async (): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-boundaries-'));
   fixtures.push(root);
@@ -52,7 +56,7 @@ describe('package boundary guard', () => {
       name: '@ai-usage/example',
     });
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/example/package.json',
         packageName: '@ai-usage/example',
@@ -71,7 +75,7 @@ describe('package boundary guard', () => {
       `import '${retiredSyncPackage}';\nexport { pair } from '${retiredLanPackage}/client';\n`,
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations.map((violation) => violation.specifier)).toEqual([
       retiredSyncPackage,
       `${retiredLanPackage}/client`,
@@ -82,7 +86,7 @@ describe('package boundary guard', () => {
     const root = await createFixture();
     await writePackage(root, 'packages', 'sync', { name: retiredSyncPackage });
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/sync/package.json',
         packageName: retiredSyncPackage,
@@ -101,7 +105,7 @@ describe('package boundary guard', () => {
       `const sync = require('${retiredSyncPackage}/client');\nvoid sync;\n`,
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/example/src/index.ts',
         packageName: '@ai-usage/example',
@@ -120,7 +124,7 @@ describe('package boundary guard', () => {
       `import { main } from '${cliRuntimePackage}';\nvoid main;\n`,
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'apps/web/src/index.ts',
         packageName: '@ai-usage/web',
@@ -142,7 +146,7 @@ describe('package boundary guard', () => {
       `import '${localCollectorsClaudeHistory}';\n`,
     );
 
-    expect(await collectViolations(root)).toEqual(
+    expect(await collectFixtureViolations(root)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           file: 'apps/web/package.json',
@@ -174,7 +178,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/effect-runtime';\nimport '@ai-usage/local-collectors';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -202,7 +206,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/report-data';\n",
     );
 
-    expect(await collectViolations(root)).toEqual(
+    expect(await collectFixtureViolations(root)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           packageName: '@ai-usage/usage-engine-control',
@@ -226,7 +230,7 @@ describe('package boundary guard', () => {
       `import '${reportCoreSibling}/client';\n`,
     );
 
-    expect(await collectViolations(root)).toEqual(
+    expect(await collectFixtureViolations(root)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           packageName: '@ai-usage/usage-engine-control',
@@ -254,7 +258,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-store/writer';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toContainEqual(
       expect.objectContaining({ packageName: '@ai-usage/web', specifier: '@ai-usage/usage-store/writer' }),
     );
@@ -280,7 +284,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-store/performance-testing';\n",
     );
 
-    expect(await collectViolations(root)).toEqual([]);
+    expect(await collectFixtureViolations(root)).toEqual([]);
   });
 
   test('rejects performance instrumentation from general server and client Web modules', async () => {
@@ -297,7 +301,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-store/performance-testing';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ file: 'apps/web/src/index.ts', specifier: usageStorePerformanceTesting }),
@@ -332,7 +336,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-merge';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -360,7 +364,7 @@ describe('package boundary guard', () => {
       `import '${mixedStoreSpecifier}';\nimport '@ai-usage/usage-engine-control/testing';\n`,
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations.map(({ specifier }) => specifier)).toEqual([
       '@ai-usage/usage-store',
       '@ai-usage/usage-engine-control/testing',
@@ -388,7 +392,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-engine-runtime';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toContainEqual(
       expect.objectContaining({
         file: 'apps/web/package.json',
@@ -418,7 +422,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-engine-control/client';\nimport '@ai-usage/dashboard/server';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -440,7 +444,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-engine-control/testing';\n",
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'apps/web/src/testing/client.ts',
         packageName: '@ai-usage/web',
@@ -459,7 +463,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/usage-store/writer';\n",
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/orphan-writer/src/index.ts',
         packageName: '@ai-usage/orphan-writer',
@@ -488,7 +492,7 @@ describe('package boundary guard', () => {
     await mkdir(e2eDirectory, { recursive: true });
     await writeFile(path.join(e2eDirectory, 'fixture.ts'), "import '@ai-usage/local-machine/testing/harness-home';\n");
 
-    expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
+    expect((await collectFixtureViolations(root)).map(({ specifier }) => specifier)).toEqual([
       '@ai-usage/local-machine',
       '@ai-usage/local-machine/testing/harness-home',
     ]);
@@ -527,7 +531,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/local-collectors/codex-history';\n",
     );
 
-    expect(await collectViolations(root)).toEqual(
+    expect(await collectFixtureViolations(root)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           file: 'packages/local-machine/package.json',
@@ -572,7 +576,7 @@ describe('package boundary guard', () => {
     );
     await writePackage(root, 'packages', 'local-collectors', { name: '@ai-usage/local-collectors' });
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/web-bridge/src/index.ts',
         message: expect.stringContaining('@ai-usage/web -> @ai-usage/web-bridge -> @ai-usage/local-collectors'),
@@ -597,7 +601,7 @@ describe('package boundary guard', () => {
       ].join('\n'),
     );
 
-    expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
+    expect((await collectFixtureViolations(root)).map(({ specifier }) => specifier)).toEqual([
       localCollectorsClaudeHistory,
       '@ai-usage/usage-engine/main',
       '@ai-usage/usage-store/internal',
@@ -619,7 +623,7 @@ describe('package boundary guard', () => {
       ].join('\n'),
     );
 
-    expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
+    expect((await collectFixtureViolations(root)).map(({ specifier }) => specifier)).toEqual([
       reportDataPackage,
       `${reportDataPackage}/served-revision-query`,
     ]);
@@ -637,7 +641,7 @@ describe('package boundary guard', () => {
       ),
     ]);
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/report-data/src/bridge.ts',
         packageName: reportDataPackage,
@@ -658,7 +662,7 @@ describe('package boundary guard', () => {
       ),
     ]);
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/report-data/src/bridge.ts',
         packageName: reportDataPackage,
@@ -675,7 +679,7 @@ describe('package boundary guard', () => {
       "export { missing } from './missing.js';\n",
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/report-data/src/portable-report.ts',
         packageName: reportDataPackage,
@@ -694,7 +698,7 @@ describe('package boundary guard', () => {
       "<script>import '@ai-usage/local-collectors/codex-history';</script>\n",
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'apps/web/src/routes/+page.svelte',
         packageName: '@ai-usage/web',
@@ -714,7 +718,7 @@ describe('package boundary guard', () => {
 `,
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'apps/web/src/lib/dynamic.svelte',
         packageName: '@ai-usage/web',
@@ -733,7 +737,7 @@ describe('package boundary guard', () => {
       '<script context="module">export { merge } from \'@ai-usage/usage-merge\';</script>\n',
     );
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'apps/web/src/lib/re-export.svelte',
         packageName: '@ai-usage/web',
@@ -757,7 +761,7 @@ describe('package boundary guard', () => {
       ),
     ]);
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/web-bridge/src/bridge.svelte',
         message: expect.stringContaining('@ai-usage/web -> @ai-usage/web-bridge -> @ai-usage/local-collectors'),
@@ -779,7 +783,7 @@ describe('package boundary guard', () => {
       ),
     ]);
 
-    expect(await collectViolations(root)).toContainEqual(
+    expect(await collectFixtureViolations(root)).toContainEqual(
       expect.objectContaining({
         file: 'packages/report-data/src/bridge.svelte',
         packageName: reportDataPackage,
@@ -799,7 +803,7 @@ describe('package boundary guard', () => {
       await writeFile(path.join(directory, 'forbidden.svelte'), "<script>import '@ai-usage/usage-merge';</script>\n");
     }
 
-    expect(await collectViolations(root)).toEqual([]);
+    expect(await collectFixtureViolations(root)).toEqual([]);
   });
 
   test('keeps the MCP adapter on the skills package and away from storage', async () => {
@@ -815,7 +819,7 @@ describe('package boundary guard', () => {
       "import '@ai-usage/skills';\nimport 'bun:sqlite';\n",
     );
 
-    const violations = await collectViolations(root);
+    const violations = await collectFixtureViolations(root);
     expect(violations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -835,5 +839,305 @@ describe('package boundary guard', () => {
 
   test('accepts the current workspace graph', async () => {
     expect(await collectViolations(repositoryRoot)).toEqual([]);
+  });
+});
+
+const writeSource = async (root: string, relativeFile: string, source: string): Promise<void> => {
+  await mkdir(path.dirname(path.join(root, relativeFile)), { recursive: true });
+  await writeFile(path.join(root, relativeFile), source);
+};
+
+const violationLocations = async (root: string): Promise<readonly string[]> =>
+  (await collectFixtureViolations(root)).map(({ file, specifier }) => `${file} ${specifier}`).toSorted();
+
+describe('web contract production closure', () => {
+  const webContractPackage = { name: `${workspacePackageScope}web-contract` };
+  const forbiddenWebRouter = ['@ai-usage', 'web', 'server', 'router'].join('/');
+
+  test('rejects direct, re-exported and literal dynamic runtime imports', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      `import 'node:fs';\nexport { router } from '${forbiddenWebRouter}';\nexport const load = () => import('bun:sqlite');\n`,
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/web-contract/src/index.ts node:fs',
+        `packages/web-contract/src/index.ts ${forbiddenWebRouter}`,
+        'packages/web-contract/src/index.ts bun:sqlite',
+      ].toSorted(),
+    );
+  });
+
+  test('follows relative imports to a forbidden dependency in a leaf module', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'web-contract', webContractPackage, "import './leaf';\n");
+    await writeSource(root, 'packages/web-contract/src/leaf.ts', "import '@orpc/server';\n");
+
+    expect(await violationLocations(root)).toEqual(['packages/web-contract/src/leaf.ts @orpc/server']);
+  });
+
+  test('fails closed for relative imports that leave src or do not resolve', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      "import '../scripts/generate';\nimport './missing';\n",
+    );
+    await writeSource(root, 'packages/web-contract/scripts/generate.ts', 'export {};\n');
+
+    expect(await violationLocations(root)).toEqual([
+      'packages/web-contract/src/index.ts ../scripts/generate',
+      'packages/web-contract/src/index.ts ./missing',
+    ]);
+  });
+
+  test('permits only reviewed pure contract dependencies, internal leaves and test sources', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'web-contract', webContractPackage, "export { value } from './value';\n");
+    await writeSource(
+      root,
+      'packages/web-contract/src/value.ts',
+      "import { oc } from '@orpc/contract';\nimport * as v from 'valibot';\nimport type { Row } from '@ai-usage/report-core/rows';\nexport const value = oc.input(v.string());\n",
+    );
+    await writeSource(root, 'packages/web-contract/src/value.test.ts', "import 'bun:test';\nimport 'node:fs';\n");
+
+    expect(await collectFixtureViolations(root)).toEqual([]);
+  });
+
+  test('follows production imports into fixture and .mts modules and rejects test-source imports', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      "import './helpers.test';\nimport './helpers.test.js';\nimport './leaf.mjs';\n",
+    );
+    await writeSource(root, 'packages/web-contract/src/contract.ts', "export * from './fixtures/runtime';\n");
+    await writeSource(root, 'packages/web-contract/src/fixtures/runtime.ts', "import 'node:fs';\n");
+    await writeSource(root, 'packages/web-contract/src/helpers.test.ts', 'export {};\n');
+    await writeSource(root, 'packages/web-contract/src/leaf.mts', "import 'bun:sqlite';\n");
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/web-contract/src/fixtures/runtime.ts node:fs',
+        'packages/web-contract/src/index.ts ./helpers.test',
+        'packages/web-contract/src/index.ts ./helpers.test.js',
+        'packages/web-contract/src/leaf.mts bun:sqlite',
+      ].toSorted(),
+    );
+  });
+
+  test('recognises dynamic import and require calls written with a space', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      "export const load = () => import ('node:fs');\nexport const open = () => require ('bun:sqlite');\n",
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      ['packages/web-contract/src/index.ts node:fs', 'packages/web-contract/src/index.ts bun:sqlite'].toSorted(),
+    );
+  });
+
+  test('permits only the exact reviewed Skills contract entrypoints', async () => {
+    const root = await createFixture();
+    const unreviewedSkillsSpecifier = ['@ai-usage/skills', 'not-reviewed'].join('/');
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      `import '@ai-usage/skills/config';\nimport '@ai-usage/skills/shared';\nimport '@ai-usage/skills/application';\nimport '@ai-usage/skills';\nimport '${unreviewedSkillsSpecifier}';\n`,
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/web-contract/src/index.ts @ai-usage/skills/application',
+        'packages/web-contract/src/index.ts @ai-usage/skills',
+        `packages/web-contract/src/index.ts ${unreviewedSkillsSpecifier}`,
+      ].toSorted(),
+    );
+  });
+});
+
+describe('zstd decoder ownership', () => {
+  const localCollectorsPackage = { name: `${workspacePackageScope}local-collectors` };
+
+  test('rejects one-shot zstd decoders in local-machine and local-collectors production source', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'local-machine',
+      { name: localMachineRoot },
+      "import { ZstdDecompress, zstdDecompressSync } from 'node:zlib';\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'local-collectors',
+      localCollectorsPackage,
+      'export const decode = (bytes: Uint8Array) => Bun.zstdDecompress(bytes);\n',
+    );
+    await writeSource(
+      root,
+      'packages/local-collectors/src/testing/stream.ts',
+      "import { createZstdDecompress } from 'node:zlib';\n",
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/local-machine/src/index.ts ZstdDecompress',
+        'packages/local-machine/src/index.ts zstdDecompressSync',
+        'packages/local-collectors/src/index.ts zstdDecompress',
+        'packages/local-collectors/src/testing/stream.ts createZstdDecompress',
+      ].toSorted(),
+    );
+  });
+
+  test('scans fixture directories and every source that is not a .test file', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'local-collectors', localCollectorsPackage);
+    await writeSource(
+      root,
+      'packages/local-collectors/src/fixtures/decode.ts',
+      'export const decode = (bytes: Uint8Array) => Bun.zstdDecompressSync(bytes);\n',
+    );
+    await writeSource(root, 'packages/local-collectors/src/decode.spec.ts', 'Bun.zstdDecompress(new Uint8Array(0));\n');
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/local-collectors/src/decode.spec.ts zstdDecompress',
+        'packages/local-collectors/src/fixtures/decode.ts zstdDecompressSync',
+      ].toSorted(),
+    );
+  });
+
+  test('allows the streaming decoder only in the local-history reader', async () => {
+    const root = await createFixture();
+    const streaming = "export const stream = new DecompressionStream('zstd');\n";
+    await writePackage(root, 'packages', 'local-machine', { name: localMachineRoot }, streaming);
+    await writeSource(root, 'packages/local-machine/src/local-history.ts', streaming);
+    await writeSource(root, 'packages/local-collectors/src/index.ts', streaming);
+    await writeFile(
+      path.join(root, 'packages/local-collectors/package.json'),
+      `${JSON.stringify(localCollectorsPackage)}\n`,
+    );
+
+    expect(await violationLocations(root)).toEqual([
+      'packages/local-collectors/src/index.ts DecompressionStream',
+      'packages/local-machine/src/index.ts DecompressionStream',
+    ]);
+  });
+
+  test('leaves compressors, test sources and other packages alone', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'local-machine',
+      { name: localMachineRoot },
+      'export const archive = (text: string) => Bun.zstdCompressSync(text);\n',
+    );
+    await writeSource(
+      root,
+      'packages/local-machine/src/archive.test.ts',
+      "Bun.zstdDecompressSync(new Uint8Array(0));\nnew DecompressionStream('zstd');\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'example',
+      { name: '@ai-usage/example' },
+      "import { zstdDecompressSync } from 'node:zlib';\n",
+    );
+
+    expect(await collectFixtureViolations(root)).toEqual([]);
+  });
+});
+
+describe('engine package public exports', () => {
+  const controlPackage = `${workspacePackageScope}usage-engine-control`;
+  const controlExports = {
+    '.': './src/contracts.ts',
+    './client': './src/client.ts',
+    './completion': './src/completion.ts',
+    './delegation-operations': './src/delegation-operations.ts',
+    './handoff': './src/handoff.ts',
+    './node': './src/rendezvous.ts',
+    './testing': './src/testing.ts',
+  };
+
+  test('accepts the reviewed exports map', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'usage-engine-control', { exports: controlExports, name: controlPackage });
+
+    expect(await collectFixtureViolations(root)).toEqual([]);
+  });
+
+  test('rejects an added, removed or retargeted subpath and a missing map', async () => {
+    const root = await createFixture();
+    const { './testing': _removed, ...withoutTesting } = controlExports;
+    await writePackage(root, 'packages', 'usage-engine-control', {
+      exports: { ...withoutTesting, '.': './src/index.ts', './internal': './src/internal.ts' },
+      name: controlPackage,
+    });
+    await writePackage(root, 'apps', 'usage-engine', { name: `${workspacePackageScope}usage-engine` });
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/usage-engine-control/package.json .',
+        'packages/usage-engine-control/package.json ./internal',
+        'packages/usage-engine-control/package.json ./testing',
+        'apps/usage-engine/package.json ./main',
+      ].toSorted(),
+    );
+  });
+});
+
+describe('guarded package presence', () => {
+  const guardedPackageNames = [
+    'local-collectors',
+    'local-machine',
+    'usage-engine',
+    'usage-engine-control',
+    'usage-engine-runtime',
+    'usage-store',
+    'web-contract',
+  ].map((name) => `${workspacePackageScope}${name}`);
+
+  test('requires every guarded package by default', async () => {
+    const root = await createFixture();
+
+    const violations = await collectViolations(root);
+    expect(violations.map(({ packageName }) => packageName).toSorted()).toEqual(guardedPackageNames);
+    expect(violations.every(({ message }) => message.includes('is missing from the workspace'))).toBe(true);
+  });
+
+  test('rejects a guarded package without src or without production source', async () => {
+    const root = await createFixture();
+    await writeSource(
+      root,
+      'packages/web-contract/package.json',
+      `${JSON.stringify({ name: `${workspacePackageScope}web-contract` })}\n`,
+    );
+    await writeSource(root, 'packages/local-machine/package.json', `${JSON.stringify({ name: localMachineRoot })}\n`);
+    await writeSource(root, 'packages/local-machine/src/reader.test.ts', 'export {};\n');
+
+    expect(await violationLocations(root)).toEqual([
+      'packages/local-machine/src packages/local-machine/src',
+      'packages/web-contract/src packages/web-contract/src',
+    ]);
   });
 });

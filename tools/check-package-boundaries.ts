@@ -1,5 +1,19 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  collectPackageExportsViolations,
+  collectSourceFiles,
+  collectWebContractClosureViolations,
+  collectZstdDecoderViolations,
+  type GuardedPackagePresence,
+  isPackageOrSubpath,
+  isTestOnlySource,
+  lineNumberFor,
+  type PackageBoundaryViolation,
+  resolveRelativeModule,
+} from './package-boundary-reviewed-rules';
+
+export type { PackageBoundaryViolation } from './package-boundary-reviewed-rules';
 
 const workspacePackageParents = ['apps', 'packages'];
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const;
@@ -8,18 +22,6 @@ const productionDependencyFields = new Set<DependencyField>([
   'peerDependencies',
   'optionalDependencies',
 ]);
-const ignoredDirectories = new Set([
-  '.direnv',
-  '.git',
-  '.output-build',
-  '.svelte-kit',
-  '.turbo',
-  '.worktrees',
-  'dist',
-  'node_modules',
-  'styled-system',
-]);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
 const moduleImportPattern =
@@ -37,15 +39,8 @@ interface BoundaryPolicy {
 interface PackageInfo {
   dependencies: Map<string, DependencyField>;
   directory: string;
+  exports: unknown;
   packageName: string;
-}
-
-export interface PackageBoundaryViolation {
-  file: string;
-  line?: number;
-  message: string;
-  packageName: string;
-  specifier: string;
 }
 
 const workspacePackageScope = '@ai-usage/';
@@ -173,15 +168,7 @@ const engineRuntimeAllowedWorkspaceDependencies = new Set([
   usageMergePackage,
   usageStorePackage,
 ]);
-const testOnlySourcePattern =
-  /(?:^|\/)(?:__tests__|e2e|fixture|fixtures|test|tests)(?:\/|$)|(?:^|[.-])(?:e2e|spec|test)\.[^/]+$/u;
-
 const isWorkspaceSpecifier = (specifier: string): boolean => specifier.startsWith(workspacePackageScope);
-
-const isTestOnlySource = (relativeFile: string): boolean => testOnlySourcePattern.test(relativeFile);
-
-const isPackageOrSubpath = (specifier: string, packageName: string): boolean =>
-  specifier === packageName || specifier.startsWith(`${packageName}/`);
 
 const workspacePackageNameFor = (specifier: string): string => specifier.split('/').slice(0, 2).join('/');
 
@@ -374,6 +361,7 @@ async function readPackageInfo(packageJsonPath: string): Promise<PackageInfo | n
   return {
     dependencies,
     directory: path.dirname(packageJsonPath),
+    exports: json.exports,
     packageName: json.name,
   };
 }
@@ -395,28 +383,6 @@ async function discoverWorkspacePackages(root: string) {
   }
   return packages;
 }
-
-async function collectSourceFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) {
-        files.push(...(await collectSourceFiles(path.join(directory, entry.name))));
-      }
-      continue;
-    }
-
-    if (entry.isFile() && checkedExtensions.has(path.extname(entry.name))) {
-      files.push(path.join(directory, entry.name));
-    }
-  }
-
-  return files;
-}
-
-const lineNumberFor = (text: string, index: number) => text.slice(0, index).split('\n').length;
 
 function collectDependencyViolations(
   root: string,
@@ -524,40 +490,6 @@ const collectTargetImportViolations = async (
     }
   }
   return violations;
-};
-
-const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.svelte'] as const;
-const emittedExtensionSources = new Map<string, readonly string[]>([
-  ['.js', ['.ts', '.tsx']],
-  ['.jsx', ['.tsx']],
-  ['.mjs', ['.mts']],
-  ['.cjs', ['.cts']],
-]);
-
-const resolveRelativeModule = async (packageDirectory: string, importer: string, specifier: string) => {
-  const base = path.resolve(path.dirname(importer), specifier);
-  const relativeBase = path.relative(packageDirectory, base);
-  if (relativeBase.startsWith('..') || path.isAbsolute(relativeBase)) {
-    return { status: 'outside-package' as const };
-  }
-  const extension = path.extname(base);
-  const substitutedExtensions = emittedExtensionSources.get(extension) ?? [];
-  const candidates = extension
-    ? [base, ...substitutedExtensions.map((sourceExtension) => `${base.slice(0, -extension.length)}${sourceExtension}`)]
-    : [
-        ...sourceModuleExtensions.map((sourceExtension) => `${base}${sourceExtension}`),
-        ...sourceModuleExtensions.map((sourceExtension) => path.join(base, `index${sourceExtension}`)),
-      ];
-  for (const candidate of candidates) {
-    const exists = await readFile(candidate, 'utf8').then(
-      () => true,
-      () => false,
-    );
-    if (exists) {
-      return { file: candidate, status: 'resolved' as const };
-    }
-  }
-  return { status: 'unresolved' as const };
 };
 
 const collectPortableReportClosureViolations = async (
@@ -723,7 +655,10 @@ const collectApplicationProductionClosureViolations = async (
   return violations;
 };
 
-export async function collectViolations(root: string): Promise<PackageBoundaryViolation[]> {
+export async function collectViolations(
+  root: string,
+  { guardedPackages = 'required' }: { guardedPackages?: GuardedPackagePresence } = {},
+): Promise<PackageBoundaryViolation[]> {
   const packages = await discoverWorkspacePackages(root);
   const violations: PackageBoundaryViolation[] = [];
   const applicationPackages = new Set(
@@ -733,6 +668,9 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
   );
   violations.push(...(await collectPortableReportClosureViolations(root, packages)));
   violations.push(...(await collectApplicationProductionClosureViolations(root, packages)));
+  violations.push(...(await collectWebContractClosureViolations(root, packages, guardedPackages)));
+  violations.push(...(await collectZstdDecoderViolations(root, packages, guardedPackages)));
+  violations.push(...collectPackageExportsViolations(root, packages, guardedPackages));
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);
