@@ -258,15 +258,34 @@ describe('production web build lock', () => {
 describe('production web build command', () => {
   test('cannot be bypassed by a Turbo cache restore from the root build entrypoint', async () => {
     const repositoryDirectory = path.resolve(import.meta.dirname, '../..');
-    const turboConfig = JSON.parse(await readFile(path.join(repositoryDirectory, 'turbo.json'), 'utf8')) as {
-      tasks?: Record<string, { cache?: boolean }>;
-    };
+    // What the root `turbo run build` resolves for this package, as Turbo itself reports it.
+    const dryRun = Bun.spawn(
+      [
+        path.join(repositoryDirectory, 'node_modules', '.bin', 'turbo'),
+        'run',
+        'build',
+        '--filter=@ai-usage/web',
+        '--dry=json',
+      ],
+      { cwd: repositoryDirectory, stderr: 'pipe', stdout: 'pipe' },
+    );
+    const [plan, dryRunErrors, dryRunExit] = await Promise.all([
+      new Response(dryRun.stdout).text(),
+      new Response(dryRun.stderr).text(),
+      dryRun.exited,
+    ]);
+    expect({ dryRunErrors, dryRunExit }).toEqual({ dryRunErrors: '', dryRunExit: 0 });
+    const webBuild = (
+      JSON.parse(plan) as {
+        tasks: ReadonlyArray<{ command: string; resolvedTaskDefinition: { cache: boolean }; taskId: string }>;
+      }
+    ).tasks.find(({ taskId }) => taskId === '@ai-usage/web#build');
+    expect(webBuild?.resolvedTaskDefinition.cache).toBe(false);
+    expect(webBuild?.command).toBe('bun --no-env-file sveltekit-production-build.ts');
+
     const packageManifest = JSON.parse(await readFile(path.join(import.meta.dirname, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
     };
-
-    expect(turboConfig.tasks?.['@ai-usage/web#build']?.cache).toBe(false);
-    expect(packageManifest.scripts?.build).toBe('bun --no-env-file sveltekit-production-build.ts');
     expect(packageManifest.scripts?.['dev:prepare']).toStartWith(
       'AI_USAGE_SVELTEKIT_PHASE=check bun --no-env-file svelte-kit sync &&',
     );
@@ -314,15 +333,10 @@ describe('production web build command', () => {
 });
 
 describe('production web runtime bootstrap', () => {
-  test('rebuilds a trusted HTTP loopback origin after purging inherited adapter configuration', async () => {
+  // The purge of inherited adapter configuration and the rebuilt loopback ORIGIN are observed on a
+  // stubbed start in sveltekit-loopback-adapter.test.ts.
+  test('refuses a PORT that is not a canonical listener port', async () => {
     const bootstrapPath = path.join(import.meta.dirname, 'start.mjs');
-    const source = await readFile(bootstrapPath, 'utf8');
-    const purgeIndex = source.indexOf('delete process.env[key]');
-    const trustedOriginIndex = source.indexOf('process.env.ORIGIN =');
-
-    expect(purgeIndex).toBeGreaterThanOrEqual(0);
-    expect(trustedOriginIndex).toBeGreaterThan(purgeIndex);
-
     const invalidPortProcess = Bun.spawn([process.execPath, '--no-env-file', bootstrapPath], {
       cwd: import.meta.dirname,
       env: {
