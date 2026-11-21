@@ -31,12 +31,8 @@ import {
   queryWorkThreadsPage,
 } from './reader';
 import { workFactSchemaSql } from './work-fact-store';
-import {
-  createWorkThreadStore,
-  type WorkThreadCombineSuggestionEntry,
-  type WorkThreadSeed,
-  workThreadSchemaSql,
-} from './work-thread-store';
+import { workThreadSchemaSql } from './work-thread-schema';
+import { createWorkThreadStore, type WorkThreadCombineSuggestionEntry, type WorkThreadSeed } from './work-thread-store';
 import {
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
