@@ -74,6 +74,16 @@ Observations are an auxiliary fact family modelled on `provider_quota_*`, not a
 `skills.server.ts` read-only seam so `@ai-usage/skills` gains no usage-store
 dependency.
 
+Plan 127 records the 2026-11-21 cleanliness audit at `a1a902be`. Mechanical
+hygiene is intact (no `any`, no suppressed type errors, no skipped tests); the
+debt is module shape: the cognitive-complexity rule is switched off and 284
+functions exceed the preset's 20, 39 non-test files exceed 1,000 lines, and
+`apps/web/src` keeps 96 files flat at its root. The plan first makes both
+limits enforceable with the existing debt suppressed in place, then splits
+`packages/usage-store/src/index.ts`, relocates the web root, extracts the
+campaigns page script and decomposes the seven worst functions. Every packet
+is behaviour-preserving and may not edit an existing test assertion.
+
 ## Execution order & status
 
 Current continuation: [123 — Work thread convergence](123-work-thread-convergence.md), on
@@ -88,6 +98,7 @@ per-turn no-credit guarantee. Earlier delivery records remain historical.
 | 123 | [Work thread convergence (Unité de travail v3)](123-work-thread-convergence.md) (was 120) | P1 | L | 122 at `7b133724`; PR #67 `de3c935c` + main `62e84b1a` merged at `ea8f48e9` | DELIVERED locally on `work-unit-convergence` (rounds 2–6, two adversarial reviews, real-data proof on store copies); not pushed; Jira real path and daily-store activation open |
 | 125 | [Claude Code OTLP intake — count the API calls the transcripts never record](125-claude-otlp-intake.md) (was 124; 124 is taken by the multi-account delegation plan) | P2 | L | none (planned at `88b45743`) | TODO — Step 0 measurement first; STOP if `request_id` does not join transcripts |
 | 126 | [Usage-engine minute cycle — stop rebuilding everything every 60 seconds](126-engine-minute-cycle-cost.md) | P2 | M | none (planned at `a42fc803`) | DONE with deferrals (operator decisions 2026-11-18) on `perf/engine-minute-cycle-cost`, PR #103 merges Steps 0–4; Step 3a not executed (under the ≥ 20 % rule in Step 1), Step 5 not started. Step 4 on real data (two like-for-like pairs on byte-identical store copies): CPU per active minute 10.2–12.1 s → 7.7–8.2 s (means; −24 to −32 %), still above the ≤ 4.0 s target, publication alone 4.3–4.5 s; peak 1,187 MB → 875–909 MB (target met); `codex.sessions` −69 % CPU and −61 % ΔRSS per pass, `rtk.savings` −85 %, prepare step −51 %; publications 1.8–2.0 → 1.6 per minute, none woken by Codex; served content identical except the rows of sessions active after the copies. Operator decisions on the three STOPs: keep the Codex resident index and accept the idle RSS floor rise of 22–26 % (247–248 → 310–313 MB) over the 10 % budget, which it buys with 0.8 s CPU per minute and a lower peak; the publication frequency cap (Steps 3c and 5) and the per-revision shared-rows schema change are deferred to a separate future plan, as is the `datasets.providerStatus.generatedAt` clock that blocks the fingerprint-unchanged short-circuit. Review follow-up: a Codex pass whose archived walk failed, and the one after it, are complete passes, so incremental collection stays equal to a full one around a walk failure |
+| 127 | [Structural cleanliness — enforce complexity and file size, then pay down the worst of it](127-structural-cleanliness.md) | P2 | L | none (planned at `a1a902be`) | TODO — five packets: P1 ratchet first; P2 `usage-store/src/index.ts` split, P3 web `src` root, P5 worst functions in parallel under exclusive scopes; P4 after P3 |
 | 001 | Integrate Skill Management Into ai-usage | P1 | L | - | DONE |
 | 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
 | 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |
@@ -768,6 +779,13 @@ sequence overlapping files and rebase/re-read before execution.
 
 ## Findings considered and rejected
 
+- 2026-11-21 cleanliness audit (plan 127 carries the full reasoning): replacing
+  `as Row` casts on SQLite reads with runtime validation, removing the 16
+  `as unknown as` in non-test source, unifying the per-store `SqliteDatabase`
+  interfaces, making `git blame` granular again, reducing ADR/plan volume, and
+  splitting every file over 1,000 lines were all rejected. Server-side e2e
+  fixtures are loaded through a mode-gated dynamic import and are not a
+  finding; synthetic data in the browser closure is an open operator decision.
 - Directly copy `../agent-skills` into `ai-usage`: rejected because the prototype
   uses executable TypeScript config/state fallbacks, weaker runtime input
   validation, and a monolithic route file that does not match `ai-usage`
