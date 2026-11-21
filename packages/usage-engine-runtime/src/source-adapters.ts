@@ -13,7 +13,10 @@ import {
   selectedHarnessAdapters,
 } from '@ai-usage/local-collectors/collectors';
 import { type BoundedRun, observeExecutors } from '@ai-usage/local-collectors/executor-observations';
-import { discoverPullRequests } from '@ai-usage/local-collectors/github-pull-request-discovery';
+import {
+  type DiscoveredPullRequestLink,
+  discoverPullRequests,
+} from '@ai-usage/local-collectors/github-pull-request-discovery';
 import {
   GITHUB_PULL_REQUEST_DEFAULTS,
   observePullRequests,
@@ -38,7 +41,7 @@ import {
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
 import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
-import type { AiUsageGitHubConfig } from '@ai-usage/report-core/project-alias';
+import type { AiUsageConfig, AiUsageGitHubConfig } from '@ai-usage/report-core/project-alias';
 import { projectSourcePathFromId } from '@ai-usage/report-core/project-group';
 import {
   MAX_SKILL_OBSERVATION_BATCH,
@@ -1486,323 +1489,421 @@ const createCheckoutStatusSource = (input: {
     }),
 });
 
-const createPullRequestSource = (input: {
+/** The inputs of the process-backed work-fact sources (pull requests, Jira issues). */
+interface WorkFactSourceInput {
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
   machine: UsageMachine;
   now: () => Date;
   options: SourceAdapterOptions;
   storage: LocalHistoryStorageService;
-}): ScheduledSource => ({
+}
+
+interface SourceWarning {
+  code: string;
+  message: string;
+}
+
+interface PullRequestCandidate {
+  account: string | null;
+  link: PullRequestLink;
+}
+
+const pullRequestCandidateKey = (link: PullRequestLink): string =>
+  pullRequestLinkKey({
+    host: link.host.trim().toLowerCase(),
+    number: link.number,
+    repository: link.repository.trim().toLowerCase(),
+  });
+
+const recordPullRequestsPolicyDisabled = (input: WorkFactSourceInput): Effect.Effect<SourceRunResult, SourceRunError> =>
+  Effect.gen(function* () {
+    const message = 'github.enabled is false in the local config.';
+    yield* recordWorkFactRun({
+      dbPath: input.dbPath,
+      disabled: true,
+      failed: 0,
+      machineId: input.machine.id,
+      message,
+      observed: 0,
+      ranAt: input.now(),
+      sourceId: 'github.pull-requests',
+    }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+    return {
+      changed: false,
+      inputCount: 0,
+      outputCount: 0,
+      unavailable: { code: 'policy-disabled', message },
+      warnings: [],
+    };
+  });
+
+/**
+ * Store eligibility precedes its bound, so completed links cannot crowd out older pending links.
+ * Operator-followed links precede session declarations and retain their account on discovery.
+ */
+const explicitPullRequestCandidates = (
+  github: AiUsageGitHubConfig | undefined,
+  links: readonly PullRequestLink[],
+): Map<string, PullRequestCandidate> => {
+  const unique = new Map<string, PullRequestCandidate>();
+  for (const link of links) {
+    const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
+    const key = pullRequestCandidateKey(candidate);
+    if (!unique.has(key)) {
+      unique.set(key, { link: candidate, account: accountFor(github, candidate) });
+    }
+  }
+  return unique;
+};
+
+const pullRequestDiscoveryAccounts = (github: AiUsageGitHubConfig | undefined): Map<string | null, string[]> => {
+  const accounts = new Map<string | null, string[]>();
+  const routedOwners = new Set<string>();
+  for (const account of github?.accounts ?? []) {
+    const owner = account.owner.toLowerCase();
+    // Match accountFor: only the first configured account for an owner can observe its PRs.
+    if (account.host === 'github.com' && !routedOwners.has(owner)) {
+      routedOwners.add(owner);
+      accounts.set(account.ghUser, [...new Set([...(accounts.get(account.ghUser) ?? []), account.owner])]);
+    }
+  }
+  if (accounts.size === 0) {
+    accounts.set(null, []);
+  }
+  return accounts;
+};
+
+const mergeDiscoveredPullRequests = (
+  unique: Map<string, PullRequestCandidate>,
+  links: readonly DiscoveredPullRequestLink[],
+  account: string | null,
+): void => {
+  for (const link of links) {
+    const key = pullRequestCandidateKey(link);
+    const explicit = unique.get(key);
+    if (explicit) {
+      // Author takes precedence if multiple accounts discover the same pull request.
+      const discoveryRole = explicit.link.discoveryRole === 'author' ? 'author' : link.discoveryRole;
+      unique.set(key, { ...explicit, link: { ...explicit.link, discoveryRole } });
+    } else {
+      unique.set(key, { link, account });
+    }
+  }
+};
+
+const discoverAccountPullRequests = (
+  input: WorkFactSourceInput,
+  context: SourceRunContext,
+  accounts: Map<string | null, string[]>,
+  unique: Map<string, PullRequestCandidate>,
+  truncatedBefore: boolean,
+) =>
+  Effect.gen(function* () {
+    const discoveryWarnings: SourceWarning[] = [];
+    let discoveryFailures = 0;
+    let discoveryTruncated = truncatedBefore;
+    let discoveryUnauthenticated = false;
+    for (const [account, owners] of accounts) {
+      yield* abortIfRequested(context.signal);
+      const discovery = yield* discoverPullRequests({
+        environment: ghEnvironment(),
+        ...(account === null ? {} : { account: { ghUser: account }, owners }),
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      });
+      discoveryTruncated ||= discovery.truncated;
+      discoveryUnauthenticated ||= discovery.outcome === 'unauthenticated';
+      if (discovery.outcome !== 'observed') {
+        discoveryFailures += 1;
+        discoveryWarnings.push({
+          code: `pull-request-discovery-${discovery.outcome}`,
+          message: discovery.outcomeMessage ?? 'Pull request discovery failed.',
+        });
+      }
+      mergeDiscoveredPullRequests(unique, discovery.links, account);
+    }
+    return { discoveryFailures, discoveryTruncated, discoveryUnauthenticated, discoveryWarnings };
+  });
+
+const observeSelectedPullRequests = (
+  input: WorkFactSourceInput,
+  context: SourceRunContext,
+  selected: readonly PullRequestCandidate[],
+) =>
+  Effect.gen(function* () {
+    const byAccount = new Map<string | null, PullRequestLink[]>();
+    for (const { link, account } of selected) {
+      byAccount.set(account, [...(byAccount.get(account) ?? []), link]);
+    }
+    const observations: PullRequestObservation[] = [];
+    for (const [account, accountLinks] of byAccount) {
+      yield* abortIfRequested(context.signal);
+      const batch = yield* observePullRequests({
+        environment: ghEnvironment(),
+        links: accountLinks,
+        machineId: input.machine.id,
+        now: input.now,
+        ...(account === null ? {} : { account: { ghUser: account } }),
+        ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+      });
+      observations.push(...batch.observations);
+    }
+    return observations;
+  });
+
+const pullRequestWaitWarnings = (wait: { truncated: boolean; unproven: number }): SourceWarning[] => [
+  ...(wait.truncated
+    ? [
+        {
+          code: 'work-thread-waits-truncated',
+          message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
+        },
+      ]
+    : []),
+  ...(wait.unproven > 0
+    ? [
+        {
+          code: 'pull-request-wait-unproven',
+          message: `Stored observations cannot prove a new review decision for ${String(wait.unproven)} identified waits; they remain waiting.`,
+        },
+      ]
+    : []),
+];
+
+/** New PRs and their head branches change which tasks hold which branches (ADR 0081). */
+const reconcilePullRequestBranches = (input: WorkFactSourceInput, config: AiUsageConfig) =>
+  reconcileWorkBranchesFromHome({
+    config,
+    dbPath: input.dbPath,
+    home: input.storage.home,
+    machineId: input.machine.id,
+    now: input.now(),
+  }).pipe(
+    Effect.map((result) =>
+      result.truncated
+        ? [
+            {
+              code: 'work-branches-truncated',
+              message: 'Some branches exceeded the bounded branch reconciliation.',
+            },
+          ]
+        : [],
+    ),
+    Effect.catch((cause) =>
+      Effect.succeed([{ code: 'work-branches-failed', message: `Branch reconciliation failed: ${cause.message}` }]),
+    ),
+  );
+
+const pullRequestIdentityWarnings = (uncertain: number): SourceWarning[] =>
+  uncertain > 0
+    ? [
+        {
+          code: 'work-thread-identity-uncertain',
+          message:
+            'Session evidence does not establish a unique task identity; pull requests remain independently discovered.',
+        },
+      ]
+    : [];
+
+const pullRequestDeclarationWarnings = (truncated: boolean): SourceWarning[] =>
+  truncated
+    ? [
+        {
+          code: 'declared-sessions-truncated',
+          message: 'Some declared session links could not be read or exceeded the read or attachment limits.',
+        },
+      ]
+    : [];
+
+const pullRequestRunMessage = (
+  truncation: string | null,
+  discoveryWarnings: readonly SourceWarning[],
+  waitWarnings: readonly SourceWarning[],
+  declarationWarnings: readonly SourceWarning[],
+  identityWarnings: readonly SourceWarning[],
+): string | null =>
+  [
+    truncation,
+    ...discoveryWarnings.map((warning) => warning.message),
+    ...waitWarnings.map((warning) => warning.message),
+    ...declarationWarnings.map((warning) => warning.message),
+    ...identityWarnings.map((warning) => warning.message),
+  ]
+    .filter(Boolean)
+    .join(' ') || null;
+
+const runPullRequestSource = (
+  input: WorkFactSourceInput,
+  context: SourceRunContext,
+): Effect.Effect<SourceRunResult, SourceRunError> =>
+  Effect.gen(function* () {
+    yield* reportProgress(context, { phase: 'discovering' });
+    const availability = yield* input.detect;
+    if (availability.availability !== 'detected') {
+      return sourceUnavailableResult();
+    }
+    const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
+      Effect.provideService(LocalHistoryStorage, input.storage),
+      Effect.catchDefect((cause: unknown) => Effect.fail(cause)),
+      Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
+    );
+    if (config.github?.enabled === false) {
+      return yield* recordPullRequestsPolicyDisabled(input);
+    }
+    const served = yield* servedInputsOrEmpty(
+      'github.pull-requests',
+      queryServedSessionPullRequestLinks({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        now: input.now().getTime(),
+      }),
+      { links: [], declarations: [], truncated: false, revision: '', scannedRows: 0 },
+    );
+    const desktop = yield* desktopWorkFactInputs({
+      dbPath: input.dbPath,
+      machineId: input.machine.id,
+      now: input.now,
+    });
+    const injected = input.options.workFactInputs?.linkedPullRequests
+      ? yield* input.options.workFactInputs.linkedPullRequests()
+      : [];
+    const threadLinks = yield* servedInputsOrEmpty(
+      'github.pull-requests',
+      queryActiveWorkThreadLinks({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        kind: 'pull-request',
+        excludeObservedMerged: true,
+        limit: GITHUB_PULL_REQUEST_DEFAULTS.maxLinks,
+      }),
+      { links: [], truncated: false },
+    );
+    const threadPullRequests = threadLinks.links.flatMap((link): PullRequestLink[] => {
+      const parsed = parseWorkThreadLinkKey(link.kind, link.key);
+      return parsed?.kind === 'pull-request' ? [parsed] : [];
+    });
+    const unique = explicitPullRequestCandidates(config.github, [
+      ...threadPullRequests,
+      ...desktop.links,
+      ...served.links,
+      ...injected,
+    ]);
+    const accounts = pullRequestDiscoveryAccounts(config.github);
+    const { discoveryFailures, discoveryTruncated, discoveryUnauthenticated, discoveryWarnings } =
+      yield* discoverAccountPullRequests(input, context, accounts, unique, threadLinks.truncated || served.truncated);
+    const selected = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
+    const links = selected.map(({ link }) => link);
+    const truncated = unique.size > links.length || discoveryTruncated;
+    const waits = yield* servedInputsOrEmpty(
+      'github.pull-requests',
+      queryWorkThreadWaitCandidates({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        kind: 'pull-request-review',
+        linkKeys: links.map(workThreadPullRequestKey),
+      }),
+      { candidates: [], truncated: false },
+    );
+    yield* reportProgress(context, { completed: 0, phase: 'reading', total: links.length });
+    const observations = yield* observeSelectedPullRequests(input, context, selected);
+    yield* abortIfRequested(context.signal);
+    yield* reportProgress(context, { completed: 0, phase: 'importing', total: observations.length });
+    yield* importPullRequestObservations({ dbPath: input.dbPath, observations }).pipe(
+      Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
+    );
+    const waitResult =
+      waits.candidates.length === 0
+        ? { satisfied: 0, unchanged: 0, unproven: 0 }
+        : yield* applyWorkThreadWaitObservations({
+            dbPath: input.dbPath,
+            machineId: input.machine.id,
+            now: input.now().toISOString(),
+            candidates: waits.candidates,
+            pullRequests: observations,
+          }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+    const waitWarnings = pullRequestWaitWarnings({ truncated: waits.truncated, unproven: waitResult.unproven });
+    const declarations = [
+      ...new Map(
+        [...desktop.declarations, ...served.declarations].map((declaration) => [
+          JSON.stringify([declaration.pullRequestKey, declaration.sessionKey]),
+          declaration,
+        ]),
+      ).values(),
+    ];
+    // Candidate selection and PR attachment share the seed writer transaction.
+    const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
+    const seeded = yield* seedWorkThreads({
+      dbPath: input.dbPath,
+      machineId: input.machine.id,
+      now: input.now().toISOString(),
+      seeds: pullRequestSeeds,
+      observedPullRequestKeys: observations
+        .filter((observation) => observation.outcome === 'observed')
+        .map(workThreadPullRequestKey),
+      declarations,
+      declarationsTruncated: desktop.declarationsTruncated || served.truncated,
+    }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+    const attached =
+      declarations.length === 0
+        ? { truncated: false }
+        : yield* attachDeclaredWorkThreadSessions({
+            dbPath: input.dbPath,
+            machineId: input.machine.id,
+            now: input.now().toISOString(),
+            declarations,
+          }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+    const branches = yield* reconcilePullRequestBranches(input, config);
+    const identityWarnings = pullRequestIdentityWarnings(seeded.uncertain);
+    const declarationWarnings = pullRequestDeclarationWarnings(
+      attached.truncated || served.truncated || desktop.declarationsTruncated,
+    );
+    const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
+    const failed =
+      discoveryFailures + observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
+    const truncation = truncated
+      ? `Observed ${String(links.length)} of ${String(unique.size)} candidate pull requests; additional search results may be omitted.`
+      : null;
+    const message = pullRequestRunMessage(
+      truncation,
+      discoveryWarnings,
+      waitWarnings,
+      declarationWarnings,
+      identityWarnings,
+    );
+    yield* recordWorkFactRun({
+      dbPath: input.dbPath,
+      disabled: false,
+      failed,
+      machineId: input.machine.id,
+      message,
+      observed,
+      ranAt: input.now(),
+      outcomeCode: discoveryUnauthenticated ? 'unauthenticated' : null,
+      sourceId: 'github.pull-requests',
+    }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
+    return {
+      changed: false,
+      inputCount: links.length,
+      outputCount: observations.length,
+      warnings: [
+        ...desktop.warnings,
+        ...discoveryWarnings,
+        ...waitWarnings,
+        ...declarationWarnings,
+        ...identityWarnings,
+        ...branches,
+        ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
+      ],
+    };
+  });
+
+const createPullRequestSource = (input: WorkFactSourceInput): ScheduledSource => ({
   cadence: Duration.millis(getCollectionSourceDefinition('github.pull-requests').cadenceMs),
   detect: input.detect,
   id: 'github.pull-requests',
-  run: (context) =>
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-    Effect.gen(function* () {
-      yield* reportProgress(context, { phase: 'discovering' });
-      const availability = yield* input.detect;
-      if (availability.availability !== 'detected') {
-        return sourceUnavailableResult();
-      }
-      const config = yield* readMergedAiUsageConfigFrom(input.options.configCwd).pipe(
-        Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.catchDefect((cause: unknown) => Effect.fail(cause)),
-        Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
-      );
-      if (config.github?.enabled === false) {
-        const message = 'github.enabled is false in the local config.';
-        yield* recordWorkFactRun({
-          dbPath: input.dbPath,
-          disabled: true,
-          failed: 0,
-          machineId: input.machine.id,
-          message,
-          observed: 0,
-          ranAt: input.now(),
-          sourceId: 'github.pull-requests',
-        }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
-        return {
-          changed: false,
-          inputCount: 0,
-          outputCount: 0,
-          unavailable: { code: 'policy-disabled', message },
-          warnings: [],
-        };
-      }
-      const served = yield* servedInputsOrEmpty(
-        'github.pull-requests',
-        queryServedSessionPullRequestLinks({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          now: input.now().getTime(),
-        }),
-        { links: [], declarations: [], truncated: false, revision: '', scannedRows: 0 },
-      );
-      const desktop = yield* desktopWorkFactInputs({
-        dbPath: input.dbPath,
-        machineId: input.machine.id,
-        now: input.now,
-      });
-      const injected = input.options.workFactInputs?.linkedPullRequests
-        ? yield* input.options.workFactInputs.linkedPullRequests()
-        : [];
-      const threadLinks = yield* servedInputsOrEmpty(
-        'github.pull-requests',
-        queryActiveWorkThreadLinks({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          kind: 'pull-request',
-          excludeObservedMerged: true,
-          limit: GITHUB_PULL_REQUEST_DEFAULTS.maxLinks,
-        }),
-        { links: [], truncated: false },
-      );
-      const threadPullRequests = threadLinks.links.flatMap((link): PullRequestLink[] => {
-        const parsed = parseWorkThreadLinkKey(link.kind, link.key);
-        return parsed?.kind === 'pull-request' ? [parsed] : [];
-      });
-      // Store eligibility precedes its bound, so completed links cannot crowd out older pending links.
-      // Operator-followed links precede session declarations and retain their account on discovery.
-      const keyFor = (link: PullRequestLink): string =>
-        pullRequestLinkKey({
-          host: link.host.trim().toLowerCase(),
-          number: link.number,
-          repository: link.repository.trim().toLowerCase(),
-        });
-      const unique = new Map<string, { link: PullRequestLink; account: string | null }>();
-      for (const link of [...threadPullRequests, ...desktop.links, ...served.links, ...injected]) {
-        const candidate: PullRequestLink = { host: link.host, number: link.number, repository: link.repository };
-        const key = keyFor(candidate);
-        if (!unique.has(key)) {
-          unique.set(key, { link: candidate, account: accountFor(config.github, candidate) });
-        }
-      }
-      const accounts = new Map<string | null, string[]>();
-      const routedOwners = new Set<string>();
-      for (const account of config.github?.accounts ?? []) {
-        const owner = account.owner.toLowerCase();
-        // Match accountFor: only the first configured account for an owner can observe its PRs.
-        if (account.host === 'github.com' && !routedOwners.has(owner)) {
-          routedOwners.add(owner);
-          accounts.set(account.ghUser, [...new Set([...(accounts.get(account.ghUser) ?? []), account.owner])]);
-        }
-      }
-      if (accounts.size === 0) {
-        accounts.set(null, []);
-      }
-      const discoveryWarnings: { code: string; message: string }[] = [];
-      let discoveryFailures = 0;
-      let discoveryTruncated = threadLinks.truncated || served.truncated;
-      let discoveryUnauthenticated = false;
-      for (const [account, owners] of accounts) {
-        yield* abortIfRequested(context.signal);
-        const discovery = yield* discoverPullRequests({
-          environment: ghEnvironment(),
-          ...(account === null ? {} : { account: { ghUser: account }, owners }),
-          ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
-          ...(context.signal === undefined ? {} : { signal: context.signal }),
-        });
-        discoveryTruncated ||= discovery.truncated;
-        discoveryUnauthenticated ||= discovery.outcome === 'unauthenticated';
-        if (discovery.outcome !== 'observed') {
-          discoveryFailures += 1;
-          discoveryWarnings.push({
-            code: `pull-request-discovery-${discovery.outcome}`,
-            message: discovery.outcomeMessage ?? 'Pull request discovery failed.',
-          });
-        }
-        for (const link of discovery.links) {
-          const key = keyFor(link);
-          const explicit = unique.get(key);
-          if (explicit) {
-            // Author takes precedence if multiple accounts discover the same pull request.
-            const discoveryRole = explicit.link.discoveryRole === 'author' ? 'author' : link.discoveryRole;
-            unique.set(key, { ...explicit, link: { ...explicit.link, discoveryRole } });
-          } else {
-            unique.set(key, { link, account });
-          }
-        }
-      }
-      const selected = [...unique.values()].slice(0, GITHUB_PULL_REQUEST_DEFAULTS.maxLinks);
-      const links = selected.map(({ link }) => link);
-      const truncated = unique.size > links.length || discoveryTruncated;
-      const waits = yield* servedInputsOrEmpty(
-        'github.pull-requests',
-        queryWorkThreadWaitCandidates({
-          dbPath: input.dbPath,
-          machineId: input.machine.id,
-          kind: 'pull-request-review',
-          linkKeys: links.map(workThreadPullRequestKey),
-        }),
-        { candidates: [], truncated: false },
-      );
-      yield* reportProgress(context, { completed: 0, phase: 'reading', total: links.length });
-      const byAccount = new Map<string | null, PullRequestLink[]>();
-      for (const { link, account } of selected) {
-        byAccount.set(account, [...(byAccount.get(account) ?? []), link]);
-      }
-      const observations: PullRequestObservation[] = [];
-      for (const [account, accountLinks] of byAccount) {
-        yield* abortIfRequested(context.signal);
-        const batch = yield* observePullRequests({
-          environment: ghEnvironment(),
-          links: accountLinks,
-          machineId: input.machine.id,
-          now: input.now,
-          ...(account === null ? {} : { account: { ghUser: account } }),
-          ...(input.options.workFactProcessRunner === undefined ? {} : { run: input.options.workFactProcessRunner }),
-          ...(context.signal === undefined ? {} : { signal: context.signal }),
-        });
-        observations.push(...batch.observations);
-      }
-      yield* abortIfRequested(context.signal);
-      yield* reportProgress(context, { completed: 0, phase: 'importing', total: observations.length });
-      yield* importPullRequestObservations({ dbPath: input.dbPath, observations }).pipe(
-        Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)),
-      );
-      const waitResult =
-        waits.candidates.length === 0
-          ? { satisfied: 0, unchanged: 0, unproven: 0 }
-          : yield* applyWorkThreadWaitObservations({
-              dbPath: input.dbPath,
-              machineId: input.machine.id,
-              now: input.now().toISOString(),
-              candidates: waits.candidates,
-              pullRequests: observations,
-            }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
-      const waitWarnings = [
-        ...(waits.truncated
-          ? [
-              {
-                code: 'work-thread-waits-truncated',
-                message: 'Some identified waits exceeded the bounded transition read and remain waiting.',
-              },
-            ]
-          : []),
-        ...(waitResult.unproven > 0
-          ? [
-              {
-                code: 'pull-request-wait-unproven',
-                message: `Stored observations cannot prove a new review decision for ${String(waitResult.unproven)} identified waits; they remain waiting.`,
-              },
-            ]
-          : []),
-      ];
-      const declarations = [
-        ...new Map(
-          [...desktop.declarations, ...served.declarations].map((declaration) => [
-            JSON.stringify([declaration.pullRequestKey, declaration.sessionKey]),
-            declaration,
-          ]),
-        ).values(),
-      ];
-      // Candidate selection and PR attachment share the seed writer transaction.
-      const pullRequestSeeds = workThreadSeedsFromPullRequests(observations);
-      const seeded = yield* seedWorkThreads({
-        dbPath: input.dbPath,
-        machineId: input.machine.id,
-        now: input.now().toISOString(),
-        seeds: pullRequestSeeds,
-        observedPullRequestKeys: observations
-          .filter((observation) => observation.outcome === 'observed')
-          .map(workThreadPullRequestKey),
-        declarations,
-        declarationsTruncated: desktop.declarationsTruncated || served.truncated,
-      }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
-      const attached =
-        declarations.length === 0
-          ? { truncated: false }
-          : yield* attachDeclaredWorkThreadSessions({
-              dbPath: input.dbPath,
-              machineId: input.machine.id,
-              now: input.now().toISOString(),
-              declarations,
-            }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
-      // New PRs and their head branches change which tasks hold which branches (ADR 0081).
-      const branches = yield* reconcileWorkBranchesFromHome({
-        config,
-        dbPath: input.dbPath,
-        home: input.storage.home,
-        machineId: input.machine.id,
-        now: input.now(),
-      }).pipe(
-        Effect.map((result) =>
-          result.truncated
-            ? [
-                {
-                  code: 'work-branches-truncated',
-                  message: 'Some branches exceeded the bounded branch reconciliation.',
-                },
-              ]
-            : [],
-        ),
-        Effect.catch((cause) =>
-          Effect.succeed([{ code: 'work-branches-failed', message: `Branch reconciliation failed: ${cause.message}` }]),
-        ),
-      );
-      const identityWarnings =
-        seeded.uncertain > 0
-          ? [
-              {
-                code: 'work-thread-identity-uncertain',
-                message:
-                  'Session evidence does not establish a unique task identity; pull requests remain independently discovered.',
-              },
-            ]
-          : [];
-      const declarationWarnings =
-        attached.truncated || served.truncated || desktop.declarationsTruncated
-          ? [
-              {
-                code: 'declared-sessions-truncated',
-                message: 'Some declared session links could not be read or exceeded the read or attachment limits.',
-              },
-            ]
-          : [];
-      const observed = observations.filter(({ outcome }) => outcome === 'observed').length;
-      const failed =
-        discoveryFailures +
-        observations.filter(({ outcome }) => outcome !== 'observed' && outcome !== 'disabled').length;
-      const truncation = truncated
-        ? `Observed ${String(links.length)} of ${String(unique.size)} candidate pull requests; additional search results may be omitted.`
-        : null;
-      const message =
-        [
-          truncation,
-          ...discoveryWarnings.map((warning) => warning.message),
-          ...waitWarnings.map((warning) => warning.message),
-          ...declarationWarnings.map((warning) => warning.message),
-          ...identityWarnings.map((warning) => warning.message),
-        ]
-          .filter(Boolean)
-          .join(' ') || null;
-      yield* recordWorkFactRun({
-        dbPath: input.dbPath,
-        disabled: false,
-        failed,
-        machineId: input.machine.id,
-        message,
-        observed,
-        ranAt: input.now(),
-        outcomeCode: discoveryUnauthenticated ? 'unauthenticated' : null,
-        sourceId: 'github.pull-requests',
-      }).pipe(Effect.mapError((cause) => sourceFailure('github.pull-requests', cause)));
-      return {
-        changed: false,
-        inputCount: links.length,
-        outputCount: observations.length,
-        warnings: [
-          ...desktop.warnings,
-          ...discoveryWarnings,
-          ...waitWarnings,
-          ...declarationWarnings,
-          ...identityWarnings,
-          ...branches,
-          ...(truncation === null ? [] : [{ code: 'pull-requests-truncated', message: truncation }]),
-        ],
-      };
-    }),
+  run: (context) => runPullRequestSource(input, context),
 });
 
 /**
