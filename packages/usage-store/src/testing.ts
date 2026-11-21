@@ -1,39 +1,13 @@
-export { initializeUsageStore, quiesceUsageStoreForShutdown } from './connections';
-export type { NewDelegationJob } from './delegation-store';
 export {
-  attachDeclaredWorkThreadSessions,
-  importCheckoutStatusObservations,
   importClaudeDesktopSessions,
-  importCodexWorkObservations,
-  importJiraIssueObservations,
-  importProviderQuotaBatch,
-  importPullRequestObservations,
-  importSkillObservations,
-  markReviewAttemptsLost,
-  publishServedReportRevision,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
-  queryCodexWorkObservations,
-  queryCurrentServedReportRevision,
-  queryLatestExecutorObservations,
-  queryLatestProviderQuotaObservations,
-  queryReviewAttempts,
-  queryReviewTargetResolution,
-  querySkillObservations,
-  queryWorkFactRunStates,
-  queryWorkThreadById,
-  queryWorkThreadEvents,
-  queryWorkThreadLinks,
-  reconcileWorkBranches,
-  recordDelegationEvaluation,
-  recordWorkFactRun,
-  requestDelegationJob,
-  requestReviewAttempt,
-  setServedReportPublicationFaultInjectorForTesting,
-  setServedReportReadFaultInjectorForTesting,
-  transitionDelegationJob,
-  transitionReviewAttempt,
-} from './index';
+} from './claude-desktop-session-store';
+export { importCodexWorkObservations, queryCodexWorkObservations } from './codex-work-store';
+export { initializeUsageStore, quiesceUsageStoreForShutdown } from './connections';
+export type { NewDelegationJob } from './delegation-store';
+export { recordDelegationEvaluation, requestDelegationJob, transitionDelegationJob } from './delegation-store';
+export { queryLatestExecutorObservations } from './executor-observation-store';
 export {
   importLocalRows,
   retireLocalRows,
@@ -42,10 +16,39 @@ export {
 } from './local-rows';
 export { setLocalProjectionReadFaultInjectorForTesting, usageStorePath } from './machine-fleet';
 export { importPeerMergeBundle } from './peer-merge';
+export { importProviderQuotaBatch, queryLatestProviderQuotaObservations } from './provider-quota-store';
 export { queryReportRows } from './report-rows';
+export {
+  markReviewAttemptsLost,
+  queryReviewAttempts,
+  queryReviewTargetResolution,
+  requestReviewAttempt,
+  transitionReviewAttempt,
+} from './review-attempt-store';
+export {
+  publishServedReportRevision,
+  queryCurrentServedReportRevision,
+  setServedReportPublicationFaultInjectorForTesting,
+  setServedReportReadFaultInjectorForTesting,
+} from './served-report-store';
 export { createServedRevisionQueryDatabase } from './served-revision';
 export {
   assertSessionQueryDatabase,
   executeMaterializedSessionQuery,
   type SessionQuerySqliteDatabase,
 } from './session-query-sqlite';
+export { importSkillObservations, querySkillObservations } from './skill-observation-store';
+export {
+  importCheckoutStatusObservations,
+  importJiraIssueObservations,
+  importPullRequestObservations,
+  queryWorkFactRunStates,
+  recordWorkFactRun,
+} from './work-fact-store';
+export {
+  attachDeclaredWorkThreadSessions,
+  queryWorkThreadById,
+  queryWorkThreadEvents,
+  queryWorkThreadLinks,
+  reconcileWorkBranches,
+} from './work-thread-store';
