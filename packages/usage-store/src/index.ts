@@ -1,4 +1,3 @@
-import { createClaudeDesktopSessionStore } from './claude-desktop-session-store';
 import { withUsageStoreReader, withUsageStoreWriter } from './connections';
 import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from './errors';
 import { readUsageLocalMachineWithDatabase } from './machine-fleet';
@@ -79,36 +78,12 @@ export const { importSkillObservations, querySkillObservations, retainSkillObser
 );
 
 export {
-  importExecutorObservations,
-  queryExecutorAccountChanges,
-  queryExecutorObservationHistory,
-  queryLatestExecutorObservations,
-} from './executor-observation-store';
-export {
-  importCheckoutStatusObservations,
-  importJiraIssueObservations,
-  importPullRequestObservations,
-  queryJiraSyncState,
-  queryLatestCheckoutStatusObservations,
-  queryLatestJiraIssueObservations,
-  queryLatestPullRequestObservations,
-  queryWorkFactRunStates,
-  recordJiraSyncState,
-  recordWorkFactRun,
-} from './work-fact-store';
-export const {
   countClaudeDesktopSessions,
   importClaudeDesktopSessions,
   queryClaudeDesktopCollectionState,
   queryClaudeDesktopSessions,
   queryClaudeDesktopTurnDeclarations,
-} = createClaudeDesktopSessionStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
-
+} from './claude-desktop-session-store';
 export { importCodexWorkObservations, queryCodexWorkObservations } from './codex-work-store';
 export {
   countDelegationRetryChain,
@@ -126,6 +101,12 @@ export {
   transitionDelegationJob,
 } from './delegation-store';
 export {
+  importExecutorObservations,
+  queryExecutorAccountChanges,
+  queryExecutorObservationHistory,
+  queryLatestExecutorObservations,
+} from './executor-observation-store';
+export {
   markReviewAttemptsLost,
   queryReviewAttempts,
   queryReviewReservations,
@@ -134,6 +115,18 @@ export {
   requestReviewAttempt,
   transitionReviewAttempt,
 } from './review-attempt-store';
+export {
+  importCheckoutStatusObservations,
+  importJiraIssueObservations,
+  importPullRequestObservations,
+  queryJiraSyncState,
+  queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
+  queryLatestPullRequestObservations,
+  queryWorkFactRunStates,
+  recordJiraSyncState,
+  recordWorkFactRun,
+} from './work-fact-store';
 
 export const {
   applyWorkThreadCommand,
