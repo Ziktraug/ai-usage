@@ -248,22 +248,19 @@ export { queryJiraIntake, recordJiraIntake } from './work-thread-jira-intake';
 export type { QueryActiveWorkThreadLinksInput, QueryActiveWorkThreadLinksResult } from './work-thread-reads';
 export { queryActiveWorkThreadLinks, queryWorkThreadsPage } from './work-thread-reads';
 export type {
-  ApplyWorkThreadWaitObservationsInput,
-  ApplyWorkThreadWaitObservationsResult,
   AttachDeclaredWorkThreadSessionsInput,
   AttachDeclaredWorkThreadSessionsResult,
   DeclaredWorkThreadSession,
-  QueryWorkThreadWaitCandidatesInput,
-  QueryWorkThreadWaitCandidatesResult,
   ReconcileWorkBranchesInput,
   ReconcileWorkBranchesResult,
   WorkThreadSeed,
+} from './work-thread-store';
+export { attachDeclaredWorkThreadSessions, reconcileWorkBranches, seedWorkThreads } from './work-thread-store';
+export type {
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
+  QueryWorkThreadWaitCandidatesInput,
+  QueryWorkThreadWaitCandidatesResult,
   WorkThreadWaitCandidate,
-} from './work-thread-store';
-export {
-  applyWorkThreadWaitObservations,
-  attachDeclaredWorkThreadSessions,
-  queryWorkThreadWaitCandidates,
-  reconcileWorkBranches,
-  seedWorkThreads,
-} from './work-thread-store';
+} from './work-thread-waits';
+export { applyWorkThreadWaitObservations, queryWorkThreadWaitCandidates } from './work-thread-waits';
