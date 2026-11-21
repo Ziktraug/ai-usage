@@ -29,6 +29,7 @@ import {
   queryWorkThreadSessionEvidence,
 } from '@ai-usage/usage-store/reader';
 import {
+  applyWorkThreadCommand,
   attachDeclaredWorkThreadSessions,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
@@ -40,7 +41,6 @@ import {
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
-import { applyWorkThreadCommand } from '../../usage-store/src/index';
 import { queryWorkThreadDetail, queryWorkThreadList } from './work-thread-read';
 
 const roots: string[] = [];

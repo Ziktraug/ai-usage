@@ -46,5 +46,6 @@ export {
   recordWorkFactRun,
 } from './work-fact-store';
 export { reconcileWorkBranches } from './work-thread-branches';
+export { applyWorkThreadCommand } from './work-thread-commands';
 export { queryWorkThreadById, queryWorkThreadEvents, queryWorkThreadLinks } from './work-thread-reads';
-export { attachDeclaredWorkThreadSessions } from './work-thread-seeding';
+export { attachDeclaredWorkThreadSessions, seedWorkThreads } from './work-thread-seeding';
