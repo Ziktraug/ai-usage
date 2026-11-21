@@ -5,11 +5,10 @@ import type { Component } from 'svelte';
 import { createServer } from 'vite';
 
 /**
- * The open, focus, dismissal, portal, reduced-motion and cleanup contracts of Drawer, Popover and
- * Tooltip are browser behaviour: `bun run --cwd packages/design-system test:browser` drives them in
- * system Chrome (overlays.browser.ts, ADR 0006's accepted exception), and the app's Session drawer
- * runs them in Playwright. What a server render can show is pinned here: the closed overlays leave
- * nothing but caller-owned, named triggers in the document.
+ * What a server render of the real overlays can show is pinned here: the closed overlays leave
+ * nothing but caller-owned, named triggers in the document. The props Tooltip and Popover hand to
+ * Ark (open delay, lazy mount, unmount on exit, portal) are pinned in overlay-primitive-props.test.ts;
+ * the Drawer's open, focus and dismissal behaviour runs in the app's Session drawer Playwright tests.
  */
 const repositoryDirectory = fileURLToPath(new URL('../../../../../', import.meta.url));
 const viteServer = await createServer({
