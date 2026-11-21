@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import type { DelegationConfig, DelegationConfigIssue } from '@ai-usage/report-core/delegation-contracts';
 import {
   delegationCatalogRevision,
@@ -41,9 +42,6 @@ export interface LocalRoutingDeclarations {
    */
   readonly revisions: { readonly catalogRevision: string; readonly policyRevision: string };
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * Reads the current machine's persisted review-routing declarations without exposing the rest of
