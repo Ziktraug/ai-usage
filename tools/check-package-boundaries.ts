@@ -37,6 +37,7 @@ interface BoundaryPolicy {
 interface PackageInfo {
   dependencies: Map<string, DependencyField>;
   directory: string;
+  exports: unknown;
   packageName: string;
 }
 
@@ -374,6 +375,7 @@ async function readPackageInfo(packageJsonPath: string): Promise<PackageInfo | n
   return {
     dependencies,
     directory: path.dirname(packageJsonPath),
+    exports: json.exports,
     packageName: json.name,
   };
 }
@@ -723,6 +725,194 @@ const collectApplicationProductionClosureViolations = async (
   return violations;
 };
 
+// The browser imports only the oRPC contract (ADR 0010/0012), so the web-contract production closure may reach
+// only its own src modules and these reviewed pure dependencies: never a server, runtime, Node or Bun module.
+const webContractPackage = '@ai-usage/web-contract';
+const webContractAllowedExternalPackages = ['@ai-usage/report-core', '@orpc/contract', 'valibot'] as const;
+const webContractAllowedExactSpecifiers = new Set(['@ai-usage/skills/config', '@ai-usage/skills/shared']);
+
+const isWebContractAllowedExternal = (specifier: string): boolean =>
+  webContractAllowedExactSpecifiers.has(specifier) ||
+  webContractAllowedExternalPackages.some((packageName) => isPackageOrSubpath(specifier, packageName));
+
+const toRepositoryPath = (root: string, file: string): string => path.relative(root, file).split(path.sep).join('/');
+
+const collectProductionSourceFiles = async (root: string, directory: string): Promise<string[]> => {
+  const exists = await readdir(directory).then(
+    () => true,
+    () => false,
+  );
+  if (!exists) {
+    return [];
+  }
+  return (await collectSourceFiles(directory)).filter((file) => !isTestOnlySource(toRepositoryPath(root, file)));
+};
+
+const webContractSpecifierReason = async (
+  sourceDirectory: string,
+  file: string,
+  specifier: string,
+): Promise<string | undefined> => {
+  if (!specifier.startsWith('.')) {
+    return isWebContractAllowedExternal(specifier)
+      ? undefined
+      : 'web-contract production code may import only report-core, @orpc/contract, valibot and the reviewed Skills contract entrypoints.';
+  }
+  const resolved = await resolveRelativeModule(sourceDirectory, file, specifier);
+  if (resolved.status === 'resolved') {
+    return;
+  }
+  return resolved.status === 'outside-package'
+    ? 'web-contract production code must not import modules outside its src directory.'
+    : 'web-contract relative imports must resolve to a module inside its src directory.';
+};
+
+const collectWebContractClosureViolations = async (
+  root: string,
+  packages: ReadonlyMap<string, PackageInfo>,
+): Promise<PackageBoundaryViolation[]> => {
+  const packageInfo = packages.get(webContractPackage);
+  if (!packageInfo) {
+    return [];
+  }
+  const sourceDirectory = path.join(packageInfo.directory, 'src');
+  const violations: PackageBoundaryViolation[] = [];
+  for (const file of await collectProductionSourceFiles(root, sourceDirectory)) {
+    const text = await readFile(file, 'utf8');
+    for (const match of text.matchAll(moduleImportPattern)) {
+      const specifier = match[1] ?? match[2] ?? match[3];
+      if (specifier === undefined) {
+        continue;
+      }
+      const reason = await webContractSpecifierReason(sourceDirectory, file, specifier);
+      if (reason !== undefined) {
+        violations.push({
+          file: toRepositoryPath(root, file),
+          line: lineNumberFor(text, match.index),
+          message: reason,
+          packageName: webContractPackage,
+          specifier,
+        });
+      }
+    }
+  }
+  return violations;
+};
+
+// Archives decode through one decoder: `DecompressionStream('zstd')`, pulled chunk by chunk in
+// `local-history.ts` (ADR 0047), re-qualified on Bun 1.4.3 and 1.4.4. Bun's one-shot zstd decoders corrupted the
+// heap on Bun 1.3.13 and take no output bound, and `node:zlib`'s one-shot decoder holds the whole output at once,
+// so no other zstd decoder is reached from the history readers. The pattern matches every spelling a source can
+// reach one by (`zstdDecompress`, `zstdDecompressSync`, `createZstdDecompress`, the `ZstdDecompress` class),
+// comments included. Compressors are not implicated and stay available to fixtures and tests.
+const zstdDecoderPackages = ['@ai-usage/local-machine', '@ai-usage/local-collectors'] as const;
+const oneShotZstdDecoderPattern = /\b(?:create)?[Zz]stdDecompress(?:Sync)?\b/gu;
+const streamingDecoderPattern = /\bDecompressionStream\b/gu;
+const streamingDecoderOwner = 'packages/local-machine/src/local-history.ts';
+
+const zstdDecoderMatches = (relativeFile: string, text: string) => [
+  ...[...text.matchAll(oneShotZstdDecoderPattern)].map((match) => ({
+    match,
+    message: 'History readers decode zstd only through the streaming DecompressionStream reader.',
+  })),
+  ...(relativeFile === streamingDecoderOwner
+    ? []
+    : [...text.matchAll(streamingDecoderPattern)].map((match) => ({
+        match,
+        message: `Only ${streamingDecoderOwner} may construct the streaming zstd decoder.`,
+      }))),
+];
+
+const collectZstdDecoderViolations = async (
+  root: string,
+  packages: ReadonlyMap<string, PackageInfo>,
+): Promise<PackageBoundaryViolation[]> => {
+  const violations: PackageBoundaryViolation[] = [];
+  for (const packageName of zstdDecoderPackages) {
+    const packageInfo = packages.get(packageName);
+    if (!packageInfo) {
+      continue;
+    }
+    for (const file of await collectProductionSourceFiles(root, path.join(packageInfo.directory, 'src'))) {
+      const relativeFile = toRepositoryPath(root, file);
+      const text = await readFile(file, 'utf8');
+      for (const { match, message } of zstdDecoderMatches(relativeFile, text)) {
+        violations.push({
+          file: relativeFile,
+          line: lineNumberFor(text, match.index),
+          message,
+          packageName,
+          specifier: match[0],
+        });
+      }
+    }
+  }
+  return violations;
+};
+
+// The engine seams are reviewed public surfaces: a new, removed or retargeted subpath is a decision, not a drift.
+const reviewedPackageExports = new Map<string, Readonly<Record<string, string>>>([
+  [
+    engineControlPackage,
+    {
+      '.': './src/contracts.ts',
+      './client': './src/client.ts',
+      './completion': './src/completion.ts',
+      './delegation-operations': './src/delegation-operations.ts',
+      './handoff': './src/handoff.ts',
+      './node': './src/rendezvous.ts',
+      './testing': './src/testing.ts',
+    },
+  ],
+  [
+    engineRuntimePackage,
+    {
+      '.': './src/runtime.ts',
+      './live': './src/live.ts',
+      './recovery': './src/recovery.ts',
+      './source-adapters': './src/source-adapters.ts',
+      './source-control': './src/source-control.ts',
+    },
+  ],
+  [
+    usageStorePackage,
+    {
+      './performance-testing': './src/performance-testing.ts',
+      './reader': './src/reader.ts',
+      './testing': './src/testing.ts',
+      './writer': './src/writer.ts',
+    },
+  ],
+  [engineAppPackage, { './main': './src/main.ts' }],
+]);
+
+const collectPackageExportsViolations = (
+  root: string,
+  packages: ReadonlyMap<string, PackageInfo>,
+): PackageBoundaryViolation[] => {
+  const violations: PackageBoundaryViolation[] = [];
+  for (const [packageName, reviewed] of reviewedPackageExports) {
+    const packageInfo = packages.get(packageName);
+    if (!packageInfo) {
+      continue;
+    }
+    const declared: Readonly<Record<string, unknown>> = isRecord(packageInfo.exports) ? packageInfo.exports : {};
+    const subpaths = new Set([...Object.keys(reviewed), ...Object.keys(declared)]);
+    for (const subpath of [...subpaths].toSorted()) {
+      if (declared[subpath] === reviewed[subpath]) {
+        continue;
+      }
+      violations.push({
+        file: toRepositoryPath(root, path.join(packageInfo.directory, 'package.json')),
+        message: `${packageName} exports ${subpath} as ${JSON.stringify(declared[subpath] ?? null)}; the reviewed seam is ${JSON.stringify(reviewed[subpath] ?? null)}.`,
+        packageName,
+        specifier: subpath,
+      });
+    }
+  }
+  return violations;
+};
+
 export async function collectViolations(root: string): Promise<PackageBoundaryViolation[]> {
   const packages = await discoverWorkspacePackages(root);
   const violations: PackageBoundaryViolation[] = [];
@@ -733,6 +923,9 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
   );
   violations.push(...(await collectPortableReportClosureViolations(root, packages)));
   violations.push(...(await collectApplicationProductionClosureViolations(root, packages)));
+  violations.push(...(await collectWebContractClosureViolations(root, packages)));
+  violations.push(...(await collectZstdDecoderViolations(root, packages)));
+  violations.push(...collectPackageExportsViolations(root, packages));
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);

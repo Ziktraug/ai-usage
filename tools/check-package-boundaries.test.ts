@@ -837,3 +837,210 @@ describe('package boundary guard', () => {
     expect(await collectViolations(repositoryRoot)).toEqual([]);
   });
 });
+
+const writeSource = async (root: string, relativeFile: string, source: string): Promise<void> => {
+  await mkdir(path.dirname(path.join(root, relativeFile)), { recursive: true });
+  await writeFile(path.join(root, relativeFile), source);
+};
+
+const violationLocations = async (root: string): Promise<readonly string[]> =>
+  (await collectViolations(root)).map(({ file, specifier }) => `${file} ${specifier}`).toSorted();
+
+describe('web contract production closure', () => {
+  const webContractPackage = { name: `${workspacePackageScope}web-contract` };
+  const forbiddenWebRouter = ['@ai-usage', 'web', 'server', 'router'].join('/');
+
+  test('rejects direct, re-exported and literal dynamic runtime imports', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      `import 'node:fs';\nexport { router } from '${forbiddenWebRouter}';\nexport const load = () => import('bun:sqlite');\n`,
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/web-contract/src/index.ts node:fs',
+        `packages/web-contract/src/index.ts ${forbiddenWebRouter}`,
+        'packages/web-contract/src/index.ts bun:sqlite',
+      ].toSorted(),
+    );
+  });
+
+  test('follows relative imports to a forbidden dependency in a leaf module', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'web-contract', webContractPackage, "import './leaf';\n");
+    await writeSource(root, 'packages/web-contract/src/leaf.ts', "import '@orpc/server';\n");
+
+    expect(await violationLocations(root)).toEqual(['packages/web-contract/src/leaf.ts @orpc/server']);
+  });
+
+  test('fails closed for relative imports that leave src or do not resolve', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      "import '../scripts/generate';\nimport './missing';\n",
+    );
+    await writeSource(root, 'packages/web-contract/scripts/generate.ts', 'export {};\n');
+
+    expect(await violationLocations(root)).toEqual([
+      'packages/web-contract/src/index.ts ../scripts/generate',
+      'packages/web-contract/src/index.ts ./missing',
+    ]);
+  });
+
+  test('permits only reviewed pure contract dependencies, internal leaves and test sources', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'web-contract', webContractPackage, "export { value } from './value';\n");
+    await writeSource(
+      root,
+      'packages/web-contract/src/value.ts',
+      "import { oc } from '@orpc/contract';\nimport * as v from 'valibot';\nimport type { Row } from '@ai-usage/report-core/rows';\nexport const value = oc.input(v.string());\n",
+    );
+    await writeSource(root, 'packages/web-contract/src/value.test.ts', "import 'bun:test';\nimport 'node:fs';\n");
+
+    expect(await collectViolations(root)).toEqual([]);
+  });
+
+  test('permits only the exact reviewed Skills contract entrypoints', async () => {
+    const root = await createFixture();
+    const unreviewedSkillsSpecifier = ['@ai-usage/skills', 'not-reviewed'].join('/');
+    await writePackage(
+      root,
+      'packages',
+      'web-contract',
+      webContractPackage,
+      `import '@ai-usage/skills/config';\nimport '@ai-usage/skills/shared';\nimport '@ai-usage/skills/application';\nimport '@ai-usage/skills';\nimport '${unreviewedSkillsSpecifier}';\n`,
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/web-contract/src/index.ts @ai-usage/skills/application',
+        'packages/web-contract/src/index.ts @ai-usage/skills',
+        `packages/web-contract/src/index.ts ${unreviewedSkillsSpecifier}`,
+      ].toSorted(),
+    );
+  });
+});
+
+describe('zstd decoder ownership', () => {
+  const localCollectorsPackage = { name: `${workspacePackageScope}local-collectors` };
+
+  test('rejects one-shot zstd decoders in local-machine and local-collectors production source', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'local-machine',
+      { name: localMachineRoot },
+      "import { ZstdDecompress, zstdDecompressSync } from 'node:zlib';\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'local-collectors',
+      localCollectorsPackage,
+      'export const decode = (bytes: Uint8Array) => Bun.zstdDecompress(bytes);\n',
+    );
+    await writeSource(
+      root,
+      'packages/local-collectors/src/testing/stream.ts',
+      "import { createZstdDecompress } from 'node:zlib';\n",
+    );
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/local-machine/src/index.ts ZstdDecompress',
+        'packages/local-machine/src/index.ts zstdDecompressSync',
+        'packages/local-collectors/src/index.ts zstdDecompress',
+        'packages/local-collectors/src/testing/stream.ts createZstdDecompress',
+      ].toSorted(),
+    );
+  });
+
+  test('allows the streaming decoder only in the local-history reader', async () => {
+    const root = await createFixture();
+    const streaming = "export const stream = new DecompressionStream('zstd');\n";
+    await writePackage(root, 'packages', 'local-machine', { name: localMachineRoot }, streaming);
+    await writeSource(root, 'packages/local-machine/src/local-history.ts', streaming);
+    await writeSource(root, 'packages/local-collectors/src/index.ts', streaming);
+    await writeFile(
+      path.join(root, 'packages/local-collectors/package.json'),
+      `${JSON.stringify(localCollectorsPackage)}\n`,
+    );
+
+    expect(await violationLocations(root)).toEqual([
+      'packages/local-collectors/src/index.ts DecompressionStream',
+      'packages/local-machine/src/index.ts DecompressionStream',
+    ]);
+  });
+
+  test('leaves compressors, test sources and other packages alone', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'local-machine',
+      { name: localMachineRoot },
+      'export const archive = (text: string) => Bun.zstdCompressSync(text);\n',
+    );
+    await writeSource(
+      root,
+      'packages/local-machine/src/archive.test.ts',
+      "Bun.zstdDecompressSync(new Uint8Array(0));\nnew DecompressionStream('zstd');\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'example',
+      { name: '@ai-usage/example' },
+      "import { zstdDecompressSync } from 'node:zlib';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual([]);
+  });
+});
+
+describe('engine package public exports', () => {
+  const controlPackage = `${workspacePackageScope}usage-engine-control`;
+  const controlExports = {
+    '.': './src/contracts.ts',
+    './client': './src/client.ts',
+    './completion': './src/completion.ts',
+    './delegation-operations': './src/delegation-operations.ts',
+    './handoff': './src/handoff.ts',
+    './node': './src/rendezvous.ts',
+    './testing': './src/testing.ts',
+  };
+
+  test('accepts the reviewed exports map', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'usage-engine-control', { exports: controlExports, name: controlPackage });
+
+    expect(await collectViolations(root)).toEqual([]);
+  });
+
+  test('rejects an added, removed or retargeted subpath and a missing map', async () => {
+    const root = await createFixture();
+    const { './testing': _removed, ...withoutTesting } = controlExports;
+    await writePackage(root, 'packages', 'usage-engine-control', {
+      exports: { ...withoutTesting, '.': './src/index.ts', './internal': './src/internal.ts' },
+      name: controlPackage,
+    });
+    await writePackage(root, 'apps', 'usage-engine', { name: `${workspacePackageScope}usage-engine` });
+
+    expect(await violationLocations(root)).toEqual(
+      [
+        'packages/usage-engine-control/package.json .',
+        'packages/usage-engine-control/package.json ./internal',
+        'packages/usage-engine-control/package.json ./testing',
+        'apps/usage-engine/package.json ./main',
+      ].toSorted(),
+    );
+  });
+});
