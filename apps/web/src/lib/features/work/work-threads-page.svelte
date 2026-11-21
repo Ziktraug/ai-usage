@@ -50,7 +50,7 @@
   } from './work-thread-model';
   import WorkThreadPilot from './work-thread-pilot.svelte';
   import { threadListShell, threadSurface } from './work-thread-styles';
-  import WorkTimelineView from './work-timeline-view.svelte';
+  import WorkTimelineView from './timeline/work-timeline-view.svelte';
   import './work-threads.css';
   import './work-task-pane.css';
   import './work-thread-pilot.css';

@@ -14,8 +14,8 @@ import {
 import {
   createSyntheticWorkThreadStore,
   WORK_THREADS_FIXTURE_IDS,
-} from '../../../server/work-threads-e2e-fixture.server';
-import { groupThreadRowsBySituation, threadDayKey, threadSituationCopy } from './work-thread-model';
+} from '../../../../server/work-threads-e2e-fixture.server';
+import { groupThreadRowsBySituation, threadDayKey, threadSituationCopy } from '../work-thread-model';
 import {
   activeTimelineZoom,
   brushIndexesOfWindow,

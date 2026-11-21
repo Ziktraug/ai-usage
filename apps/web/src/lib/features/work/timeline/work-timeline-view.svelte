@@ -3,8 +3,8 @@
   import { createQueries, createQuery } from '@tanstack/svelte-query';
   import { tick } from 'svelte';
   import { browser } from '$app/env';
-  import { workThreadDetailQueryOptions, workThreadTimelineQueryOptions } from '../../query/options/work-threads';
-  import type { WorkThreadsClient } from '../../rpc/work-threads-client';
+  import { workThreadDetailQueryOptions, workThreadTimelineQueryOptions } from '../../../query/options/work-threads';
+  import type { WorkThreadsClient } from '../../../rpc/work-threads-client';
   import WorkTimelineBoard from './work-timeline-board.svelte';
   import type { WorkTimelineDataset } from './work-timeline-load';
   import {

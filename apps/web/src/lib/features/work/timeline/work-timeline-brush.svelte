@@ -32,8 +32,8 @@
     type TimeRangeHandle,
     type TimeRangeSelectionIndexes,
     transitionTimeRangeControl,
-  } from '../../foundation/time-range-control-state';
-  import { brushAxisTicks, reportRangePointerFinishType } from '../report/range/report-range-model';
+  } from '../../../foundation/time-range-control-state';
+  import { brushAxisTicks, reportRangePointerFinishType } from '../../report/range/report-range-model';
   import {
     brushIndexesOfWindow,
     type TimelineWindow,

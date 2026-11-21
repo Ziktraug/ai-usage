@@ -19,7 +19,7 @@ import {
   threadDayKey,
   threadSituationCopy,
   threadTime,
-} from './work-thread-model';
+} from '../work-thread-model';
 import type { WorkTimelineDataset } from './work-timeline-load';
 
 export const TIMELINE_ZOOMS = [

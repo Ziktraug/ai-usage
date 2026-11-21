@@ -27,7 +27,7 @@
 <script lang="ts">
   import type { WorkThreadListQuery, WorkThreadSourceStatus } from '@ai-usage/report-core/work-thread-view';
   import { tick } from 'svelte';
-  import WorkThreadSources from './work-thread-sources.svelte';
+  import WorkThreadSources from '../work-thread-sources.svelte';
   import WorkTimelineBrush from './work-timeline-brush.svelte';
   import {
     activeTimelineZoom,

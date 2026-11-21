@@ -1,6 +1,6 @@
 <script lang="ts">
-  import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
-  import { harnessGlyph } from './work-thread-model';
+  import WorkMilestoneGlyph from '../work-milestone-glyph.svelte';
+  import { harnessGlyph } from '../work-thread-model';
   import type { TimelinePullRequestBar, TimelineScale, TimelineSessionBar, TimelineTrack } from './work-timeline-model';
 
   /** Beyond this many columns a cell is too narrow for its count; the level alone carries it. */

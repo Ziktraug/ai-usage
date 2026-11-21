@@ -1,6 +1,6 @@
 import type { WorkThreadsListInput } from '@ai-usage/web-contract/work-threads';
 import { type QueryClient, queryOptions } from '@tanstack/svelte-query';
-import { readWorkTimeline } from '../../features/work/work-timeline-load';
+import { readWorkTimeline } from '../../features/work/timeline/work-timeline-load';
 import type { WorkThreadsClient } from '../../rpc/work-threads-client';
 import { collectionSwrKey } from '../keys';
 import { webQueryPolicies } from '../policies';

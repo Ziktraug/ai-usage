@@ -5,7 +5,7 @@ import {
   type WorkThreadRow,
   type WorkThreadSourceStatus,
 } from '@ai-usage/report-core/work-thread-view';
-import type { WorkThreadsClient } from '../../rpc/work-threads-client';
+import type { WorkThreadsClient } from '../../../rpc/work-threads-client';
 
 /** Per tab, pages of WORK_THREAD_VIEW_BOUNDS.maxPageSize: the timeline reads a bounded history, not all of it. */
 export const TIMELINE_MAX_PAGES = 10;

@@ -6,15 +6,15 @@ import {
   type WorkThreadsListOutput,
 } from '@ai-usage/web-contract/work-threads';
 import { QueryClient } from '@tanstack/svelte-query';
-import { createSyntheticWorkThreadStore } from '../../../server/work-threads-e2e-fixture.server';
-import { collectionSwrKey } from '../../query/keys';
+import { createSyntheticWorkThreadStore } from '../../../../server/work-threads-e2e-fixture.server';
+import { collectionSwrKey } from '../../../query/keys';
 import {
   invalidateWorkThreadListQueries,
   workThreadListKey,
   workThreadTimelineQueryOptions,
-} from '../../query/options/work-threads';
-import { webQueryPolicies } from '../../query/policies';
-import type { WorkThreadsClient } from '../../rpc/work-threads-client';
+} from '../../../query/options/work-threads';
+import { webQueryPolicies } from '../../../query/policies';
+import type { WorkThreadsClient } from '../../../rpc/work-threads-client';
 import { readWorkTimeline, TIMELINE_MAX_PAGES } from './work-timeline-load';
 import { timelineDomain, timelineLanes, timelineScale } from './work-timeline-model';
 
