@@ -46,6 +46,12 @@ import {
   servedReportSchemaSql,
 } from './served-revision';
 import { createSkillObservationStore } from './skill-observation-store';
+import {
+  createTrackedSqliteDatabase,
+  type RawSqliteDatabase,
+  type SqliteDatabase,
+  type SqliteStatement,
+} from './sqlite-database';
 import { createWorkFactStore, migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-store';
 import { createWorkSessionJoinStore } from './work-session-join';
 import { createWorkThreadStore, WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
@@ -408,65 +414,6 @@ export interface UsageStore {
     input: UpsertRtkSavingsContributionsInput,
   ) => Effect.Effect<EnrichmentImportResult, UsageStoreError>;
 }
-
-interface SqliteStatement {
-  all: (...params: unknown[]) => unknown[];
-  finalize: () => void;
-  get: (...params: unknown[]) => unknown;
-  iterate: (...params: unknown[]) => IterableIterator<unknown>;
-  run: (...params: unknown[]) => unknown;
-}
-
-interface SqliteDatabase {
-  clearStatements: () => void;
-  close: (throwOnError?: boolean) => void;
-  exec: (sql: string) => unknown;
-  readonly inTransaction: boolean;
-  query: (sql: string) => SqliteStatement;
-}
-
-interface RawSqliteDatabase {
-  clearQueryCache: () => void;
-  close: (throwOnError?: boolean) => void;
-  exec: (sql: string) => unknown;
-  readonly inTransaction: boolean;
-  query: (sql: string) => SqliteStatement;
-}
-
-const createTrackedSqliteDatabase = (database: RawSqliteDatabase): SqliteDatabase => {
-  const statements = new Set<SqliteStatement>();
-  const clearStatements = (): void => {
-    let firstError: unknown;
-    for (const statement of statements) {
-      try {
-        statement.finalize();
-      } catch (cause) {
-        firstError ??= cause;
-      }
-    }
-    statements.clear();
-    database.clearQueryCache();
-    if (firstError !== undefined) {
-      throw firstError;
-    }
-  };
-  return {
-    clearStatements,
-    close: (throwOnError) => {
-      clearStatements();
-      database.close(throwOnError);
-    },
-    exec: (sql) => database.exec(sql),
-    get inTransaction() {
-      return database.inTransaction;
-    },
-    query: (sql) => {
-      const statement = database.query(sql);
-      statements.add(statement);
-      return statement;
-    },
-  };
-};
 
 interface ExistingRow {
   active_date: string | null;
