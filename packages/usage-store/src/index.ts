@@ -55,6 +55,7 @@ import {
   type SqliteDatabase,
   type SqliteStatement,
 } from './sqlite-database';
+import type { StoredRowRecord, StoredSourceAuthority, StoredUsageRowStatus } from './stored-usage-row';
 import { createWorkFactStore, migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-store';
 import { createWorkSessionJoinStore } from './work-session-join';
 import { createWorkThreadStore, WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
@@ -112,6 +113,7 @@ export type {
   SkillObservationImportResult,
   StoredSkillObservation,
 } from './skill-observation-store';
+export type { StoredSourceAuthority, StoredUsageRowStatus } from './stored-usage-row';
 export type {
   ImportCheckoutStatusObservationsInput,
   ImportJiraIssueObservationsInput,
@@ -128,9 +130,6 @@ export type {
   WorkFactRunState,
   WorkFactRunStates,
 } from './work-fact-store';
-
-export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
-export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
 export const USAGE_STORE_SCHEMA_VERSION = 5;
 // The web stale window is 30 days; per-minute heartbeats forced a full served-revision rewrite every cycle.
@@ -428,12 +427,6 @@ interface ExistingRow {
   row_key: string;
   source_authority: StoredSourceAuthority;
   status: StoredUsageRowStatus;
-}
-
-interface StoredRowRecord {
-  row_json: string;
-  row_key: string;
-  source_authority: StoredSourceAuthority;
 }
 
 interface StoredMachineFleetRow {
