@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionDetailConsistency } from '@ai-usage/report-core/session-detail';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
-import { demoReportPayload } from './report-data';
+import { demoReportPayload } from '../../../report-data';
+import type { SessionAnalysisTarget } from '../../../session-analysis-target';
 import { buildSessionAnalysisPresentation } from './session-analysis-presentation';
-import type { SessionAnalysisTarget } from './session-analysis-target';
 
 const row = enrichSessionPresentationRow(demoReportPayload.rows[0]!);
 const sessionTarget: SessionAnalysisTarget = { kind: 'session', reportRowId: row.rowId, summaryRow: row };

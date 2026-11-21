@@ -1,4 +1,4 @@
-import type { Disposer, StateListener } from './lib/foundation/subscription';
+import type { Disposer, StateListener } from '../../foundation/subscription';
 
 export type SessionSurfaceMode = 'pending' | 'mobile' | 'desktop';
 

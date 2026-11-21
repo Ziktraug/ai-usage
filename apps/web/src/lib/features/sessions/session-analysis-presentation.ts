@@ -4,7 +4,7 @@ import type {
   SessionDetailCoverageStatus,
   SessionDetailTimingStatus,
 } from '@ai-usage/report-core/session-detail';
-import type { SessionAnalysisTarget } from './session-analysis-target';
+import type { SessionAnalysisTarget } from '../../../session-analysis-target';
 
 export type SessionAnalysisPresentationItem =
   | { kind: 'consistency-meta'; text: string; tone: 'neutral' }

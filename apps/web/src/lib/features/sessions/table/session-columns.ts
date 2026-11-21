@@ -2,7 +2,6 @@ import { rtkSavingsPct } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { type ColumnDef, createExpandedRowModel, rowExpandingFeature, tableFeatures } from '@tanstack/table-core';
 import { storeReactivityBindings } from '@tanstack/table-core/store-reactivity-bindings';
-import { lineDeltaLabel } from '../../../../dashboard-sort';
 import {
   isSessionColumnVisible,
   type SessionColumnId,
@@ -11,6 +10,7 @@ import {
 } from '../../../../session-table-schema';
 import { fmtCompactColumn, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
 import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+import { lineDeltaLabel } from '../dashboard-sort';
 
 export interface SessionColumnMeta {
   readonly align: 'left' | 'right';

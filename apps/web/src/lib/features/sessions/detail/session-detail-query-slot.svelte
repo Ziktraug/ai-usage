@@ -2,7 +2,6 @@
   import { type SessionPresentationRow, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
   import { createQuery, type QueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, tick } from 'svelte';
-  import { classifySessionAnalysisError } from '../../../../session-analysis-error';
   import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
   import { drawerCommandForKey } from '../../../foundation/navigation/svelte/navigation';
   import {
@@ -12,6 +11,7 @@
   } from '../../../query/options/session';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { createLazyModuleLoader } from '../../report/composition/lazy-module-loader';
+  import { classifySessionAnalysisError } from '../session-analysis-error';
   import SessionDetailChunkRetry from './session-detail-chunk-retry.svelte';
   import { createSessionDetailRecovery } from './session-detail-recovery';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './types';

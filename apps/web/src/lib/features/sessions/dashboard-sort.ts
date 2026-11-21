@@ -4,10 +4,10 @@ import {
   compareSessionPresentationRows,
   sortValueForSessionColumn as sortValueForCoreSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import { fmtMaybeNum, fmtNum, fmtPct } from './lib/foundation/presentation/format';
-import type { DashboardRow } from './lib/foundation/presentation/report-value';
-import type { TableSortingState } from './lib/foundation/table/state';
-import type { SessionColumnId } from './session-table-schema';
+import type { SessionColumnId } from '../../../session-table-schema';
+import { fmtMaybeNum, fmtNum, fmtPct } from '../../foundation/presentation/format';
+import type { DashboardRow } from '../../foundation/presentation/report-value';
+import type { TableSortingState } from '../../foundation/table/state';
 
 export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): number | string =>
   sortValueForCoreSessionColumn(row, columnId);

@@ -20,7 +20,7 @@ const sourceDirectory = fileURLToPath(new URL('../../../', import.meta.url));
 const entryPaths = [
   'dashboard-analytics.ts',
   'dashboard-model.ts',
-  'dashboard-sort.ts',
+  'lib/features/sessions/dashboard-sort.ts',
   'overview-model.ts',
   'provider-status-model.ts',
   'campaign-label-overrides.ts',

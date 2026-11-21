@@ -7,9 +7,7 @@ import {
   type SessionPresentationRow,
   sessionOriginLabel,
 } from '@ai-usage/report-core/session-query';
-import { rtkSavedTitle } from '../../../../dashboard-sort';
 import { sessionDurationSemantics } from '../../../../session-analysis-model';
-import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../../../../session-list-label';
 import type { SessionColumnId } from '../../../../session-table-schema';
 import { sessionDisplayTitle } from '../../../foundation/presentation/display-title';
 import { fmtCompactColumn, fmtNum } from '../../../foundation/presentation/format';
@@ -19,6 +17,8 @@ import {
   USAGE_UNAVAILABLE_HINT,
 } from '../../../foundation/presentation/report-value';
 import type { TableSortingState } from '../../../foundation/table/state';
+import { rtkSavedTitle } from '../dashboard-sort';
+import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../session-list-label';
 import { sessionColumnById, TOKEN_COLUMN_VALUE } from './session-columns';
 
 export interface SessionHighlightSegment {
