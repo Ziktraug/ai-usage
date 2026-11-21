@@ -1,40 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { fileURLToPath } from 'node:url';
-import { plugin } from 'bun';
-import { compileModule } from 'svelte/compiler';
 import type {
   CampaignFocusRestorationOptions,
   CampaignFocusTarget,
   CampaignNavigationEnds,
 } from './campaigns-focus-restoration.svelte';
+import { compileCampaignRuneModulesForClient } from './campaigns-rune-modules.fixture';
 
-/** Only the rune module this file tests; nothing else in the test process is compiled or redirected. */
-const RUNE_MODULE = /\/campaigns-focus-restoration\.svelte\.ts$/u;
-const SVELTE_IMPORT = /from\s*(['"])svelte\1/gu;
-const SERVER_ENTRY = /index-server\.js$/u;
-
-/** Bun resolves `svelte` to its server entry; the client one owns `tick` and `$state` as a browser sees them. */
-const svelteServerEntry = fileURLToPath(import.meta.resolve('svelte'));
-if (!SERVER_ENTRY.test(svelteServerEntry)) {
-  throw new Error(`Expected the svelte server entry, got ${svelteServerEntry}.`);
-}
-const svelteClientEntry = svelteServerEntry.replace(SERVER_ENTRY, 'index-client.js');
-
-// Compiled for the client, as the browser runs it; the process-wide `svelte` entry stays the server one.
-plugin({
-  name: 'campaigns focus restoration rune module (client)',
-  setup(build) {
-    build.onLoad({ filter: RUNE_MODULE }, async ({ path }) => {
-      const source = await Bun.file(path).text();
-      const stripped = new Bun.Transpiler({ loader: 'ts' }).transformSync(source);
-      const { js } = compileModule(stripped, { filename: path, generate: 'client' });
-      return {
-        contents: js.code.replace(SVELTE_IMPORT, `from ${JSON.stringify(svelteClientEntry)}`),
-        loader: 'js',
-      };
-    });
-  },
-});
+compileCampaignRuneModulesForClient();
 
 const { createCampaignFocusRestoration } = await import('./campaigns-focus-restoration.svelte');
 

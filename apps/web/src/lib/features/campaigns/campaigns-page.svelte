@@ -44,9 +44,9 @@
   import CampaignAgentMap from './campaign-agent-map.svelte';
   import { resolveCampaignDetailSelection } from './campaign-detail-selection';
   import CampaignProjectTimeline from './campaign-project-timeline.svelte';
-  import { buildCampaignTimeline, type CampaignTimelineAxis, campaignTimelineRange } from './campaign-timeline-model';
+  import { buildCampaignTimeline, campaignTimelineRange } from './campaign-timeline-model';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
-  import type { CampaignScrollState } from './campaign-virtual-window';
+  import { createCampaignExplorationState } from './campaigns-exploration-state.svelte';
   import { createCampaignFocusRestoration } from './campaigns-focus-restoration.svelte';
   import type { CampaignsPageData } from './campaigns-load';
   import {
@@ -84,7 +84,6 @@
     syntheticCampaignRevision,
   } from './campaigns-page-model';
   import {
-    type CampaignExplorationAnchors,
     type CampaignExplorationData,
     campaignMatchingMembersOptions,
     campaignsExplorationOptions,
@@ -134,30 +133,14 @@
     );
   };
   let previousKey = $state<QueryKey>();
-  let inspected = $state<{ revision: string; generatedAt: string } | null>(null);
-  let topDepth = $state(1);
-  let memberDepths = $state<Record<string, number>>({});
-  let automaticCampaign = $state('');
-  let anchors = $state<CampaignExplorationAnchors>({});
-  let matchingRestoration = $state<{ campaignKey: string; depth: number; rowIds: readonly string[] } | null>(null);
-  let listNavigation = $state<CampaignScrollState>({});
-  let mapNavigation = $state<CampaignScrollState>({});
-  let timelineNavigation = $state<CampaignScrollState>({});
-  let collapsedNodes = $state<ReadonlySet<string>>(new Set());
-  let collapsedProjects = $state<ReadonlySet<string>>(new Set());
-  let expansion = $state<{ key: string; open: boolean } | null>(null);
-  let timelineAxis = $state<{ context: string; axis: CampaignTimelineAxis | null } | null>(null);
-  let mobileMap = $state(false);
-  let searchExpanded = $state(false);
-  let searchNavigation = $state<CampaignScrollState>({});
   const focusRestoration = createCampaignFocusRestoration({
     campaignView: () => campaignView,
     pathname: () => page.url.pathname,
-    searchExpanded: () => searchExpanded,
+    searchExpanded: () => explorationState.searchExpanded,
     selectedSessionId: () => selectedSessionId,
   });
+  const explorationState = createCampaignExplorationState({ focus: focusRestoration, scope: () => scope });
   let checkedExpiredRevision = '';
-  let previousScope = '';
   const bootstrapQuery = createQuery(() =>
     reportBootstrapQueryOptions(clients.report, { browser: browser && data.mode === 'live' }),
   );
@@ -172,7 +155,7 @@
   const latest = $derived.by(() =>
     data.mode === 'live' ? bootstrapCampaignRevision(bootstrap) : syntheticCampaignRevision(),
   );
-  const revision = $derived(inspected?.revision ?? latest?.revision);
+  const revision = $derived(explorationState.inspected?.revision ?? latest?.revision);
   // SvelteKit 3 types `page.url` as read-only; the shared URL helpers take a URL.
   const pageUrl = $derived(new URL(page.url.href));
   const search = $derived(parseDashboardSearchUrl(pageUrl, dashboardSearchCodec));
@@ -183,12 +166,15 @@
   const request = $derived(
     campaignsRequest(
       search,
-      inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
+      explorationState.inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
       revision ?? 'pending-campaigns',
     ),
   );
   const requestedTimelineRange = $derived(
-    campaignTimelineRange(search.range, inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt),
+    campaignTimelineRange(
+      search.range,
+      explorationState.inspected?.generatedAt ?? latest?.generatedAt ?? campaignMapFixtureGeneratedAt,
+    ),
   );
   const urlSelection = $derived(readCampaignSelection(pageUrl, request));
   let requestedCampaign = $state(
@@ -205,9 +191,11 @@
   );
   const selectedSessionId = $derived(page.url.searchParams.get('selectedSession') ?? '');
   const intent = $derived<SessionWindowIntent>({
-    topLevelDepth: topDepth,
+    topLevelDepth: explorationState.topDepth,
     campaignChildrenDepth: {},
-    campaignSessionsDepth: requestedCampaign ? { [requestedCampaign]: memberDepths[requestedCampaign] ?? 1 } : {},
+    campaignSessionsDepth: requestedCampaign
+      ? { [requestedCampaign]: explorationState.memberDepths[requestedCampaign] ?? 1 }
+      : {},
   });
   const options = $derived(
     campaignsExplorationOptions({
@@ -216,8 +204,8 @@
       request,
       timelineRange: requestedTimelineRange,
       intent,
-      anchors,
-      ...(matchingRestoration ? { matching: matchingRestoration } : {}),
+      anchors: explorationState.anchors,
+      ...(explorationState.matchingRestoration ? { matching: explorationState.matchingRestoration } : {}),
     }),
   );
   const exploration = createQuery(() => ({
@@ -232,7 +220,9 @@
   const items = $derived(listPages.flatMap((entry) => entry.items));
   const virtualCampaigns = $derived(items.map((item) => ({ key: item.campaignKey, item })));
   const selectedKey = $derived(
-    urlSelection.status === 'selected' ? urlSelection.campaignKey : automaticCampaign || items[0]?.campaignKey || '',
+    urlSelection.status === 'selected'
+      ? urlSelection.campaignKey
+      : explorationState.automaticCampaign || items[0]?.campaignKey || '',
   );
   const selectedItem = $derived(items.find((item) => item.campaignKey === selectedKey));
   const visibleRevision = $derived(visible?.request.revision);
@@ -248,7 +238,7 @@
     buildCampaignTimeline(
       items,
       visible?.timelineRange ?? { from: null, to: null },
-      timelineAxis?.context === timelineContext ? timelineAxis.axis : null,
+      explorationState.timelineAxis?.context === timelineContext ? explorationState.timelineAxis.axis : null,
     ),
   );
   const memberPages = $derived(visible?.members.find((entry) => entry.campaignKey === selectedKey)?.data.pages ?? []);
@@ -353,38 +343,25 @@
     if (
       browser &&
       window.matchMedia('(min-width: 1024px)').matches &&
-      (mapNavigation.focusKey || (mapNavigation.anchor && mapNavigation.anchor.key !== root?.rowId))
+      (explorationState.mapNavigation.focusKey ||
+        (explorationState.mapNavigation.anchor && explorationState.mapNavigation.anchor.key !== root?.rowId))
     ) {
-      mobileMap = true;
+      explorationState.mobileMap = true;
     }
   });
 
   $effect(() => {
-    if (!inspected && latest) {
-      inspected = latest;
+    if (!explorationState.inspected && latest) {
+      explorationState.inspected = latest;
     }
   });
   $effect(() => {
-    if (previousScope && previousScope !== scope) {
-      automaticCampaign = '';
-      searchExpanded = false;
-      searchNavigation = {};
-      topDepth = 1;
-      memberDepths = {};
-      anchors = {};
-      matchingRestoration = null;
-      listNavigation = {};
-      mapNavigation = {};
-      timelineNavigation = {};
-      collapsedNodes = new Set();
-      collapsedProjects = new Set();
-    }
-    previousScope = scope;
+    explorationState.followScope(scope);
   });
   $effect(() => {
     requestedCampaign = selectedKey;
-    if (!automaticCampaign && listAnswersRequest && items[0]) {
-      automaticCampaign = items[0].campaignKey;
+    if (!explorationState.automaticCampaign && listAnswersRequest && items[0]) {
+      explorationState.automaticCampaign = items[0].campaignKey;
     }
   });
   $effect(() => {
@@ -395,8 +372,11 @@
     ) {
       previousKey = options.queryKey;
       pruneCampaignExplorations(queryClient, options.queryKey);
-      if ((timelineAxis?.context !== timelineContext || !timelineAxis?.axis) && timeline.axis) {
-        timelineAxis = { context: timelineContext, axis: timeline.axis };
+      if (
+        (explorationState.timelineAxis?.context !== timelineContext || !explorationState.timelineAxis?.axis) &&
+        timeline.axis
+      ) {
+        explorationState.timelineAxis = { context: timelineContext, axis: timeline.axis };
       }
     }
   });
@@ -416,51 +396,49 @@
     if (!hasMoreCampaigns || isRefreshing || exploration.error || !listAnswersRequest) {
       return false;
     }
-    topDepth = listPages.length + 1;
+    explorationState.topDepth = listPages.length + 1;
     return true;
   };
   const loadMembers = (): boolean => {
     if (!hasMoreSessions || isRefreshing || exploration.error || !listAnswersRequest) {
       return false;
     }
-    memberDepths = { ...memberDepths, [selectedKey]: memberPages.length + 1 };
+    explorationState.memberDepths = { ...explorationState.memberDepths, [selectedKey]: memberPages.length + 1 };
     return true;
   };
   const refresh = (): void => {
     if (!latest) {
       return;
     }
-    matchingRestoration =
-      search.q && matching.data
-        ? matchingRestorationFor(
-            selectedKey,
-            matching.data.pages.length,
-            [searchNavigation.anchor?.key, selectedSessionId],
-            matchedRows,
-          )
-        : null;
-    anchors = refreshAnchorsFor({
-      campaignAnchor: listNavigation.anchor?.key,
-      items,
-      memberAnchor: campaignView === 'timeline' ? timelineNavigation.anchor?.key : mapNavigation.anchor?.key,
-      rows,
+    explorationState.refresh({
+      matchingRestoration:
+        search.q && matching.data
+          ? matchingRestorationFor(
+              selectedKey,
+              matching.data.pages.length,
+              [explorationState.searchNavigation.anchor?.key, selectedSessionId],
+              matchedRows,
+            )
+          : null,
+      anchors: refreshAnchorsFor({
+        campaignAnchor: explorationState.listNavigation.anchor?.key,
+        items,
+        memberAnchor:
+          campaignView === 'timeline'
+            ? explorationState.timelineNavigation.anchor?.key
+            : explorationState.mapNavigation.anchor?.key,
+        rows,
+        selectedKey,
+        timelineAnchor: explorationState.timelineNavigation.anchor?.key,
+      }),
+      listPageCount: listPages.length,
+      memberPageCount: memberPages.length,
       selectedKey,
-      timelineAnchor: timelineNavigation.anchor?.key,
+      inspected: latest,
     });
-    topDepth = Math.max(topDepth, listPages.length);
-    memberDepths = { ...memberDepths, [selectedKey]: Math.max(memberDepths[selectedKey] ?? 1, memberPages.length) };
-    inspected = latest;
   };
   const restart = (): void => {
-    anchors = {};
-    matchingRestoration = null;
-    topDepth = 1;
-    memberDepths = {};
-    listNavigation = {};
-    mapNavigation = {};
-    timelineNavigation = {};
-    timelineAxis = null;
-    inspected = latest;
+    explorationState.restart(latest);
     const url = new URL(page.url.href);
     url.searchParams.delete('selectedSession');
     navigate(url);
@@ -480,13 +458,13 @@
     const url = new URL(page.url.href);
     url.searchParams.set('selectedCampaign', campaignKey);
     if (campaignKey !== selectedKey) {
-      matchingRestoration = null;
-      searchNavigation = {};
+      explorationState.matchingRestoration = null;
+      explorationState.searchNavigation = {};
       url.searchParams.delete('selectedSession');
-      mapNavigation = {};
-      collapsedNodes = new Set();
+      explorationState.mapNavigation = {};
+      explorationState.collapsedNodes = new Set();
     }
-    mobileMap = true;
+    explorationState.mobileMap = true;
     navigate(url);
   };
   const selectView = (view: 'list' | 'timeline'): void => {
@@ -499,7 +477,7 @@
     navigate(url);
   };
   const clearSelection = (): void => {
-    automaticCampaign = '';
+    explorationState.automaticCampaign = '';
     const url = new URL(page.url.href);
     url.searchParams.delete('selectedCampaign');
     url.searchParams.delete('selectedSession');
@@ -528,7 +506,7 @@
     if (!selectedRevision) {
       return;
     }
-    mobileMap = true;
+    explorationState.mobileMap = true;
     if (!selectedSessionId) {
       focusRestoration.detailOpenerId = row.rowId;
     }
@@ -577,47 +555,7 @@
   // Back/Forward and a reload return to the exploration the reader left: SvelteKit stores this per
   // history entry and serialises it with the app transport. The id outlives a rebuild, where the
   // default call-site id would change with the chunk hashes.
-  const capture = () => ({
-    scope,
-    anchors,
-    matchingRestoration,
-    inspected,
-    automaticCampaign,
-    topDepth,
-    memberDepths,
-    listNavigation,
-    mapNavigation,
-    timelineNavigation,
-    timelineAxis,
-    collapsedNodes: [...collapsedNodes],
-    collapsedProjects: [...collapsedProjects],
-    expansion,
-    mobileMap,
-    searchExpanded,
-    searchNavigation,
-    detailOpenerId: focusRestoration.detailOpenerId,
-  });
-  const restore = (saved: ReturnType<typeof capture>): void => {
-    previousScope = saved.scope;
-    anchors = saved.anchors;
-    matchingRestoration = saved.matchingRestoration;
-    inspected = saved.inspected;
-    automaticCampaign = saved.automaticCampaign;
-    topDepth = saved.topDepth;
-    memberDepths = saved.memberDepths;
-    listNavigation = saved.listNavigation;
-    mapNavigation = saved.mapNavigation;
-    timelineNavigation = saved.timelineNavigation;
-    timelineAxis = saved.timelineAxis;
-    collapsedNodes = new Set(saved.collapsedNodes);
-    collapsedProjects = new Set(saved.collapsedProjects);
-    expansion = saved.expansion;
-    mobileMap = saved.mobileMap;
-    searchExpanded = saved.searchExpanded;
-    searchNavigation = saved.searchNavigation;
-    focusRestoration.detailOpenerId = saved.detailOpenerId;
-  };
-  snapshot({ capture, id: 'campaigns-page', restore });
+  snapshot({ capture: explorationState.capture, id: 'campaigns-page', restore: explorationState.restore });
 </script>
 
 <svelte:head><title>Campaigns · ai-usage</title></svelte:head>
@@ -790,16 +728,20 @@
           {matching.data?.pages[0]?.itemCount ?? 0}
           matching sessions in the selected campaign · search covers all its stored sessions.
         </p>
-        {#if !searchExpanded}
+        {#if !explorationState.searchExpanded}
           {#each matchedRows.slice(0, 3) as row (row.rowId)}
             <button class={ghostButton} data-matching-row-id={row.rowId} onclick={() => openSession(row)} type="button">
               Open matching session {displayTitle(row.name || row.sessionLabel)}
             </button>
           {/each}
         {/if}
-        {#if matchedRows.length > 3 || matching.hasNextPage || searchExpanded}
-          <button class={ghostButton} onclick={() => (searchExpanded = !searchExpanded)} type="button">
-            {searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
+        {#if matchedRows.length > 3 || matching.hasNextPage || explorationState.searchExpanded}
+          <button
+            class={ghostButton}
+            onclick={() => (explorationState.searchExpanded = !explorationState.searchExpanded)}
+            type="button"
+          >
+            {explorationState.searchExpanded ? 'Return to full campaign' : 'Explore matching sessions'}
           </button>
         {/if}
       </section>
@@ -809,7 +751,7 @@
         <button class={ghostButton} onclick={() => matching.refetch()} type="button">Retry search</button>
       </p>
     {/if}
-    {#if searchExpanded && search.q}
+    {#if explorationState.searchExpanded && search.q}
       <CampaignVirtualList
         estimate={90}
         label="Matching session results"
@@ -817,7 +759,7 @@
         rows={matchRows}
         surface="search"
         bind:this={focusRestoration.searchVirtualList}
-        bind:navigation={searchNavigation}
+        bind:navigation={explorationState.searchNavigation}
       >
         {#snippet children(
           _entry,
@@ -849,7 +791,7 @@
         <button
           class={ghostButton}
           onclick={() =>
-            (timelineAxis = {
+            (explorationState.timelineAxis = {
               context: timelineContext,
               axis: buildCampaignTimeline(items, visible.timelineRange).axis,
             })}
@@ -878,9 +820,9 @@
         onSelectCampaign={selectCampaign}
         selectedCampaignKey={selectedKey}
         {timeline}
-        bind:collapsedProjects
-        bind:expansion
-        bind:navigation={timelineNavigation}
+        bind:collapsedProjects={explorationState.collapsedProjects}
+        bind:expansion={explorationState.expansion}
+        bind:navigation={explorationState.timelineNavigation}
         bind:virtualList={focusRestoration.timelineVirtualList}
       />
       <p class={notice}>
@@ -901,10 +843,14 @@
         </p>
       {/if}
     {:else}
-      <button class={mobileBack} onclick={() => (mobileMap = !mobileMap)} type="button">
-        {mobileMap ? 'Back to campaigns' : 'View selected campaign'}
+      <button
+        class={mobileBack}
+        onclick={() => (explorationState.mobileMap = !explorationState.mobileMap)}
+        type="button"
+      >
+        {explorationState.mobileMap ? 'Back to campaigns' : 'View selected campaign'}
       </button>
-      <div class={layout} data-mobile-map={mobileMap ? 'true' : 'false'}>
+      <div class={layout} data-mobile-map={explorationState.mobileMap ? 'true' : 'false'}>
         <section aria-label="Recent campaigns" class={campaignList} data-campaign-list>
           <p class={muted}>{items.length} of {listPages[0]?.itemCount ?? 0} campaigns · most recent first</p>
           <CampaignVirtualList
@@ -914,7 +860,7 @@
             onNearEnd={loadCampaigns}
             rows={virtualCampaigns}
             surface="list"
-            bind:navigation={listNavigation}
+            bind:navigation={explorationState.listNavigation}
           >
             {#snippet children(
               _entry,
@@ -957,8 +903,8 @@
               map={presentedMap}
               onNearEnd={loadMembers}
               onOpen={openSession}
-              bind:collapsed={collapsedNodes}
-              bind:navigation={mapNavigation}
+              bind:collapsed={explorationState.collapsedNodes}
+              bind:navigation={explorationState.mapNavigation}
               bind:virtualList={focusRestoration.mapVirtualList}
             />
           {:else if isRefreshing}
