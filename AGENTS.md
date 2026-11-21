@@ -77,6 +77,9 @@ style. What Biome cannot check, and reviews here care about:
   accepted decision (ADR 0005/0013).
 - Tests accompany behavior changes; browser regressions belong in the single
   Playwright stack (ADR 0006). No `.only`/`.skip` committed.
+- Biome caps cognitive complexity at 20 and non-test files at 1,000 lines.
+  `legacy, plan 127` suppressions mark existing debt: remove one when its code
+  is fixed, and never add one for new code.
 
 ## Repository conventions
 
