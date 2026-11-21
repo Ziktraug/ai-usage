@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import type { WorkRoot } from '@ai-usage/report-core/work-attention';
+import { syntheticWorkAttentionDataset } from './attention/work-attention-synthetic';
+import { nativeQuestionRoot } from './attention/work-native.fixture';
 import {
   EMPTY_WORK_ATTENTION_SEARCH,
   filterWorkRoots,
@@ -32,8 +34,6 @@ import {
   workUndeclaredSituation,
   writeWorkAttentionSearch,
 } from './work-attention-model';
-import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
-import { nativeQuestionRoot } from './work-native.fixture';
 import { WORK_DEMO_TIME } from './work-synthetic';
 
 const dataset = syntheticWorkAttentionDataset();

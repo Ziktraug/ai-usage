@@ -10,6 +10,13 @@ interface SvelteServerModule {
 }
 
 const AGGREGATE_ENTRY_PATTERN = /data-timeline-legend-entry="aggregate"[\s\S]*?<\/li>/;
+const LEGEND_FILTER_BUTTON_PATTERN =
+  /<button aria-pressed="false"[^>]*data-series-key="model-\d+" title="Filter by Model \d+" type="button">/g;
+const AGGREGATE_BUTTON_PATTERN =
+  /<button aria-pressed="false"[^>]*data-series-key="__ai_usage_other__" disabled="" title="Other"/;
+const BUCKET_LABEL_PATTERN = /<span aria-label="Jun 11, 2026 · API value: \$78\.00"[^>]*role="img"/;
+const INSPECTION_BUTTON_PATTERN =
+  /<button aria-label="Inspect activity timeline\. Use arrow keys to inspect days\."[^>]*type="button"><\/button>/;
 const FLEX_AGGREGATE_ENTRY_PATTERN = /<li class="[^"]*d_flex[^"]*" data-timeline-legend-entry="aggregate">/;
 
 const componentFrom = (loaded: unknown): Component => {
@@ -111,4 +118,15 @@ test('renders twelve ranked model entries with a neutral inline grouped tail', (
   expect(body).toMatch(FLEX_AGGREGATE_ENTRY_PATTERN);
   const aggregateEntry = body.match(AGGREGATE_ENTRY_PATTERN)?.[0] ?? '';
   expect(aggregateEntry.indexOf('</button>')).toBeLessThan(aggregateEntry.indexOf('2 grouped'));
+});
+
+test('offers each filterable series as a pressed-state legend button and names every bucket and the inspection control', () => {
+  // Pointer and keyboard inspection, and the live readout it fills, are driven in time-range.spec.ts.
+  const { body } = render(component, { props: { timeline, value: 'cost' } });
+
+  expect(body.match(LEGEND_FILTER_BUTTON_PATTERN)).toHaveLength(11);
+  // The grouped tail is not one filterable series, so it is shown but cannot be pressed.
+  expect(body).toMatch(AGGREGATE_BUTTON_PATTERN);
+  expect(body).toMatch(BUCKET_LABEL_PATTERN);
+  expect(body).toMatch(INSPECTION_BUTTON_PATTERN);
 });

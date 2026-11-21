@@ -41,6 +41,8 @@ const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
 const QUOTA_CHART_ASPECT_RATIO = 3;
 const NO_SESSIONS_PATTERN = /No sessions/;
 const SESSION_COUNTER_PATTERN = /^\d+ \/ \d+ sessions$/;
+const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
+const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
 const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
   const response = await page.goto(url);
@@ -251,6 +253,56 @@ test('retries a failed lazy Analysis module without reloading the page', async (
   await expect(page.getByRole('button', { exact: true, name: 'Retry' })).toHaveCount(0);
   await expect(page).toHaveURL(MODELS_TAB_URL_PATTERN);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageLazyRetryDocument'))).toBe('retained');
+});
+
+test('keeps the period control on every report destination and activity exploration on Overview only', async ({
+  page,
+}) => {
+  await openHydratedReport(page);
+  const period = page.getByRole('region', { name: 'Report period' });
+  const activity = page.getByRole('region', { name: 'Activity' });
+
+  await expect(period).toBeVisible();
+  await expect(activity.locator('details[aria-label="Explore activity"]')).toHaveCount(1);
+  for (const destination of ['Sessions', 'Analysis', 'Overview'] as const) {
+    await reportViewsFor(page).getByRole('link', { exact: true, name: destination }).click();
+    await expect(reportViewsFor(page).getByRole('link', { exact: true, name: destination })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    await expect(period).toBeVisible();
+    await expect(page.locator('details[aria-label="Explore activity"]')).toHaveCount(
+      destination === 'Overview' ? 1 : 0,
+    );
+  }
+});
+
+test('publishes the accepted Sessions query identity on the report and follows a new query', async ({ page }) => {
+  await openHydratedReport(page, '/?tab=sessions');
+  const report = page.locator('main[data-hydrated="true"]');
+  await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
+  await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
+  const fingerprint = await report.getAttribute('data-request-fingerprint');
+
+  await page
+    .getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' })
+    .fill('codex');
+  await waitForFocusedReportSettled(page);
+  await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
+  await expect(report).not.toHaveAttribute('data-request-fingerprint', fingerprint ?? '');
+});
+
+test('clears every filter from the Overview of a filtered empty result', async ({ page }) => {
+  await openHydratedReport(page);
+  const search = page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' });
+  await search.fill('no session is named like this');
+  await waitForFocusedReportSettled(page);
+  await expect(page.locator('[data-executive-kpi]')).toHaveCount(0);
+
+  await page.getByRole('button', { exact: true, name: 'Clear filters' }).click();
+  await waitForFocusedReportSettled(page);
+  await expect(search).toHaveValue('');
+  await expect(page.locator('[data-executive-kpi]')).toBeVisible();
 });
 
 test('opens the existing Models deep state from the executive link and preserves history', async ({ page }) => {
@@ -776,10 +828,13 @@ test('navigates and closes the selected session with drawer keyboard commands', 
     expect(actionBox?.height ?? 0).toBeGreaterThanOrEqual(44);
     expect(actionBox?.width ?? 0).toBeGreaterThanOrEqual(44);
   }
+  // Moving between neighbouring sessions keeps the one mounted Drawer rather than remounting it.
+  await drawer.evaluate((element) => element.setAttribute('data-e2e-drawer-instance', 'first'));
   await page.keyboard.press('j');
   await expect(drawer.getByText('Review analytics model', { exact: true }).first()).toBeVisible();
   await page.keyboard.press('k');
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
+  await expect(drawer).toHaveAttribute('data-e2e-drawer-instance', 'first');
   await page.keyboard.press('Escape');
   await expect(drawer).not.toBeVisible();
   await expect(sessionTrigger).toBeFocused();

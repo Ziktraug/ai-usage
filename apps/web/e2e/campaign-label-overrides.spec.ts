@@ -50,6 +50,25 @@ test('renames and resets one page-local campaign label without changing its filt
   const labelInput = drawer.getByRole('textbox', { name: 'Campaign label' });
   const renameButton = drawer.getByRole('button', { exact: true, name: 'Rename' });
   await expect(labelInput).toHaveValue(DERIVED_LABEL);
+  // The label edits the campaign the identity names: after its scope, before the drawer's figures.
+  expect(
+    await labelInput.evaluate((input) => {
+      // querySelectorAll lists matches in document order.
+      const ordered = [
+        ...(input
+          .closest('[role="dialog"]')
+          ?.querySelectorAll('[data-session-drawer-campaign-scope], input, [data-session-drawer-stats]') ?? []),
+      ];
+      return ordered
+        .filter((element) => element === input || element.tagName !== 'INPUT')
+        .map((element) => {
+          if (element === input) {
+            return 'label';
+          }
+          return element.hasAttribute('data-session-drawer-stats') ? 'stats' : 'scope';
+        });
+    }),
+  ).toEqual(['scope', 'label', 'stats']);
   await labelInput.fill(RENAMED_LABEL);
   await expect(renameButton).toBeEnabled();
   await renameButton.click();

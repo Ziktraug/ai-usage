@@ -34,18 +34,4 @@ describe('report identity channel', () => {
     channel.clear(current);
     expect(changes).toEqual([previous, current, undefined]);
   });
-
-  test('wires exact live and synthetic accepted session identities', async () => {
-    const [liveSource, syntheticSource] = await Promise.all([
-      Bun.file(new URL('../composition/sessions-destination.svelte', import.meta.url)).text(),
-      Bun.file(new URL('../composition/synthetic-report-destination.svelte', import.meta.url)).text(),
-    ]);
-
-    expect(liveSource).toContain('<SessionIdentityPublisher');
-    expect(liveSource).toContain('requestFingerprint={query ? sessionQueryFingerprint(query) : undefined}');
-    expect(liveSource).toContain('revision={query?.revision}');
-    expect(syntheticSource).toContain('<SessionIdentityPublisher');
-    expect(syntheticSource).toContain('requestFingerprint={sessionQueryFingerprint(syntheticSessionQuery)}');
-    expect(syntheticSource).toContain('revision={syntheticSessionQuery.revision}');
-  });
 });

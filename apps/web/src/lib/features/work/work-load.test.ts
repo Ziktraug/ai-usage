@@ -24,7 +24,7 @@ import { prefetchWorkQueries } from '../../query/work-prefetch';
 import { createWebRpcClient } from '../../rpc/client';
 import type { SessionClientAdapter } from '../../rpc/session-client';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
-import { syntheticWorkAttentionDataset } from './work-attention-synthetic';
+import { syntheticWorkAttentionDataset } from './attention/work-attention-synthetic';
 import { loadWorkPageData, workPrefetchSourcesFor } from './work-load';
 import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
 

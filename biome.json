@@ -65,6 +65,14 @@
                   "@ai-usage/*/src/**"
                 ],
                 "message": "Use workspace package imports and public package exports instead of relative workspace paths or private src paths."
+              },
+              {
+                "group": [
+                  "@ai-usage/design-system/tokens",
+                  "**/styled-system/tokens",
+                  "**/styled-system/tokens/**"
+                ],
+                "message": "Read theme tokens through extracted styles, never through the generated token() helper: Panda prunes the variables no extracted style reaches."
               }
             ]
           }
@@ -142,6 +150,104 @@
                       "@ai-usage/*/src/**"
                     ],
                     "message": "packages/skills is a self-contained local control plane and cannot import workspace runtime packages."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/web/src/lib/features/report/overview/overview-page.svelte",
+        "apps/web/src/lib/features/report/overview/executive-overview.svelte"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "../packages/**",
+                      "../../packages/**",
+                      "../../../packages/**",
+                      "../apps/**",
+                      "../../apps/**",
+                      "../../../apps/**",
+                      "@ai-usage/*/src",
+                      "@ai-usage/*/src/**"
+                    ],
+                    "message": "Use workspace package imports and public package exports instead of relative workspace paths or private src paths."
+                  },
+                  {
+                    "group": [
+                      "@ai-usage/design-system/tokens",
+                      "**/styled-system/tokens",
+                      "**/styled-system/tokens/**"
+                    ],
+                    "message": "Read theme tokens through extracted styles, never through the generated token() helper: Panda prunes the variables no extracted style reaches."
+                  },
+                  {
+                    "group": [
+                      "@tanstack/*",
+                      "@orpc/*",
+                      "**/rpc/**",
+                      "#lib/rpc/**",
+                      "**/query/**",
+                      "#lib/query/**",
+                      "**/server/**",
+                      "#lib/server/**"
+                    ],
+                    "message": "The Overview composition is presentation-only: its live and synthetic owners acquire the report and pass it in."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/web/src/lib/features/skills/shell/skills-shell.svelte"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "../../../query/hydration-context.svelte": {
+                    "allowImportNames": ["useWebQueryHydrationContext"],
+                    "message": "The Skills shell gates on the hydration context's coverage alone; it binds no other hydration helper."
+                  }
+                },
+                "patterns": [
+                  {
+                    "group": [
+                      "../packages/**",
+                      "../../packages/**",
+                      "../../../packages/**",
+                      "../apps/**",
+                      "../../apps/**",
+                      "../../../apps/**",
+                      "@ai-usage/*/src",
+                      "@ai-usage/*/src/**"
+                    ],
+                    "message": "Use workspace package imports and public package exports instead of relative workspace paths or private src paths."
+                  },
+                  {
+                    "group": [
+                      "@ai-usage/design-system/tokens",
+                      "**/styled-system/tokens",
+                      "**/styled-system/tokens/**"
+                    ],
+                    "message": "Read theme tokens through extracted styles, never through the generated token() helper: Panda prunes the variables no extracted style reaches."
                   }
                 ]
               }

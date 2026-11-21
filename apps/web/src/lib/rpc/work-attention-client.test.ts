@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ORPCError } from '@orpc/client';
-import { syntheticWorkAttentionDataset } from '../features/work/work-attention-synthetic';
-import { nativeQuestionRoot } from '../features/work/work-native.fixture';
+import { syntheticWorkAttentionDataset } from '../features/work/attention/work-attention-synthetic';
+import { nativeQuestionRoot } from '../features/work/attention/work-native.fixture';
 import {
   createWorkAttentionClient,
   parseWorkAttentionDataset,

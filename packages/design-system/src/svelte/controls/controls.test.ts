@@ -159,3 +159,17 @@ describe('SegmentBar model', () => {
     expect(segmentBarWidth([], 0)).toBe(0);
   });
 });
+
+describe('Svelte design entrypoint', () => {
+  test('exports the basic controls beside the chart colour helpers', async () => {
+    const entry: unknown = await viteServer.ssrLoadModule('/packages/design-system/src/svelte.ts');
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error('The Svelte design entrypoint did not load as a module');
+    }
+
+    expect(componentFrom({ default: Reflect.get(entry, 'Toggle') }, 'Toggle')).toBeFunction();
+    for (const name of ['accentFill', 'dimensionSwatch', 'stableSeriesColor']) {
+      expect(entry, name).toHaveProperty(name);
+    }
+  });
+});

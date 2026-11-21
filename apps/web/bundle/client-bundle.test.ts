@@ -207,6 +207,22 @@ describe('report app client bundle', () => {
     expect(css).not.toContain('token(colors.');
   });
 
+  test('leaves no unresolved token() reference in any emitted or theme stylesheet', () => {
+    // Panda does not fail on an undeclared token: it emits the literal `token(colors.x)` and the
+    // colour silently never applies. Every stylesheet of the build, initial or lazy, and the design
+    // system's theme stylesheet must therefore come out with every token resolved.
+    const cssAssetPaths = [
+      ...new Set(Object.values(readClientManifest()).flatMap((entry) => [...(entry.css ?? [])])),
+    ].sort();
+    expect(cssAssetPaths.length).toBeGreaterThan(1);
+    const unresolved = [
+      ...cssAssetPaths.map((assetPath) => ({ css: readInitialAsset(assetPath).toString('utf8'), name: assetPath })),
+      { css: readThemeStylesheet(), name: '@ai-usage/design-system/styles.css' },
+    ].filter(({ css }) => css.includes('token('));
+
+    expect(unresolved.map(({ name }) => name)).toEqual([]);
+  });
+
   test('emits the responsive breakpoints the quota rail is designed against', () => {
     const assetPaths = initialAssetPaths(readClientManifest());
     const css = assetPaths
@@ -233,8 +249,9 @@ describe('report app client bundle', () => {
     // apps/web/panda.config.ts sets optimize.removeUnusedTokens and removeUnusedKeyframes: Panda
     // drops the preset palettes, scales and keyframes no extracted style reaches. The stylesheet is
     // the only consumer of a token variable (no runtime code builds `var(--…)` names or calls the
-    // generated `token()`; theme-token-references.test.ts scans the sources for both), so a variable
-    // it references but does not declare is a lost token.
+    // generated `token()`: theme-token-references.test.ts scans the sources for the first, a biome.json
+    // import restriction refuses the second), so a variable it references but does not declare is a
+    // lost token.
     const css = readInitialStylesheet();
     const tokens = tokenLayers(css);
     const themeTokens = tokenLayers(readThemeStylesheet());

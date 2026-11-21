@@ -41,6 +41,10 @@ const testOnlySourcePattern =
   /(?:^|\/)(?:__tests__|e2e|fixture|fixtures|test|tests)(?:\/|$)|(?:^|[.-])(?:e2e|spec|test)\.[^/]+$/u;
 const testSourcePattern = /\.test\.[^/]+$/u;
 
+/** Every static import, re-export, dynamic `import()` and `require()` specifier (groups 1, 2 and 3). */
+export const moduleImportPattern =
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;
+
 export const isTestOnlySource = (relativeFile: string): boolean => testOnlySourcePattern.test(relativeFile);
 
 export const isPackageOrSubpath = (specifier: string, packageName: string): boolean =>
