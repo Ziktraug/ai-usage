@@ -1273,12 +1273,182 @@ export interface CodexUsageSessionsResult {
   workObservations: CodexWorkObservation[];
 }
 
+/**
+ * Leaves imported transcripts out of the sessions. An imported transcript leaves every Codex output
+ * here: it is neither a row nor skill or work evidence of this harness. Its id is returned so the
+ * store can retire the row an earlier pass emitted for it.
+ */
+const separateCodexExternalImports = (
+  readSessions: CodexSession[],
+): { retiredSourceSessionIds: string[]; sessions: CodexSession[] } => {
+  const importedSessionIds = new Set<string>();
+  const sessions = readSessions.filter((session) => {
+    if (!isCodexExternalImport(session)) {
+      return true;
+    }
+    if (session.id) {
+      importedSessionIds.add(session.id);
+    }
+    return false;
+  });
+  // Classified per rollout; an id is retired only when no rollout kept it as a
+  // Codex session, so an import copy never retires the native thread it shares
+  // an id with (whether that thread is emitted or deferred this pass).
+  const keptSessionIds = new Set(sessions.flatMap((session) => (session.id ? [session.id] : [])));
+  const retiredSourceSessionIds = [...importedSessionIds].filter((id) => !keptSessionIds.has(id));
+  return { retiredSourceSessionIds, sessions };
+};
+
+const codexSessionsById = (sessions: CodexSession[]): Map<string, CodexSession> => {
+  const byId = new Map<string, CodexSession>();
+  for (const session of sessions) {
+    // A rollout and its resumed continuation share an id; the one with the
+    // larger cumulative counter is the more complete reading of the thread.
+    if (session.id && (byId.get(session.id)?.maxTotal ?? -1) < session.maxTotal) {
+      byId.set(session.id, session);
+    }
+  }
+  return byId;
+};
+
+const codexChildrenByParent = (
+  sessions: CodexSession[],
+  byId: Map<string, CodexSession>,
+): Map<string, CodexSession[]> => {
+  const children = new Map<string, CodexSession[]>();
+  for (const session of sessions) {
+    if (session.id && session.parent && byId.has(session.parent)) {
+      const siblings = children.getOrInsertComputed(session.parent, () => []);
+      siblings.push(session);
+    }
+  }
+  return children;
+};
+
+const codexCollectedSessionSource = (
+  session: CodexSession,
+  classifierRootSourceSessionId: string | null,
+): CodexCollectedSession['source'] => ({
+  harnessKey: 'codex',
+  sourceSessionId: session.id,
+  ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
+  ...(classifierRootSourceSessionId ? { rootSourceSessionId: classifierRootSourceSessionId } : {}),
+  sourcePath: session.cwd,
+  ...(session.launchSource === null
+    ? {}
+    : { launchMode: session.launchSource === 'exec' ? ('exec' as const) : ('interactive' as const) }),
+  ...(session.vcs ? { vcs: session.vcs } : {}),
+});
+
+const codexCollectedSession = (
+  session: CodexSession,
+  byId: Map<string, CodexSession>,
+  children: Map<string, CodexSession[]>,
+): CodexCollectedSession => {
+  const kids = (session.id && children.get(session.id)) || [];
+  const tokens = {
+    in: session.tin,
+    out: session.tout,
+    cr: session.tcr,
+    cw: 0,
+  };
+  const origin = codexOrigin(session);
+  const isSubagent = origin === 'subagent';
+  const classifierRootSourceSessionId = origin === 'classifier' ? session.classifierParent : null;
+  const parentSession = session.parent ? byId.get(session.parent) : undefined;
+  const subscription = session.subscription || Boolean(parentSession?.subscription);
+  const usageOwnedByRoot = isCodexUsageOwnedByRoot(session, byId);
+  const modelSegments = codexModelSegments(session);
+  const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
+  const costKnown = modelSegments.every((segment) => segment.costKnown);
+  return {
+    source: codexCollectedSessionSource(session, classifierRootSourceSessionId),
+    projectPath: session.cwd,
+    date: session.start,
+    endDate: session.end,
+    provider: subscription ? 'Codex sub' : 'Codex API',
+    model: session.model,
+    ...(usageOwnedByRoot ? {} : { modelSegments }),
+    models: session.models,
+    name: codexSessionName(session),
+    ...(origin === undefined ? { originProvenance: 'origin-absent' as const } : { origin }),
+    titleSource: codexTitleSource(session, isSubagent),
+    project: base(session.cwd),
+    tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
+    cost: subscription ? actualCost(0) : approximateApiCost,
+    costApprox: usageOwnedByRoot ? 0 : costApprox,
+    costKnown: usageOwnedByRoot || costKnown,
+    calls: 1,
+    durationMs: session.activeDurationMs ?? 0,
+    partial: session.reportPartial,
+    turns: session.turns,
+    tools: session.tools,
+    linesAdded: null,
+    linesDeleted: null,
+    subagent: isSubagent || kids.length > 0,
+    usageUnavailable: usageOwnedByRoot || !session.hasTokenUsage,
+  };
+};
+
+/**
+ * Two rollouts can carry one session id (a thread and the rollout it was resumed into). Both
+ * became a row under one row key, so every pass rewrote the stored row twice, the first copy
+ * over the second and back, and reported a change that was none. Only the copy the store kept
+ * is emitted: the last one in session order.
+ */
+const lastEmittedCodexSessions = (usageSessions: CodexCollectedSession[]): CodexCollectedSession[] => {
+  const lastEmittedById = new Map<string, CodexCollectedSession>();
+  for (const session of usageSessions) {
+    const sessionId = session.source.sourceSessionId;
+    if (sessionId) {
+      lastEmittedById.set(sessionId, session);
+    }
+  }
+  return usageSessions.filter((session) => {
+    const sessionId = session.source.sourceSessionId;
+    return !sessionId || lastEmittedById.get(sessionId) === session;
+  });
+};
+
+/**
+ * A rollout file can appear under more than one session id, so
+ * observations are deduplicated on the identity the store keys on.
+ */
+const distinctCodexSkillObservations = (sessions: CodexSession[]): SkillObservation[] => {
+  const observations: SkillObservation[] = [];
+  const seenObservations = new Set<string>();
+  for (const session of sessions) {
+    for (const observation of session.skillObservations) {
+      const identity = skillObservationIdentity(observation);
+      if (seenObservations.has(identity)) {
+        continue;
+      }
+      seenObservations.add(identity);
+      observations.push(observation);
+    }
+  }
+  return observations;
+};
+
+const codexMetricWarningContext = (sessions: CodexSession[]): CodexUsageSessionsResult['metricWarningContext'] => {
+  const rejectedSessions = sessions.filter((session) => session.rejectedMetricRecords > 0);
+  const lastObservedAt = rejectedSessions.every((session) => session.lastRejectedMetricAt !== undefined)
+    ? rejectedSessions
+        .map((session) => session.lastRejectedMetricAt!)
+        .sort()
+        .at(-1)
+    : undefined;
+  return {
+    affectedSessions: rejectedSessions.length,
+    ...(lastObservedAt ? { lastObservedAt } : {}),
+  };
+};
+
 const readCodexUsageSessionsResultWith = (
   incremental?: CodexIncrementalRead,
 ): Effect.Effect<CodexUsageSessionsResult, LocalHistoryError, LocalHistoryStorageService> =>
   withPerfSpan(
     'aiUsage.collect.codex.usageSessions',
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.gen(function* () {
       const { failure: threadMetadataFailure, metadata } = yield* readCodexThreadMetadata;
       const {
@@ -1292,39 +1462,9 @@ const readCodexUsageSessionsResultWith = (
         rejectedSkillObservationRecords,
         sessions: readSessions,
       } = yield* readCodexSessions(metadata, incremental);
-      // An imported transcript leaves every Codex output here: it is neither a
-      // row nor skill or work evidence of this harness. Its id is returned so the
-      // store can retire the row an earlier pass emitted for it.
-      const importedSessionIds = new Set<string>();
-      const sessions = readSessions.filter((session) => {
-        if (!isCodexExternalImport(session)) {
-          return true;
-        }
-        if (session.id) {
-          importedSessionIds.add(session.id);
-        }
-        return false;
-      });
-      // Classified per rollout; an id is retired only when no rollout kept it as a
-      // Codex session, so an import copy never retires the native thread it shares
-      // an id with (whether that thread is emitted or deferred this pass).
-      const keptSessionIds = new Set(sessions.flatMap((session) => (session.id ? [session.id] : [])));
-      const retiredSourceSessionIds = [...importedSessionIds].filter((id) => !keptSessionIds.has(id));
-      const byId = new Map<string, CodexSession>();
-      for (const session of sessions) {
-        // A rollout and its resumed continuation share an id; the one with the
-        // larger cumulative counter is the more complete reading of the thread.
-        if (session.id && (byId.get(session.id)?.maxTotal ?? -1) < session.maxTotal) {
-          byId.set(session.id, session);
-        }
-      }
-      const children = new Map<string, CodexSession[]>();
-      for (const session of sessions) {
-        if (session.id && session.parent && byId.has(session.parent)) {
-          const siblings = children.getOrInsertComputed(session.parent, () => []);
-          siblings.push(session);
-        }
-      }
+      const { retiredSourceSessionIds, sessions } = separateCodexExternalImports(readSessions);
+      const byId = codexSessionsById(sessions);
+      const children = codexChildrenByParent(sessions, byId);
 
       // Session ids the unread rollouts may hold, from their file names. With
       // the archived directory unlisted, any missing ancestor may be there.
@@ -1343,107 +1483,17 @@ const readCodexUsageSessionsResultWith = (
           ownershipDeferredSessions++;
           continue;
         }
-        const kids = (session.id && children.get(session.id)) || [];
-        const tokens = {
-          in: session.tin,
-          out: session.tout,
-          cr: session.tcr,
-          cw: 0,
-        };
-        const origin = codexOrigin(session);
-        const isSubagent = origin === 'subagent';
-        const classifierRootSourceSessionId = origin === 'classifier' ? session.classifierParent : null;
-        const parentSession = session.parent ? byId.get(session.parent) : undefined;
-        const subscription = session.subscription || Boolean(parentSession?.subscription);
-        const usageOwnedByRoot = isCodexUsageOwnedByRoot(session, byId);
-        const modelSegments = codexModelSegments(session);
-        const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
-        const costKnown = modelSegments.every((segment) => segment.costKnown);
-        usageSessions.push({
-          source: {
-            harnessKey: 'codex',
-            sourceSessionId: session.id,
-            ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
-            ...(classifierRootSourceSessionId ? { rootSourceSessionId: classifierRootSourceSessionId } : {}),
-            sourcePath: session.cwd,
-            ...(session.launchSource === null
-              ? {}
-              : { launchMode: session.launchSource === 'exec' ? ('exec' as const) : ('interactive' as const) }),
-            ...(session.vcs ? { vcs: session.vcs } : {}),
-          },
-          projectPath: session.cwd,
-          date: session.start,
-          endDate: session.end,
-          provider: subscription ? 'Codex sub' : 'Codex API',
-          model: session.model,
-          ...(usageOwnedByRoot ? {} : { modelSegments }),
-          models: session.models,
-          name: codexSessionName(session),
-          ...(origin === undefined ? { originProvenance: 'origin-absent' as const } : { origin }),
-          titleSource: codexTitleSource(session, isSubagent),
-          project: base(session.cwd),
-          tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
-          cost: subscription ? actualCost(0) : approximateApiCost,
-          costApprox: usageOwnedByRoot ? 0 : costApprox,
-          costKnown: usageOwnedByRoot || costKnown,
-          calls: 1,
-          durationMs: session.activeDurationMs ?? 0,
-          partial: session.reportPartial,
-          turns: session.turns,
-          tools: session.tools,
-          linesAdded: null,
-          linesDeleted: null,
-          subagent: isSubagent || kids.length > 0,
-          usageUnavailable: usageOwnedByRoot || !session.hasTokenUsage,
-        });
+        usageSessions.push(codexCollectedSession(session, byId, children));
       }
 
-      // Two rollouts can carry one session id (a thread and the rollout it was resumed into). Both
-      // became a row under one row key, so every pass rewrote the stored row twice, the first copy
-      // over the second and back, and reported a change that was none. Only the copy the store kept
-      // is emitted: the last one in session order.
-      const lastEmittedById = new Map<string, CodexCollectedSession>();
-      for (const session of usageSessions) {
-        const sessionId = session.source.sourceSessionId;
-        if (sessionId) {
-          lastEmittedById.set(sessionId, session);
-        }
-      }
-      const emittedSessions = usageSessions.filter((session) => {
-        const sessionId = session.source.sourceSessionId;
-        return !sessionId || lastEmittedById.get(sessionId) === session;
-      });
-
-      // A rollout file can appear under more than one session id, so
-      // observations are deduplicated on the identity the store keys on.
-      const observations: SkillObservation[] = [];
-      const seenObservations = new Set<string>();
-      for (const session of sessions) {
-        for (const observation of session.skillObservations) {
-          const identity = skillObservationIdentity(observation);
-          if (seenObservations.has(identity)) {
-            continue;
-          }
-          seenObservations.add(identity);
-          observations.push(observation);
-        }
-      }
-
-      const rejectedSessions = sessions.filter((session) => session.rejectedMetricRecords > 0);
-      const lastObservedAt = rejectedSessions.every((session) => session.lastRejectedMetricAt !== undefined)
-        ? rejectedSessions
-            .map((session) => session.lastRejectedMetricAt!)
-            .sort()
-            .at(-1)
-        : undefined;
+      const emittedSessions = lastEmittedCodexSessions(usageSessions);
+      const observations = distinctCodexSkillObservations(sessions);
+      const metricWarningContext = codexMetricWarningContext(sessions);
       return {
         workObservations: sessions.flatMap((session) =>
           session.workObservation === null ? [] : [session.workObservation],
         ),
-        metricWarningContext: {
-          affectedSessions: rejectedSessions.length,
-          ...(lastObservedAt ? { lastObservedAt } : {}),
-        },
+        metricWarningContext,
         archivedWalkFailure,
         malformedLines,
         observationCompleteness,
