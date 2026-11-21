@@ -597,13 +597,15 @@ const resolveRelativeModule = async (packageDirectory: string, importer: string,
 interface ModuleClosurePolicy {
   /** The package directory an import alias such as `#lib/` points into, if the closure follows one. */
   readonly aliases?: ReadonlyMap<string, string>;
-  /** Package-relative entrypoints. The closure is skipped only when none exists (a fixture without it). */
+  /** Package-relative entrypoints. Each must exist while the policy's package does. */
   readonly entrypoints: readonly string[];
   /** Why a non-relative specifier may not appear in the closure, if it may not. */
   readonly importReason: (specifier: string) => string | undefined;
   /** Why a reached module may not be part of the closure, if it may not; given package-relative. */
   readonly moduleReason?: (packageRelativeFile: string) => string | undefined;
   readonly name: string;
+  /** How a relative import that leaves the package or resolves to nothing names it; the package name by default. */
+  readonly packageLabel?: string;
   readonly packageName: string;
 }
 
@@ -629,6 +631,7 @@ const moduleClosurePolicies: readonly ModuleClosurePolicy[] = [
         ? 'The portable-report import closure may depend only on report-core workspace modules.'
         : undefined,
     name: 'portable-report',
+    packageLabel: 'report-data',
     packageName: reportDataPackage,
   },
   {
@@ -765,7 +768,7 @@ const scanClosureModule = async (
     const reason =
       resolved === undefined
         ? policy.importReason(specifier)
-        : `The ${policy.name} import closure must resolve relative modules inside ${policy.packageName}.`;
+        : `The ${policy.name} import closure must resolve relative modules inside ${policy.packageLabel ?? policy.packageName}.`;
     if (reason) {
       violations.push({
         file: relativeFile,
@@ -787,7 +790,15 @@ const collectModuleClosureViolations = async (
   const entrypoints = policy.entrypoints.map((entrypoint) => path.join(packageInfo.directory, entrypoint));
   const present = await existingFiles(entrypoints);
   if (present.length === 0) {
-    return [];
+    // A closure that lost every entrypoint (a rename, a move) would otherwise pass while checking nothing.
+    return [
+      {
+        file: path.relative(root, packageInfo.directory).split(path.sep).join('/'),
+        message: `The ${policy.name} import closure has none of its ${entrypoints.length} entrypoints: update its policy in tools/check-package-boundaries.ts instead of leaving the closure unchecked.`,
+        packageName: policy.packageName,
+        specifier: policy.entrypoints.join(', '),
+      },
+    ];
   }
   const violations: PackageBoundaryViolation[] = entrypoints
     .filter((entrypoint) => !present.includes(entrypoint))

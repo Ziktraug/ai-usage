@@ -44,6 +44,27 @@ const writePackage = async (
   ]);
 };
 
+/** The framework-neutral Web presentation closure's entrypoints, relative to the Web package. */
+const webPresentationEntrypoints = [
+  'src/lib/foundation/dashboard/dashboard-analytics.ts',
+  'src/lib/foundation/dashboard/dashboard-model.ts',
+  'src/lib/features/sessions/dashboard-sort.ts',
+  'src/lib/foundation/overview-model.ts',
+  'src/lib/features/report/provider-status-model.ts',
+  'src/lib/foundation/campaign-label-overrides.ts',
+  'src/lib/foundation/session/session-analysis-target.ts',
+  'src/lib/foundation/presentation/format.ts',
+  'src/lib/foundation/presentation/report-value.ts',
+  'src/lib/foundation/machine-freshness-presentation.ts',
+] as const;
+
+/** Gives a Web fixture its (empty) presentation closure, so a test of another rule sees only that rule. */
+const writeWebPresentationClosure = async (root: string): Promise<void> => {
+  const files = webPresentationEntrypoints.map((entrypoint) => path.join(root, 'apps/web', entrypoint));
+  await Promise.all(files.map((file) => mkdir(path.dirname(file), { recursive: true })));
+  await Promise.all(files.map((file) => writeFile(file, 'export {};\n')));
+};
+
 describe('package boundary guard', () => {
   test('rejects retired package manifest dependencies', async () => {
     const root = await createFixture();
@@ -275,6 +296,7 @@ describe('package boundary guard', () => {
   test('allows only the Web server hook to consume explicit usage-store performance instrumentation', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writeWebPresentationClosure(root);
     await writeFile(
       path.join(root, 'apps/web/src/hooks.server.ts'),
       "import '@ai-usage/usage-store/performance-testing';\n",
@@ -359,6 +381,7 @@ describe('package boundary guard', () => {
       { name: '@ai-usage/web' },
       `import '${mixedStoreSpecifier}';\nimport '@ai-usage/usage-engine-control/testing';\n`,
     );
+    await writeWebPresentationClosure(root);
 
     const violations = await collectViolations(root);
     expect(violations.map(({ specifier }) => specifier)).toEqual([
@@ -484,6 +507,7 @@ describe('package boundary guard', () => {
         "import '@ai-usage/local-machine/testing/harness-home';",
       ].join('\n'),
     );
+    await writeWebPresentationClosure(root);
     const e2eDirectory = path.join(root, 'apps/web/e2e');
     await mkdir(e2eDirectory, { recursive: true });
     await writeFile(path.join(e2eDirectory, 'fixture.ts'), "import '@ai-usage/local-machine/testing/harness-home';\n");
@@ -791,6 +815,7 @@ describe('package boundary guard', () => {
   test('ignores every generated canonical SvelteKit tree', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writeWebPresentationClosure(root);
     const generatedDirectories = ['.output-build', '.svelte-kit'];
 
     for (const generatedDirectory of generatedDirectories) {
@@ -836,6 +861,7 @@ describe('package boundary guard', () => {
   test('keeps Web foundation production modules from importing features', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writeWebPresentationClosure(root);
     const foundation = path.join(root, 'apps/web/src/lib/foundation');
     await mkdir(path.join(foundation, 'presentation'), { recursive: true });
     await Promise.all([
@@ -967,6 +993,152 @@ describe('package boundary guard', () => {
       'packages/design-system/src/svelte/passive/harness-fill.ts -> clsx',
       'packages/design-system/src/svelte/passive/harness-fill.ts -> svelte',
     ]);
+  });
+
+  describe('module closures', () => {
+    const closureFixtures = [
+      {
+        directory: 'packages/report-data',
+        entrypoints: ['src/portable-report.ts'],
+        label: 'report-data',
+        name: 'portable-report',
+        packageName: reportDataPackage,
+      },
+      {
+        directory: 'apps/web',
+        entrypoints: webPresentationEntrypoints,
+        label: '@ai-usage/web',
+        name: 'framework-neutral Web presentation',
+        packageName: '@ai-usage/web',
+      },
+      {
+        directory: 'packages/design-system',
+        entrypoints: [
+          'src/components/button.ts',
+          'src/components/chart.ts',
+          'src/components/empty-state.ts',
+          'src/components/field.ts',
+          'src/components/layout.ts',
+          'src/components/overview.ts',
+          'src/components/panel.ts',
+          'src/components/skills.ts',
+          'src/components/status.ts',
+          'src/components/table.ts',
+          'src/components/time-slider.ts',
+        ],
+        label: '@ai-usage/design-system',
+        name: 'passive design',
+        packageName: '@ai-usage/design-system',
+      },
+    ] as const;
+
+    /** A package whose closure entrypoints all exist and are empty, except `first`, which holds `firstSource`. */
+    const writeClosure = async (fixture: (typeof closureFixtures)[number], firstSource: string): Promise<string> => {
+      const root = await createFixture();
+      const [parent, directory] = fixture.directory.split('/') as ['apps' | 'packages', string];
+      await writePackage(root, parent, directory, { name: fixture.packageName });
+      const [first, ...others] = fixture.entrypoints;
+      await Promise.all(
+        fixture.entrypoints.map((entrypoint) =>
+          mkdir(path.dirname(path.join(root, fixture.directory, entrypoint)), { recursive: true }),
+        ),
+      );
+      await Promise.all([
+        writeFile(path.join(root, fixture.directory, first), firstSource),
+        ...others.map((entrypoint) => writeFile(path.join(root, fixture.directory, entrypoint), 'export {};\n')),
+      ]);
+      return root;
+    };
+
+    const closureViolations = async (root: string, packageName: string) =>
+      (await collectViolations(root))
+        .filter((violation) => violation.packageName === packageName)
+        .map(({ file, message, specifier }) => ({ file, message, specifier }));
+
+    test.each(closureFixtures.map((fixture) => [fixture.name, fixture] as const))(
+      'the %s closure fails closed on a relative import that resolves to nothing',
+      async (_name, fixture) => {
+        const root = await writeClosure(fixture, "export { missing } from './missing';\n");
+
+        expect(await closureViolations(root, fixture.packageName)).toEqual([
+          {
+            file: `${fixture.directory}/${fixture.entrypoints[0]}`,
+            message: `The ${fixture.name} import closure must resolve relative modules inside ${fixture.label}.`,
+            specifier: './missing',
+          },
+        ]);
+      },
+    );
+
+    test.each(closureFixtures.map((fixture) => [fixture.name, fixture] as const))(
+      'the %s closure refuses a relative import that leaves its package',
+      async (_name, fixture) => {
+        const depth = fixture.entrypoints[0].split('/').length + 1;
+        const specifier = `${'../'.repeat(depth)}elsewhere/outside`;
+        const root = await writeClosure(fixture, `export { outside } from '${specifier}';\n`);
+        await mkdir(path.join(root, 'elsewhere'));
+        await writeFile(path.join(root, 'elsewhere/outside.ts'), 'export const outside = true;\n');
+
+        expect(await closureViolations(root, fixture.packageName)).toEqual([
+          {
+            file: `${fixture.directory}/${fixture.entrypoints[0]}`,
+            message: `The ${fixture.name} import closure must resolve relative modules inside ${fixture.label}.`,
+            specifier,
+          },
+        ]);
+      },
+    );
+
+    test.each(closureFixtures.map((fixture) => [fixture.name, fixture] as const))(
+      'the %s closure reports a policy whose entrypoints have all disappeared',
+      async (_name, fixture) => {
+        const root = await createFixture();
+        const [parent, directory] = fixture.directory.split('/') as ['apps' | 'packages', string];
+        await writePackage(root, parent, directory, { name: fixture.packageName });
+
+        expect(await closureViolations(root, fixture.packageName)).toEqual([
+          {
+            file: fixture.directory,
+            message: `The ${fixture.name} import closure has none of its ${fixture.entrypoints.length} entrypoints: update its policy in tools/check-package-boundaries.ts instead of leaving the closure unchecked.`,
+            specifier: fixture.entrypoints.join(', '),
+          },
+        ]);
+      },
+    );
+
+    test('the framework-neutral Web presentation closure excludes server modules by name, directory and alias', async () => {
+      const webFixture = closureFixtures[1];
+      const root = await writeClosure(
+        webFixture,
+        "import './quota.server.ts';\nimport '../server/clock';\nimport '#lib/server/rpc/client';\n",
+      );
+      const lib = path.join(root, 'apps/web/src/lib');
+      await Promise.all([
+        mkdir(path.join(lib, 'foundation/server'), { recursive: true }),
+        mkdir(path.join(lib, 'server/rpc'), { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(path.join(lib, 'foundation/dashboard/quota.server.ts'), 'export {};\n'),
+        writeFile(path.join(lib, 'foundation/server/clock.ts'), 'export {};\n'),
+        writeFile(path.join(lib, 'server/rpc/client.ts'), 'export {};\n'),
+      ]);
+      const serverModule = (file: string) => ({
+        file,
+        message:
+          'The framework-neutral Web presentation closure may contain only TypeScript modules outside server code.',
+        specifier: file,
+      });
+
+      expect(
+        (await closureViolations(root, webFixture.packageName)).toSorted((left, right) =>
+          left.file.localeCompare(right.file),
+        ),
+      ).toEqual([
+        serverModule('apps/web/src/lib/foundation/dashboard/quota.server.ts'),
+        serverModule('apps/web/src/lib/foundation/server/clock.ts'),
+        serverModule('apps/web/src/lib/server/rpc/client.ts'),
+      ]);
+    });
   });
 
   test('accepts the current workspace graph', async () => {
