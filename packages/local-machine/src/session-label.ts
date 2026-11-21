@@ -66,6 +66,7 @@ const stripPastedLogBlocks = (value: string): string =>
     stripFencedLogBlocks(value).replace(TAGGED_LOG_BLOCK_PATTERN, '\n').replace(BRACKETED_LOG_BLOCK_PATTERN, '\n'),
   );
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const firstLineBelowMarkdownHeading = (value: string): string | null => {
   const lines = value.split(LINE_BREAK_PATTERN);
   let activeFence: string | null = null;

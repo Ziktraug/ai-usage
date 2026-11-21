@@ -89,6 +89,7 @@ export interface CalendarHeatmapData {
   weeks: HeatWeek[];
 }
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date()): CalendarHeatmapData | null => {
   const byDay = new Map<string, { cost: number; priceMeasurement: ApiPriceMeasurement; sessions: number }>();
   let minTime = Number.POSITIVE_INFINITY;
@@ -440,6 +441,7 @@ export const buildTimelineData = (
     domain?: TimelineDomain | null;
     granularity: MigrationGranularity;
   },
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): TimelineData | null => {
   const dated = rows.filter((row): row is DashboardRow & { activeTime: number } => row.activeTime != null);
   if (!dated.length) {

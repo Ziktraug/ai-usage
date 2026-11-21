@@ -246,6 +246,7 @@ const startFailure = (
 export const listWorkAttemptsForServer = async (
   input: WorkAttemptsListInput,
   options: WorkAttemptsServerOptions = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<WorkAttemptsListOutput> => {
   const mode = options.mode ?? getServerRuntimeMode();
   options.signal?.throwIfAborted();

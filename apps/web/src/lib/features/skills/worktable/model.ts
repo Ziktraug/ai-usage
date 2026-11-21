@@ -622,6 +622,7 @@ const catalogueFoldSummary = (rollups: readonly SkillsWorktableCatalogueRollup[]
 export const createSkillsWorktableModel = (input: {
   readonly presentation: SkillsPresentationProjection;
   readonly view: SkillsShellViewModel;
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 }): SkillsWorktableModel => {
   const { presentation, view } = input;
   const snapshot = view.snapshot;

@@ -431,6 +431,7 @@ export const freezeDelegationScope = async (
   checkoutPath: string,
   scope: DelegationScopeRequest,
   options: DelegationCheckoutOptions = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<FrozenDelegationScope | DelegationScopeFailure> => {
   const environment = gitScopeEnvironment(options.env ?? process.env);
   if (scope.kind === 'commit') {

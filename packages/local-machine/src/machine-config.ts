@@ -381,6 +381,7 @@ export const writeMachineConfig = (
     });
   });
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -494,6 +495,7 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   return true;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const mergeSkillsConfig = (base: unknown, override: unknown): SkillManagementConfig | undefined => {
   if (base === undefined && override === undefined) {
     return;

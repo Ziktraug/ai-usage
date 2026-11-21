@@ -579,6 +579,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
   ): Effect.Effect<Result, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (database) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           database.exec('BEGIN');
           try {
@@ -683,6 +684,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
   const queryCurrentServedLocalProjectSources = (
     input: Omit<QueryServedReportRevisionInput, 'revision'>,
   ): Effect.Effect<CurrentServedLocalProjectSources, UsageStoreError> =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     readServedReportRevision(input, ({ database, revision }) => {
       const records = database.query(`
           SELECT source_row_json
@@ -786,6 +788,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
         ),
       );
     }
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     return readServedReportRevision(input, ({ database, revision }) => {
       const since = (input.now ?? Date.now()) - sinceDays * MILLISECONDS_PER_DAY;
       const records = database.query(`
@@ -1156,6 +1159,7 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
       Effect.flatMap((options) =>
         withUsageStoreWriter(input.dbPath, (database) =>
           Effect.tryPromise({
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             try: async () => {
               let expectedCommittedResult: PublishServedReportRevisionResult | undefined;
               database.exec('BEGIN IMMEDIATE');

@@ -235,6 +235,7 @@ export const helpText =
   '  cursor import <csv>    import a cursor.com usage-events CSV export\n';
 
 export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const args: Args = {
       since: null,
@@ -290,6 +291,7 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
   });
 
 const parseQuotaArgs = (argv: string[]): Effect.Effect<QuotaArgs, CliArgumentError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     let color: boolean | null = null;
     let history: QuotaHistoryRange | null = null;
@@ -364,6 +366,7 @@ const parseSnapshotArgs = (argv: string[]): Effect.Effect<SnapshotArgs, CliArgum
   });
 
 const parseMergeArgs = (argv: string[]): Effect.Effect<MergeArgs, CliArgumentError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const baseArgs = yield* parseArgs([]);
     const args: MergeArgs = { ...baseArgs, files: [], local: false };
@@ -479,6 +482,7 @@ const parseCursorCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgume
 const WORK_CONTEXT_SCOPE_MESSAGE = 'work context expects exactly one of --checkout or --project-label';
 
 const parseWorkCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const rest = [...argv];
     const subcommand = rest.shift();
@@ -570,6 +574,7 @@ const parseDelegationQualifyArgs = (argv: string[]): Effect.Effect<DelegationQua
   });
 
 const parseDelegationStartArgs = (argv: string[]): Effect.Effect<DelegationStartArgs, CliArgumentError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     let request: string | null = null;
     let qualification: string | null = null;
@@ -706,6 +711,7 @@ const parseDelegationCommand = (argv: string[]): Effect.Effect<CliCommand, CliAr
   });
 
 export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const rest = [...argv];
     if (rest.includes('-h') || rest.includes('--help')) {

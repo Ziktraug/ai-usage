@@ -45,6 +45,7 @@ const collectSkillFiles = async (
   let fileLimitExceeded = false;
   let visitedEntryCount = 0;
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const visitDirectory = async (currentDirectory: string, depth: number): Promise<boolean> => {
     if (depth > maxSkillDirectoryDepth) {
       depthLimitExceeded = true;

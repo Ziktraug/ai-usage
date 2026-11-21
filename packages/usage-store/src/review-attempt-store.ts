@@ -621,6 +621,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: (): RequestReviewAttemptResult => {
           const { attempt } = input;
           db.exec('BEGIN IMMEDIATE');
@@ -830,6 +831,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
     const states = input.states ?? [];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const missing = missingReviewAttemptColumns(db);
           if (missing.length > 0) {
@@ -901,6 +903,7 @@ export const createReviewAttemptStore = (dependencies: ReviewAttemptStoreDepende
   ): Effect.Effect<ReviewTargetResolutionFacts, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const desktopSessionId = input.desktopSessionId ?? null;
           // Only the Claude Desktop registry knows transcripts. The row must declare this very

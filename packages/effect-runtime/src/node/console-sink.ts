@@ -164,6 +164,7 @@ export const renderPrettyWideEvent = (
     readonly detail?: 'debug' | 'info';
     readonly projector?: PrettyWideEventProjector;
   } = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): string => {
   const detail = options.detail ?? 'info';
   const event = sanitizeWideEventSnapshot(input).value;

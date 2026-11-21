@@ -425,6 +425,7 @@ const comparePaths = (left: string, right: string): number => {
 };
 
 /** One checkout per machine and path, whatever the number of tasks and markers that name it. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const diskCheckoutsOf = (rows: readonly WorkThreadRow[]): DiskCheckouts => {
   const tasks = [...new Map(rows.map((row) => [row.thread.threadId, row])).values()];
   const evidence = new Map<string, CheckoutEvidence>();

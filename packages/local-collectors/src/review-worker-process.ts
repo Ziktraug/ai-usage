@@ -104,6 +104,7 @@ export const spawnBoundedJsonlProcess = (
     Promise.resolve(handlers.onHeartbeat?.()).catch(() => undefined);
   }, spec.heartbeatMs);
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const end = (async (): Promise<BoundedJsonlProcessEnd> => {
     const decoder = new TextDecoder();
     let pending = '';

@@ -174,6 +174,7 @@ export const createUsageEngineControlEventHub = ({
     const stream = new ReadableStream<Uint8Array>(
       {
         cancel: () => subscriber.close(),
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         start: (streamController) => {
           controller = streamController;
           let latestSequence = -1;

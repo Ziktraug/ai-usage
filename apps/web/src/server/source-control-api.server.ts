@@ -430,6 +430,7 @@ export const createSourceControlEventStream = (
     {
       cancel: cleanup,
       pull: flushLatest,
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       start: async (streamController) => {
         controller = streamController;
         request.signal.addEventListener('abort', abort, { once: true });

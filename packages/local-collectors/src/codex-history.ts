@@ -440,6 +440,7 @@ const reviveSkillObservationCompleteness = (value: unknown): SkillObservationCol
   return exposure && invocation ? { exposure, invocation } : null;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const reviveCachedSession = (json: string): CodexSession | null => {
   try {
     const value = JSON.parse(json) as unknown;
@@ -802,6 +803,7 @@ const readCodexSessions = (
           return sessionCache;
         }),
         (sessionCache) =>
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
           Effect.gen(function* () {
             let sliceWorkMs = 0;
             for (const filePath of files) {
@@ -1114,6 +1116,7 @@ const readCodexUsageSessionsResultWith = (
 ): Effect.Effect<CodexUsageSessionsResult, LocalHistoryError, LocalHistoryStorageService> =>
   withPerfSpan(
     'aiUsage.collect.codex.usageSessions',
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.gen(function* () {
       const { failure: threadMetadataFailure, metadata } = yield* readCodexThreadMetadata;
       const {
@@ -1344,6 +1347,7 @@ const findLatestRawCodexRateLimits = (
       const read = yield* Effect.result(
         readCodexRolloutWithFallback(storage, filePath, (candidatePath) => {
           candidate = null;
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
           return storage.readLines(candidatePath, (line) => {
             if (!line.includes('rate_limits')) {
               return;

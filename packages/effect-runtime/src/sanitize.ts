@@ -113,6 +113,7 @@ const sanitizeLogValue = (
   value: unknown,
   seen: WeakSet<object>,
   depth: number,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): { readonly truncated: boolean; readonly value: LogValue } => {
   if (Redacted.isRedacted(value)) {
     return { truncated: false, value: REDACTED };

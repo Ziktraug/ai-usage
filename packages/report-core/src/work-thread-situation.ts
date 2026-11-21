@@ -107,6 +107,7 @@ const heldLocalWork = (fact: CheckoutStatusObservation): boolean =>
   (fact.untrackedCount ?? 0) > 0 ||
   (fact.ahead ?? 0) > 0;
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const localRemainders = (row: WorkThreadRow, now: number, remainders: WorkThreadRemainder[]) => {
   for (const marker of row.markers.local) {
     // A missing checkout is an observed absence: the read succeeded and found the checkout gone, so
@@ -154,6 +155,7 @@ const localRemainders = (row: WorkThreadRow, now: number, remainders: WorkThread
   }
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const pullRequestRemainders = (row: WorkThreadRow, now: number, remainders: WorkThreadRemainder[]) => {
   for (const marker of row.markers.pullRequests) {
     const fact = observation(marker, 'github', now, remainders);
@@ -289,6 +291,7 @@ const closedPullRequestsRead = (row: WorkThreadRow, remainders: readonly WorkThr
   );
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const deriveRemainders = (row: WorkThreadRow, now: number): readonly WorkThreadRemainder[] => {
   const remainders: WorkThreadRemainder[] = [];
   for (const request of taskNativeRequests(row)) {
@@ -398,6 +401,7 @@ export const deriveWorkThreadSituation = (
   row: WorkThreadRow,
   now: string | number | Date,
   additionalRemainders: readonly WorkThreadRemainder[] = [],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): WorkThreadSituation => {
   const epoch = typeof now === 'number' ? now : new Date(now).getTime();
   if (!Number.isFinite(epoch)) {

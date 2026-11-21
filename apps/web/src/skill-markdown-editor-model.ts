@@ -120,6 +120,7 @@ export const createSkillMarkdownEditorController = (
     return load(state.skillName);
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const save = async (): Promise<void> => {
     const currentDocument = state.document;
     if (currentDocument === undefined || !state.dirty || state.saving) {

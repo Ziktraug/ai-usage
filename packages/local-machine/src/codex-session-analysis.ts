@@ -179,6 +179,7 @@ export const readCodexSessionAnalysis = (
     const parsedSession = targetRead.session;
     const initialRemainingBytes = Math.max(0, CODEX_DETAIL_MAX_TOTAL_BYTES - targetRead.bytes);
     const analyzeWithMetadata = (historyDatabase: LocalHistoryDatabase | null) =>
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       Effect.gen(function* () {
         let remainingBytes = initialRemainingBytes;
         const metadata = historyDatabase

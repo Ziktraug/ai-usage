@@ -17,6 +17,7 @@ const isPlainRecord = (value: object): value is Record<string, unknown> => {
   return prototype === null || prototype === Object.prototype;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const isJsonWireValueInternal = (value: unknown, ancestors: ReadonlySet<object>): value is JsonWireValue => {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') {
     return true;

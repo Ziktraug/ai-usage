@@ -711,6 +711,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
           const touched = new Map<
@@ -802,6 +803,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
           const touched = new Map<
@@ -885,6 +887,7 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
           const touched = new Map<string, Pick<JiraIssueObservation, 'key' | 'machineId'>>();

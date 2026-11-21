@@ -304,6 +304,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
   };
 
   const track = (attempt: ReviewAttempt, launch: ClaudeReviewLaunch | CodexReviewLaunch): void => {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     const settled = (async () => {
       try {
         const outcome = await launch.outcome;
@@ -426,6 +427,7 @@ export const createReviewAttemptService = (options: ReviewAttemptServiceOptions)
     });
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const startAttempt: ReviewAttemptService['start'] = async (command, signal) => {
     const machineId = options.machine().id;
     const requestedAt = now().toISOString();

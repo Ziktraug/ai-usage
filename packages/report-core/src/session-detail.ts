@@ -893,6 +893,7 @@ const parseCoverage = (value: unknown): SessionDetailCoverage => {
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseSessionDetail = (value: unknown): SessionDetail => {
   if (!isRecord(value)) {
     throw new SessionDetailValidationError('Session detail must be an object');

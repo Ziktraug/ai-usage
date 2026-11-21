@@ -608,6 +608,7 @@ export const finishSourceJobTransition = (
   rtkTargetGeneration: number,
   completion: SourceExecutionCompletion,
   finishedAt: number,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): StateTransition<SourceFinishDecision> => {
   const source = state.sources[job.sourceId];
   const result = completion._tag === 'success' ? completion.result : undefined;

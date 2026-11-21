@@ -638,6 +638,7 @@ const pollHealthyDuringBuild = async (
 
 export const runWebDevBuildIsolationCheck = async (
   options: WebDevBuildIsolationCheckOptions = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<WebDevBuildIsolationResult> => {
   if (process.platform !== 'linux') {
     throw new Error('The dev/build descriptor regression requires Linux /proc.');

@@ -515,6 +515,7 @@ interface ZstdFrameLayout {
  * out with `declaredContentSize: null`; the caller then bounds the decoded
  * bytes as they stream.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const zstdSingleFrameLayout = (archive: Buffer, filePath: string, maxBytes: number): ZstdFrameLayout => {
   const malformed = (reason: string): HistoryArchiveError => new HistoryArchiveError(filePath, new Error(reason));
   if (archive.length < 5 || archive.readUInt32LE(0) !== ZSTD_FRAME_MAGIC) {
@@ -923,6 +924,7 @@ export const walkFiles = (
   include: (fileName: string, filePath: string) => boolean,
   budgets: { maxBytes?: number; maxDepth?: number; maxFiles?: number } = {},
 ): Effect.Effect<string[], LocalHistoryError> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     if (!(yield* storage.exists(dirPath))) {
       return [];

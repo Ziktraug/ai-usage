@@ -1042,6 +1042,7 @@ const ruleLabel = (rule: DelegationRule): string =>
  * that cannot both hold exclude every route); requirements combine the strictest of the defaults,
  * the route's annotation and the applying `require` rules that select it. Preferences play no part.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const evaluateRoutePolicy = (input: EvaluateRoutePolicyInput): RoutePolicyEvaluation => {
   const blockers: DelegationRouteBlocker[] = [];
   const exclusions: string[] = [];

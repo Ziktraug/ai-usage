@@ -393,6 +393,7 @@ const observedOnlyDraft = (context: RouteContext): RouteDraft => {
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const declaredDraft = (context: RouteContext): RouteDraft => {
   const { candidate, input, now } = context;
   const provider = providerOf(candidate.harness);
@@ -630,6 +631,7 @@ const latestObservationsByExecutor = (
  * constraints (`evaluateReviewCandidates`) and the delegation constraints applied, bounded, ordered
  * deterministically, and dated by the earliest fact that expires.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const qualifyDelegation = (input: QualifyDelegationInput): DelegationQualification => {
   const now = timestamp(input.now);
   if (now === null) {

@@ -119,6 +119,7 @@ const read = (run: BoundedProcessRunner, options: BoundedProcessOptions): Effect
 export const discoverPullRequests = (
   options: DiscoverPullRequestsOptions = {},
 ): Effect.Effect<PullRequestDiscoveryBatch> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const accountLabel = options.account?.ghUser ?? null;
     const links: DiscoveredPullRequestLink[] = [];

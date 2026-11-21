@@ -252,6 +252,7 @@ const removeIfUnchanged = async (filePath: string, identity: FileIdentity): Prom
 export const readUsageEngineInput = async (
   input: UsageEngineFileInput,
   options: UsageEngineInputOptions,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<OpenedUsageEngineInput> => {
   if (!(Number.isSafeInteger(options.maximumBytes) && options.maximumBytes > 0)) {
     throw new Error('Usage engine input byte limit is invalid.');

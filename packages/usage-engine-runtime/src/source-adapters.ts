@@ -461,6 +461,7 @@ export const createSessionSource = (input: {
     detect: input.detect,
     id: input.id,
     run: (context) =>
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       Effect.gen(function* () {
         // Nothing an earlier pass returned may be taken as recorded unless that pass ended cleanly.
         const complete = !memory.settled;
@@ -770,6 +771,7 @@ const createRtkSource = (input: {
     detect: input.detect,
     id: 'rtk.savings',
     run: (context) =>
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       Effect.gen(function* () {
         yield* reportProgress(context, { phase: 'reading' });
         const availability = yield* input.detect;
@@ -1251,6 +1253,7 @@ const desktopWorkFactInputs = (input: {
     machineId: input.machineId,
     sinceLastActivityAt: new Date(input.now().getTime() - DESKTOP_WORK_FACT_WINDOW_MS).toISOString(),
   }).pipe(
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.flatMap(({ observations, skipped, truncated }) => {
       const paths: string[] = [];
       const declarations = new Map<string, { pullRequestKey: string; sessionKey: string }>();
@@ -1368,6 +1371,7 @@ const createCheckoutStatusSource = (input: {
   detect: input.detect,
   id: 'checkouts.status',
   run: (context) =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.gen(function* () {
       yield* reportProgress(context, { phase: 'discovering' });
       const availability = yield* input.detect;
@@ -1493,6 +1497,7 @@ const createPullRequestSource = (input: {
   detect: input.detect,
   id: 'github.pull-requests',
   run: (context) =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.gen(function* () {
       yield* reportProgress(context, { phase: 'discovering' });
       const availability = yield* input.detect;
@@ -1817,6 +1822,7 @@ const createJiraIssueSource = (input: {
   detect: input.detect,
   id: 'jira.issues',
   run: (context) =>
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     Effect.gen(function* () {
       yield* reportProgress(context, { phase: 'discovering' });
       const availability = yield* input.detect;

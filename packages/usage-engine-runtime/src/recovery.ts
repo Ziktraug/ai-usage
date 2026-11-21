@@ -139,6 +139,7 @@ const ownerIsLive = async (metadata: OwnerMetadata): Promise<boolean> => {
   );
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const inspectTree = async (rootPath: string): Promise<InspectedTree> => {
   const rootStats = await lstat(rootPath).catch(() => undefined);
   if (
@@ -233,6 +234,7 @@ export const scavengeLegacyUsageEngineArtifacts = async ({
   maximumRootEntries = MAX_SCAVENGE_ROOT_ENTRIES,
   now = Date.now(),
   temporaryRoot: temporaryRootValue,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 }: LegacyArtifactScavengeOptions): Promise<LegacyArtifactScavengeResult> => {
   if (
     !(

@@ -838,6 +838,7 @@ export const createDelegationStore = (dependencies: DelegationStoreDependencies)
           }
           const baseSha = job.scope?.baseSha ?? null;
           const headSha = job.scope?.headSha ?? null;
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
           return inTransaction(db, (): RequestDelegationJobResult => {
             const existing = db
               .query(`SELECT ${JOB_COLUMNS} FROM delegation_jobs WHERE machine_id = ? AND idempotency_key = ?`)
@@ -1071,6 +1072,7 @@ export const createDelegationStore = (dependencies: DelegationStoreDependencies)
     withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
         try: () =>
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
           inTransaction(db, (): RecordDelegationEvaluationResult => {
             const { evaluation } = input;
             const row = db.query('SELECT state FROM delegation_jobs WHERE job_id = ?').get(evaluation.jobId) as {
@@ -1266,6 +1268,7 @@ export const createDelegationStore = (dependencies: DelegationStoreDependencies)
     const states = input.states ?? [];
     return withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           assertDelegationTables(db, (message) =>
             usageStoreError('queryDelegationJobs', input.dbPath, message, 'schema-too-old'),

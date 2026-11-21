@@ -258,6 +258,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result: SkillObservationImportResult = {
             inserted: 0,
@@ -452,6 +453,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
   ): Effect.Effect<QuerySkillObservationsResult, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const maximum = input.maximumObservations ?? MAX_SKILL_OBSERVATION_READ;
           const expectedProducerHarnessKeys = input.expectedProducerHarnessKeys?.map((harnessKey) => harnessKey.trim());

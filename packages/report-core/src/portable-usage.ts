@@ -26,6 +26,7 @@ const decodeSimpleJsonEscape = (character: string): string => {
   }
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const readJsonStringToken = (text: string, start: number): JsonStringToken | undefined => {
   let decoded = '';
   let escaped = false;
@@ -69,6 +70,7 @@ const skipJsonWhitespace = (text: string, start: number): number => {
   return index;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const topLevelArrayExceedsLimit = (text: string, key: string, maximumElements: number): boolean => {
   let objectDepth = 0;
   for (let index = 0; index < text.length; index++) {

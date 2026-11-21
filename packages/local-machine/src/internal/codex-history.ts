@@ -1043,6 +1043,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     addDetailTokens(bucket, delta);
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const finishUnanchoredTokens = (startedAt: Date | null, completedAt: Date | null): void => {
     if (!unanchoredTokens) {
       return;
@@ -1081,6 +1082,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const recordChildTokens = (snapshot: CodexTokenSnapshot, lastUsage: CodexTokenSnapshot | null, at: Date): void => {
     const baseline = previousTokens;
     previousTokens = snapshot;
@@ -1153,6 +1155,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const recordTokens = (payload: Record<string, unknown>, at: Date): void => {
     const hasRateLimits = isRecord(payload.rate_limits);
     if (hasRateLimits) {
@@ -1249,6 +1252,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     return Boolean(task?.hasContext && !task.replayed);
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const visit = (line: string): void => {
     if (!line) {
       return;
@@ -1568,6 +1572,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
    * that never declared an id cannot key an observation, so its signals are
    * dropped here — the same rule the usage-row path applies to such a session.
    */
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const materializeSkillObservations = (): void => {
     const sessionId = session.id;
     if (!sessionId) {
@@ -1646,6 +1651,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     };
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const finalize = (): void => {
     if (finalized) {
       return;
@@ -1743,6 +1749,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
   };
 
   const detailTurns = (): SessionDetailTurn[] => {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     return detailTasks().map((task, index) => {
       const model = task.model === 'codex' ? session.model : task.model;
       // Same pricing convention as the phases above: each model in effect
@@ -1778,6 +1785,7 @@ export const createCodexSessionParser = (captureDetail = false, evidenceOnly = f
     });
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const detail = (links: CodexChildLinks = codexChildLinksWithoutDatabase()): SessionDetail | null => {
     if (!(captureDetail && session.id && session.start && session.end)) {
       return null;

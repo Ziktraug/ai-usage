@@ -158,6 +158,7 @@ export const matchRtkSavingsWindows = (
     const readResult = yield* Effect.acquireUseRelease(
       storage.openDatabase(dbPath),
       (db) =>
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         Effect.gen(function* () {
           for (const command of yield* db.all<RtkCommandRow>(RTK_COMMANDS_SQL)) {
             const saved = parseNonNegativeSafeInteger(command.saved_tokens);

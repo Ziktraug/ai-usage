@@ -92,6 +92,7 @@ export const buildTokenFlow = (
   });
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseTokenFlow = (value: unknown): TokenFlow => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Invalid token flow');

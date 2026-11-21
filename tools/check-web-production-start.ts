@@ -215,6 +215,7 @@ const readInitialSourceControlSnapshot = (port: number): Promise<Record<string, 
           return;
         }
         let text = '';
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         response.on('data', (chunk: Buffer) => {
           text = `${text}${chunk.toString('utf8')}`.replaceAll('\r\n', '\n');
           if (Buffer.byteLength(text) > LOG_LIMIT_BYTES) {
@@ -804,6 +805,7 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
           await within(
             'production smoke',
             OVERALL_DEADLINE_MS,
+            // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
             (async () => {
               await waitForApplicationPage(port, child, '/', OVERVIEW_SHELL_MARKER);
               if (!(await Bun.file(rendezvousPath).exists())) {

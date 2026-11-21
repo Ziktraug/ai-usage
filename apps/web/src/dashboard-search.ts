@@ -276,6 +276,7 @@ const parseFilters = (value: unknown): FieldFilters => {
   return filters;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const parseRange = (value: unknown, fallback: DashboardDateRangeSearch): DashboardDateRangeSearch => {
   if (typeof value === 'string') {
     if (dateRangeModeSet.has(value)) {

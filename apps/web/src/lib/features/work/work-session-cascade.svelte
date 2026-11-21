@@ -214,6 +214,7 @@
       detailId = detailId === id ? null : id;
     }
   };
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const onKeydown = (keyboard: KeyboardEvent): void => {
     const item = keyboard.target;
     // Keys pressed inside an open session panel belong to its buttons, not to the tree.

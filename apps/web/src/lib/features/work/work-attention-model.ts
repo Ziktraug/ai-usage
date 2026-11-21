@@ -818,6 +818,7 @@ const reconsideredPullRequestNumber = (root: WorkRoot): number | null => {
 };
 
 /** The compact facts a row shows: pull requests, Jira issues, a dirty checkout, proposals and children. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const workRootFactChips = (root: WorkRoot): readonly WorkFactChip[] => {
   const chips: WorkFactChip[] = [];
   if (root.reconsidered) {
@@ -936,6 +937,7 @@ export const groupWorkFactsBySource = (facts: readonly WorkFact[]): readonly Wor
 };
 
 /** One line per fact for the detail panel; the provenance is rendered beside it, not inside it. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const workFactSummary = (fact: WorkFact, root?: WorkRoot): string => {
   switch (fact.kind) {
     case 'codex-user-request': {

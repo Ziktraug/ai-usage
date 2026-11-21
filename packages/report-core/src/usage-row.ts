@@ -186,6 +186,7 @@ const costActual = (cost: UsageCostInput, costApprox: number, costKnown: boolean
   return costKnown ? costApprox : null;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const normalizeUsageRow = (input: UsageRowInput): Row => {
   const { rates, known } = priceFor(input.pricingModel ?? input.model, { at: input.endDate ?? input.date });
   const segments = input.modelSegments?.length ? boundedModelSegments(input.modelSegments, input.model) : undefined;

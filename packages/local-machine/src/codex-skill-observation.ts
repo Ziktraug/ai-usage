@@ -732,6 +732,7 @@ const WORD_CHARACTER = /[\w$]/;
  *   hole the balanced bound was introduced to close. A malformed call is
  *   dropped, so the count is a lower bound rather than a wrong one.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const codexExecCallWindows = (blob: string): { end: number; start: number }[] => {
   const windows: { end: number; start: number }[] = [];
   let quote: string | null = null;
@@ -783,6 +784,7 @@ const CLOSER_FOR: ReadonlyMap<string, string> = new Map([
   ['{', '}'],
 ]);
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const callArgumentEnd = (blob: string, open: number): number | null => {
   // A stack, not a depth counter: counting alone accepts `{cmd:"…"]`, because a
   // mismatched closer still balances the count. A mismatch means the snippet is
@@ -829,6 +831,7 @@ const callArgumentEnd = (blob: string, open: number): number | null => {
  * tell: it finds the first `cmd` in the window, and a `/* cmd:"…" *␘/` sitting
  * ahead of the real one wins. Comments are erased before any key is looked for.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const withoutJavaScriptComments = (blob: string): string => {
   const characters = [...blob];
   let quote: string | null = null;
@@ -941,6 +944,7 @@ const skipBlanks = (blob: string, from: number, to: number): number => {
  * complete quoted key; a string literal that is *not* exactly the key is
  * skipped whole, contents and all.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const structuralStringValueForKey = (blob: string, key: string, from: number, to: number): string | null => {
   let index = from;
   while (index < to) {
@@ -1039,6 +1043,7 @@ const ALL_DIGITS = /^\d+$/;
  * An unquoted `#` at the start of a word begins a shell comment and ends the
  * command; everything after it was never executed.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const shellItems = (command: string): ShellItem[] | null => {
   const items: ShellItem[] = [];
   let index = 0;
@@ -1213,6 +1218,7 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
  *
  * The verb is judged per segment, so `set -e; sed -n … SKILL.md` still reads.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const segmentReadOperands = (items: readonly ShellItem[]): string[] => {
   const verb = commandVerb(items);
   const scripted = CODEX_SCRIPTED_READ_VERBS.has(verb);

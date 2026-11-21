@@ -661,6 +661,7 @@ const requireFiniteNumberOrNull = (value: unknown, label: string): number | null
   return value;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseSessionPresentationRow = (value: unknown, label: string): SessionPresentationRow => {
   const record = requireRecord(value, label);
   if (!isSerializedUsageRowShape(record, SESSION_PRESENTATION_ROW_KEYS)) {
@@ -1545,6 +1546,7 @@ export const classifierRollupLabelForSessionRow = (row: SessionPresentationRow):
   return count > 0 ? `+ ${count} automated ${count === 1 ? 'review' : 'reviews'}` : null;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryRequest, timeZone: string): boolean => {
   const { fields } = request.filters;
   if (request.filters.query && !row.searchText.includes(request.filters.query)) {

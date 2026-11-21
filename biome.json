@@ -27,9 +27,6 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "complexity": {
-        "noExcessiveCognitiveComplexity": "off"
-      },
       "nursery": {
         "noFloatingPromises": "error",
         "noMisusedPromises": "error",

@@ -145,6 +145,7 @@ const inspectExistingLock = async (
   lockPath: string,
   canonicalWebDirectory: string,
   buildContainer: ValidatedBuildContainer,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<{ identity: FileIdentity; metadata: ProductionBuildLockMetadata }> => {
   const initializationDeadline = Date.now() + LOCK_INITIALIZATION_DEADLINE_MS;
   let expectedIdentity: FileIdentity | undefined;

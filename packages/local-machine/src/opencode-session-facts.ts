@@ -131,6 +131,7 @@ const tokenValue = (tokens: Record<string, unknown>, flat: Record<string, unknow
  * `session_message.data` (`model: { providerID, id, variant }`; the role is the
  * row's `type` column, which the caller copies into `role`).
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeResult => {
   if (!isJsonObject(value)) {
     return { kind: 'invalid' };
@@ -370,6 +371,7 @@ export const openCodeParentKind = (
 
 export const buildOpenCodeProjectionSummary = (
   facts: readonly OpenCodeMessageFact[],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): OpenCodeProjectionSummary | null => {
   if (facts.length === 0) {
     return null;

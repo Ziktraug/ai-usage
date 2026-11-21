@@ -406,6 +406,7 @@ const createAppendAwareItemsProjector = <Item>() => {
     identity: string,
     keyFor: (item: Item) => string,
     visit: (count: number) => void,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ): readonly Item[] => {
     const firstPage = pages[0];
     if (firstPage === undefined) {

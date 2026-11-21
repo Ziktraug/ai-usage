@@ -202,6 +202,7 @@ const parseCodexRequest = (value: unknown): CodexWorkRequest | undefined => {
   return { callId, tool, askedAt, acknowledgedAt, rejectedAt, questions };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const parseFactBody = (value: Record<string, unknown>): WorkFactBody | undefined => {
   switch (value.kind) {
     case 'codex-user-request': {

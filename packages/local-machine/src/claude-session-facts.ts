@@ -415,6 +415,7 @@ const createPromptResolver = (
   const memo = new Map<string, string | null>();
   let cycles = 0;
   let budgetExhaustions = 0;
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const resolve = (startUuid: string | null, visiting = new Set<string>(), depth = 0): string | null => {
     const path: string[] = [];
     let current = startUuid;
@@ -617,6 +618,7 @@ const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphInde
   return { conflictingParents, conflictingUuids, events: eventsByUuid, parents };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraphIndex): ClaudePromptFacts => {
   const prompts: SessionDetailPrompt[] = [];
   const promptEvents = new Map<string, ClaudeEvent>();
@@ -748,6 +750,7 @@ const collectClaudeAssistants = (
   events: readonly ClaudeEvent[],
   graph: ClaudeGraphIndex,
   promptFacts: ClaudePromptFacts,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ClaudeAssistantFacts => {
   const promptIds = new Set(promptFacts.promptEvents.keys());
   const resolver = createPromptResolver(graph, promptIds);
@@ -932,6 +935,7 @@ const applyClaudeTurnDurations = (
   turnsByKey: ReadonlyMap<string, MutableTurn>,
   sessionStart: Date,
   sessionEnd: Date,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): boolean => {
   // Streamed later blocks are anchored too, so a duration recorded below one
   // whose own parent chain is broken still reaches its round.
@@ -1077,6 +1081,7 @@ interface LiteralShellCommand {
 }
 
 /** Literal simple commands only; unsupported expansions invalidate their segment, never execute. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const shellCommands = (command: string): LiteralShellCommand[] | null => {
   const commands: LiteralShellCommand[] = [];
   let words: LiteralShellWord[] = [];
@@ -1239,6 +1244,7 @@ const isStatusOnlyEcho = (words: readonly LiteralShellWord[]): boolean => {
 };
 
 /** null is not an execution; an empty list is an execution without a literal resume id. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const codexExecResumeIds = (commandWords: readonly LiteralShellWord[]): string[] | null => {
   const shellWords = withoutTrailingRedirects(commandWords);
   if (shellWords === null) {
@@ -1404,6 +1410,7 @@ const codexLaunchCommand = (input: Record<string, unknown>): ClaudeCodexCommand 
     : null;
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const codexResultLaunch = (content: unknown, at: Date): ClaudeCodexLaunch | null => {
   let texts: string[] = [];
   if (typeof content === 'string') {
@@ -1453,6 +1460,7 @@ const collectClaudeToolCalls = (
   graph: ClaudeGraphIndex,
   assistantTurnKey: ReadonlyMap<string, string>,
   resolveTurnKey: (event: ClaudeEvent) => string | null,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ClaudeToolCall[] => {
   const calls: ClaudeToolCall[] = [];
   const seenToolUses = new Set<string>();
@@ -1510,6 +1518,7 @@ interface ClaudeSpawnResults {
 const collectClaudeSpawnResults = (
   events: readonly ClaudeEvent[],
   calls: readonly ClaudeToolCall[],
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ClaudeSpawnResults => {
   const agentIdsByToolUse = new Map<string, string>();
   const workflowRunsByToolUse = new Map<string, string>();
@@ -1610,6 +1619,7 @@ const collectClaudeLinks = (
   assistantFacts: ClaudeAssistantFacts,
   turnIndexByKey: ReadonlyMap<string, number>,
   input: ClaudeSessionInput,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ClaudeLinkFacts => {
   const calls = collectClaudeToolCalls(events, graph, assistantFacts.assistantTurnKey, assistantFacts.resolveTurnKey);
   const spawnResults = collectClaudeSpawnResults(events, calls);
@@ -1784,6 +1794,7 @@ const collectClaudeLinks = (
   };
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSessionInput): ClaudeMetadataFacts => {
   let title: string | null = null;
   let parentSourceSessionId: string | null = null;
@@ -1952,6 +1963,7 @@ const claudeSkillLookahead = (
   records: readonly unknown[],
   fromIndex: number,
   toolUseId: string | null,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ClaudeSkillLookahead => {
   let resolvedPath: string | null = null;
   let success: boolean | null = null;
@@ -1992,6 +2004,7 @@ const claudeSkillLookahead = (
  * user prose and have been measured to carry client names and business context;
  * ADR 0022 forbids persisting them.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInput): SkillObservationExtraction => {
   if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
     return {
@@ -2070,6 +2083,7 @@ const rejectedTranscript = (
   rejectedMetricRecords = 0,
 ): ClaudeTranscriptParseResult => ({ kind: 'rejected', reason, rejectedMetricRecords });
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseClaudeTranscript = (input: ClaudeSessionInput): ClaudeTranscriptParseResult => {
   if (!input.sourceSessionId) {
     return rejectedTranscript('no-session-id');

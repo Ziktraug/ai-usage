@@ -9,6 +9,7 @@ const analyticsTable = (
   keyHeader: string,
   keyWidth: number,
   showHarness: boolean,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ) => {
   const out: string[] = ['', clr.bold(clr.ul(title))];
   const cols: { h: string; w: number; r: boolean }[] = [

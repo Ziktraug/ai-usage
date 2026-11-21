@@ -95,6 +95,7 @@ const directoryNames = (
 export const collectClaudeDesktopSessions = (
   options: CollectClaudeDesktopSessionsOptions,
 ): Effect.Effect<ClaudeDesktopSessionCollection, LocalHistoryError, LocalHistoryStorageService> =>
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const maximumFiles = options.maximumFiles ?? CLAUDE_DESKTOP_SESSIONS_MAX_FILES;

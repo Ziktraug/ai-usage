@@ -690,6 +690,7 @@ const measureScenario = async ({
   temporaryDirectory,
   traceIntervalMs,
   zeroBaseline = false,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 }: ScenarioOptions): Promise<ScenarioMeasurement> => {
   const sectorsBefore = await readBlockDeviceSectors(blockDevice);
   if (sectorsBefore === undefined) {
@@ -1515,6 +1516,7 @@ const connectSourceSnapshotStream = async (
   let closing = false;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const done = (async () => {
     let buffered = '';
     try {

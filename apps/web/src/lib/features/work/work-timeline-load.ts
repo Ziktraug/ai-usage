@@ -44,6 +44,7 @@ export const readWorkTimeline = async (
   client: Pick<WorkThreadsClient, 'list'>,
   filter: { readonly project: string | null; readonly search: string | null },
   options: { readonly signal?: AbortSignal } = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<WorkTimelineResult> => {
   const rows = new Map<string, WorkThreadRow>();
   const rowSources = new Map<string, readonly WorkThreadSourceStatus[]>();

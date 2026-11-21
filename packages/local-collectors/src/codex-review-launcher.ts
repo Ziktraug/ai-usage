@@ -136,6 +136,7 @@ export const launchCodexReview = async (
   spec: CodexReviewLaunchSpec,
   events: CodexReviewLaunchEvents = {},
   options: CodexReviewLaunchOptions = {},
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<CodexReviewLaunch> => {
   assert(spec.model !== null && spec.model.length > 0, 'Codex review requires the selected model');
   const command = resolveCodexCommand({
@@ -281,6 +282,7 @@ export const launchCodexReview = async (
         finish('lost', 'Codex stop requested without a confirmed interrupted turn; reservation retained');
       }, 5000);
     };
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     const unsubscribe = client.subscribe((method, params) => {
       if (method === 'account/rateLimits/updated' && isRecord(params) && isRecord(params.rateLimits)) {
         const limit = params.rateLimits;

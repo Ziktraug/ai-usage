@@ -96,6 +96,7 @@ const campaignSelectionFor = (
  * or from an exact lookup at the served revision. Nothing here fetches: the
  * owner runs the lookups this function asks for through `loading`.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const resolveDetailSelection = (input: DetailSelectionInput): DetailSelectionState => {
   const { route } = input;
   if (route === null) {

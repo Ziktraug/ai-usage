@@ -277,6 +277,7 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
   const launchForeground = async (
     command: UsageEngineCommand,
     signal?: AbortSignal,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ): Promise<CliUsageEngineExecution> => {
     if (signal?.aborted) {
       throw new CliUsageEngineError('aborted', 'Usage engine command was cancelled.');

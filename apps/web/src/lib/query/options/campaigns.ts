@@ -41,6 +41,7 @@ export const withCampaignPageProgress = <
   identity: (item: Page['items'][number]) => string,
 ) => ({
   ...options,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   queryFn: async (context: QueryFunctionContext<QueryKey, string | null>): Promise<Page> => {
     if (typeof options.queryFn !== 'function') {
       throw new Error('Campaign acquisition requires a query function');
@@ -260,6 +261,7 @@ const restoreCollectedInfiniteEntries = (options: CampaignExplorationOptions): v
 /** Replays intent with this revision's cursors and publishes only one complete coherent window. */
 export const ensureCampaignExploration = async (
   options: CampaignExplorationOptions & { readonly signal: AbortSignal },
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): Promise<CampaignExplorationData> => {
   const { client, intent, queryClient, request, signal } = options;
   signal.throwIfAborted();

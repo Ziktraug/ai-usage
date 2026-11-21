@@ -1367,6 +1367,7 @@ const hasExactUsageLocalMachineSchema = (db: SqliteDatabase): boolean => {
   );
 };
 
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 const migrate = (db: SqliteDatabase): boolean => {
   const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
   if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
@@ -2516,6 +2517,7 @@ const classifyMergeRows = (
       existingRows.set(key, value);
     }
   }
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   return rows.map((row) => {
     const existing = existingRows.get(row.rowKey);
     if (existing?.source_authority === 'local-observed' && incomingAuthority === 'portable-opaque') {
@@ -2599,6 +2601,7 @@ const writeClassifiedMergeRows = (
   classifiedRows: ClassifiedMergeRow[],
   now: string,
   authority: StoredSourceAuthority,
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 ): ImportResult => {
   const result = summarizeClassifications(classifiedRows);
   const statements = prepareImportStatements(db);
@@ -2696,6 +2699,7 @@ export const updateUsageMachineLabel = (
   }
   return withUsageStoreWriter(input.dbPath, (db) =>
     Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       try: () => {
         const updatedAt = (input.updatedAt ?? new Date()).toISOString();
         const update = db.query(`
@@ -2841,6 +2845,7 @@ export const retireLocalRows = (input: RetireLocalRowsInput): Effect.Effect<Reti
   }
   return withUsageStoreWriter(input.dbPath, (db) =>
     Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       try: () => {
         const retiredAt = (input.retiredAt ?? new Date()).toISOString();
         const update = db.query(`
@@ -3637,6 +3642,7 @@ export const queryEnrichableUsageRowChanges = (
 ): Effect.Effect<QueryEnrichableUsageRowChangesResult, UsageStoreError> =>
   withUsageStoreReader(input.dbPath, (db) =>
     Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
       try: () => {
         const { params, where } = enrichableUsageRowsFilter(input);
         const listed = db

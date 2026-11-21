@@ -74,6 +74,7 @@ export const createSkillMarkdownEditorController = (
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const acceptDocument = (document: SkillMarkdownDocument | undefined): 'accepted' | 'blocked' | 'conflict' => {
     const changesIdentity =
       document?.skillName !== state.document?.skillName || document?.sha256 !== state.document?.sha256;
@@ -148,6 +149,7 @@ export const createSkillMarkdownEditorController = (
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const refresh = async (): Promise<void> => {
     if (state.skillName === '' || state.saving) {
       return;
@@ -179,6 +181,7 @@ export const createSkillMarkdownEditorController = (
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const save = async (): Promise<void> => {
     const document = state.document;
     if (!(document && state.dirty && !state.saving && !state.conflict)) {

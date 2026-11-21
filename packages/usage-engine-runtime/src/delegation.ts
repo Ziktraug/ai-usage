@@ -750,6 +750,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
   };
 
   const track = (job: DelegationJob, launch: ReviewWorkerLaunch): void => {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
     const settled = (async () => {
       try {
         const outcome = await launch.outcome;
@@ -892,6 +893,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
         : null,
   });
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const startJob = async (command: StartCommand, signal?: AbortSignal): Promise<UsageEngineDelegationStartOutput> => {
     const machineId = options.machine().id;
     const requestedAt = now().toISOString();
@@ -1400,6 +1402,7 @@ export const createDelegationService = (options: DelegationServiceOptions): Dele
       await gated(async () => {
         signal?.throwIfAborted();
         await runWithStorage(
+          // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
           updateAiUsageConfig(async (config) => {
             const current = await delegationPolicyRevision({
               delegation: config.delegation,

@@ -116,6 +116,7 @@ export const createCodexWorkObserver = () => {
     }
   };
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const visit = (event: Record<string, unknown>, date: Date, owned: boolean): void => {
     const payload = isRecord(event.payload) ? event.payload : {};
     const at = canonicalInstantFromDate(date);

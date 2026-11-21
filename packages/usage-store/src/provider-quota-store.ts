@@ -307,6 +307,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     }
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const result: ProviderQuotaImportResult = { coalesced: 0, inserted: 0, unchanged: 0 };
           const updatedAt = (input.importedAt ?? new Date()).toISOString();
@@ -519,6 +520,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
   ): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const maximum = input.maximumObservations ?? MAX_PROVIDER_QUOTA_OBSERVATIONS;
           if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_PROVIDER_QUOTA_OBSERVATIONS)) {
@@ -657,6 +659,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
   ): Effect.Effect<ProviderQuotaSourceState[], UsageStoreError> =>
     withUsageStoreReader(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const maximumStates = input.maximumStates ?? MAX_PROVIDER_QUOTA_SOURCE_STATES;
           const cursorKeys = input.cursorKeys;
@@ -719,6 +722,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     db: SqliteDatabase,
     input: QueryLatestProviderQuotaObservationsInput,
     operation: string,
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   ): QueryProviderQuotaObservationsResult => {
     const maximum = input.maximumObservations ?? MAX_PROVIDER_QUOTA_OBSERVATIONS;
     if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_PROVIDER_QUOTA_OBSERVATIONS)) {
@@ -919,6 +923,7 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
   ): Effect.Effect<RetainProviderQuotaObservationsResult, UsageStoreError> =>
     withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
+        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
         try: () => {
           const now = input.now ?? Date.now();
           const fullResolutionMs = input.fullResolutionMs ?? DEFAULT_PROVIDER_QUOTA_FULL_RESOLUTION_MS;

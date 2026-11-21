@@ -721,6 +721,7 @@ const isRepositoryPrefix = (value: unknown): value is string =>
       .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..'));
 
 /** Strict re-validation of a stored scope: one commit or one frozen range, consistent counts, a declared truncation that matches them. */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const parseReviewAttemptScope = (value: unknown): ReviewAttemptScope | null => {
   if (
     !isRecord(value) ||
@@ -1090,6 +1091,7 @@ const refusal = (
  * identity or model, a target outside `routing.reviewTargets`, an executor not observed available,
  * and finally a recommendation that is not `real` under the forced candidate.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
 export const decideReviewLaunch = (input: ReviewLaunchDecisionInput): ReviewLaunchDecision => {
   if (input.otherLiveAttempt !== null) {
     return refusal(

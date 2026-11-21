@@ -267,6 +267,7 @@ export const createInMemoryUsageEngineControlClient = (
     },
   });
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const publish = (eventValue: unknown): void => {
     if (disposed) {
       throw new UsageEngineControlError('engine-unavailable', 'events', 'In-memory usage engine is disposed.');

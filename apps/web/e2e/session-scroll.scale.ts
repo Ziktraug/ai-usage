@@ -286,6 +286,7 @@ const inspectAllSessions = async (
   const indexToRowId = new Map<number, string>();
   const rowIdToIndex = new Map<string, number>();
   let maximumRenderedItems = 0;
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
   const recordSnapshot = (snapshot: SessionSurfaceSnapshot): void => {
     maximumRenderedItems = Math.max(maximumRenderedItems, snapshot.rows.length);
     if (snapshot.rows.length > viewportCase.maximumRenderedItems) {
