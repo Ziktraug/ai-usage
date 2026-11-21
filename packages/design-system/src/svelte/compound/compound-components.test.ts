@@ -1,9 +1,10 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { chromium } from 'playwright';
+import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { nextSegmentValue } from './segmented-control';
 import { keepTabPanelInTabOrder } from './tab-panel';
@@ -33,7 +34,32 @@ const BROWSER_PROOF_SETUP_BUDGET_MS = 8000;
 const BROWSER_PROOF_TIMEOUT_MS =
   BROWSER_PROOF_SETUP_BUDGET_MS + BROWSER_PROOF_INTERACTIONS * BROWSER_PROOF_ACTION_TIMEOUT_MS;
 
-const readCompound = async (name: string): Promise<string> => readFile(resolve(compoundDirectory, name), 'utf8');
+const ssrServer = await createServer({
+  appType: 'custom',
+  configFile: false,
+  optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
+  plugins: [svelte()],
+  resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
+  root: repositoryDirectory,
+  server: { hmr: false, middlewareMode: true, ws: false },
+  ssr: { noExternal: true },
+});
+afterAll(() => ssrServer.close());
+const [fixtureModule, rendererModule] = await Promise.all([
+  ssrServer.ssrLoadModule('/packages/design-system/src/svelte/compound/compound.fixture.svelte'),
+  ssrServer.ssrLoadModule('svelte/server'),
+]);
+const renderFixture = Reflect.get(rendererModule, 'render') as (component: Component) => { body: string };
+const fixtureHtml = renderFixture(Reflect.get(fixtureModule, 'default') as Component).body.replaceAll(
+  /<!--[^>]*-->/g,
+  '',
+);
+const attributeOf = (element: string, name: string): string | undefined =>
+  element.match(new RegExp(`${name}="([^"]*)"`))?.[1];
+const elementsWithPart = (scope: string, part: string): string[] =>
+  [...fixtureHtml.matchAll(new RegExp(`<[a-z]+ [^>]*data-scope="${scope}" data-part="${part}"[^>]*>`, 'g'))].map(
+    ([element]) => element,
+  );
 
 describe('Svelte compound controls', () => {
   test(
@@ -152,39 +178,35 @@ describe('Svelte compound controls', () => {
     BROWSER_PROOF_TIMEOUT_MS,
   );
 
-  test('SegmentedControl keeps exactly one controlled value and delegates arrows and Space to ToggleGroup', async () => {
+  test('SegmentedControl keeps exactly one controlled value and delegates arrows and Space to ToggleGroup', () => {
     expect(nextSegmentValue([])).toBeUndefined();
     expect(nextSegmentValue([''])).toBeUndefined();
     expect(nextSegmentValue(['week'])).toBe('week');
 
-    const source = await readCompound('segmented-control.svelte');
-    for (const contract of [
-      'aria-label={ariaLabel}',
-      'deselectable={false}',
-      'orientation="horizontal"',
-      'rovingFocus',
-      'value={[value]}',
-      'if (nextValue)',
-      'onValueChange(nextValue)',
-      'data-default={String(item.value === defaultValue)}',
-    ]) {
-      expect(source).toContain(contract);
-    }
+    // Arrow movement, Space selection and the refusal to deselect are driven in Chromium above.
+    const [group] = elementsWithPart('toggle-group', 'root');
+    expect(group).toContain('role="radiogroup"');
+    expect(group).toContain('aria-label="Fixture range"');
+    expect(group).toContain('data-orientation="horizontal"');
+    const items = elementsWithPart('toggle-group', 'item');
+    expect(items.map((item) => attributeOf(item, 'aria-checked'))).toEqual(['false', 'true', 'false']);
+    expect(items.map((item) => attributeOf(item, 'data-default'))).toEqual(['false', 'true', 'false']);
   });
 
-  test('Tabs remains controlled, composite, disabled-aware, lazy, and unmounted outside the active panel', async () => {
-    const source = await readCompound('tabs.svelte');
-    for (const contract of [
-      'composite',
-      'lazyMount',
-      'unmountOnExit',
-      '{value}',
-      'onValueChange={(details) => onValueChange(details.value)}',
-      'disabled={item.disabled}',
-      'content={item.content}',
-    ]) {
-      expect(source).toContain(contract);
-    }
+  test('Tabs remains controlled, disabled-aware, lazy, and unmounted outside the active panel', () => {
+    // Controlled arrow navigation and the unmounting of the left panel are driven in Chromium above.
+    const [list] = elementsWithPart('tabs', 'list');
+    expect(list).toContain('aria-label="Fixture sections"');
+    const triggers = elementsWithPart('tabs', 'trigger');
+    expect(triggers.map((trigger) => attributeOf(trigger, 'aria-selected'))).toEqual(['true', 'false', 'false']);
+    expect(triggers.map((trigger) => trigger.includes('aria-disabled="true"'))).toEqual([false, false, true]);
+    const panels = elementsWithPart('tabs', 'content');
+    expect(panels).toHaveLength(1);
+    expect(panels[0]).toContain('role="tabpanel"');
+    expect(panels[0]).toContain('tabindex="0"');
+    expect(fixtureHtml).toContain('Overview fixture panel');
+    expect(fixtureHtml).not.toContain('Focusable session fixture');
+    expect(fixtureHtml).not.toContain('Disabled fixture panel');
   });
 
   test('the active tab panel is restored to tabIndex zero after the Zag animation frame', () => {
@@ -203,18 +225,5 @@ describe('Svelte compound controls', () => {
     panel.tabIndex = -1;
     callbacks[0]?.();
     expect(panel.tabIndex).toBe(-1);
-  });
-
-  test('the panel adapter schedules against its owner window and keeps the explicit tabindex attribute', async () => {
-    const source = await readCompound('tab-panel.svelte');
-    expect(source).toContain('element.ownerDocument.defaultView?.requestAnimationFrame(callback)');
-    expect(source).toContain('<Tabs.Content class={className} tabindex={0} {value} bind:ref={panel}>');
-  });
-
-  test('the fixture directly consumes each control and exercises controlled and dynamic inputs', async () => {
-    const source = await readCompound('compound.fixture.svelte');
-    expect(source).toContain("import SegmentedControl from './segmented-control.svelte'");
-    expect(source).toContain("import Tabs from './tabs.svelte'");
-    expect(source).toContain('disabled: true');
   });
 });
