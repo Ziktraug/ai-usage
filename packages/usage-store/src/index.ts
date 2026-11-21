@@ -64,160 +64,32 @@ import { createWorkFactStore } from './work-fact-store';
 import { createWorkSessionJoinStore } from './work-session-join';
 import { createWorkThreadStore } from './work-thread-store';
 
-export type {
-  CheckpointUsageStoreInput,
-  CheckpointUsageStoreResult,
-  InitializeUsageStoreInput,
-  QuiesceUsageStoreForShutdownInput,
-} from './connections';
-export { checkpointUsageStore, initializeUsageStore, quiesceUsageStoreForShutdown } from './connections';
-export type {
-  EnrichableUsageRow,
-  EnrichableUsageRowChange,
-  LocalRowsWatermark,
-  QueryEnrichableUsageRowChangesInput,
-  QueryEnrichableUsageRowChangesResult,
-  QueryEnrichableUsageRowsInput,
-  QueryEnrichableUsageRowsResult,
-  QueryLocalRowsWatermarkInput,
-  RtkSavingsContributionInput,
-  UpsertRtkSavingsContributionsInput,
-} from './enrichment';
+export { initializeUsageStore } from './connections';
 export {
   queryEnrichableUsageRowChanges,
   queryEnrichableUsageRows,
   queryLocalRowsWatermark,
   upsertRtkSavingsContributions,
 } from './enrichment';
-export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
-export type {
-  ImportLocalRowsInput,
-  ImportResult,
-  RetireLocalRowsInput,
-  RetireLocalRowsResult,
-  UpdateUsageMachineLabelInput,
-  UpdateUsageMachineLabelResult,
-} from './local-rows';
+export type { ImportResult } from './local-rows';
 export {
   importLocalRows,
   retireLocalRows,
   USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
   updateUsageMachineLabel,
 } from './local-rows';
-export type {
-  LocalProjectionReadPhase,
-  QueryUsageLocalMachineInput,
-  QueryUsageMachineFleetInput,
-  QueryUsageMachineFleetResult,
-  QueryUsageSyncFleetResult,
-  UsageMachineFleetItem,
-} from './machine-fleet';
-export {
-  MAX_USAGE_MACHINE_FLEET_MACHINES,
-  queryUsageLocalMachine,
-  queryUsageMachineFleet,
-  queryUsageSyncFleet,
-  setLocalProjectionReadFaultInjectorForTesting,
-  usageStorePath,
-} from './machine-fleet';
+export { queryUsageMachineFleet, usageStorePath } from './machine-fleet';
 export { USAGE_STORE_SCHEMA_VERSION } from './migration';
-export type {
-  ConfirmPeerMergeBundleInput,
-  ImportPeerMergeBundleInput,
-  PreviewPeerMergeBundleInput,
-  PreviewPeerMergeBundleResult,
-} from './peer-merge';
+export type { PreviewPeerMergeBundleResult } from './peer-merge';
 export { confirmPeerMergeBundle, importPeerMergeBundle, previewPeerMergeBundle } from './peer-merge';
-
-export type {
-  ImportProviderQuotaBatchInput,
-  ProviderQuotaCheckpointUpdate,
-  ProviderQuotaImportItem,
-  ProviderQuotaImportResult,
-  ProviderQuotaSourceState,
-  QueryLatestLocalProviderQuotaObservationsInput,
-  QueryLatestProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsInput,
-  QueryProviderQuotaObservationsResult,
-  QueryProviderQuotaSourceStateInput,
-  QueryProviderQuotaSourceStatesInput,
-  RecordProviderQuotaSourceAttemptInput,
-  RetainProviderQuotaObservationsInput,
-  RetainProviderQuotaObservationsResult,
-  StoredProviderQuotaObservation,
-} from './provider-quota-store';
-export type {
-  ExportLocalMergeBundleInput,
-  QueryLocalMergeBundleInput,
-  QueryReportRowsInput,
-  QueryRowsResult,
-  QueryStoredReportCaptureInput,
-  QueryStoredReportCaptureResult,
-  QueryUsageStoreGenerationInput,
-  UsageStoreGenerations,
-} from './report-rows';
 export {
   exportLocalMergeBundle,
-  queryLocalMergeBundle,
   queryReportRows,
   queryStoredReportCapture,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
 } from './report-rows';
-export type { EnrichmentImportResult, RtkSavingsContribution } from './rtk-savings';
-export type {
-  CurrentServedLocalProjectSources,
-  PublishServedReportRevisionCapture,
-  PublishServedReportRevisionContext,
-  PublishServedReportRevisionInput,
-  PublishServedReportRevisionResult,
-  PublishServedRevisionValidationCache,
-  QueryServedReportRevisionInput,
-  QueryServedReportRevisionLocalSnapshotInput,
-  QueryServedRevisionDataInput,
-  QueryServedSessionPullRequestLinksInput,
-  RetainServedReportRevisionsInput,
-  RetainServedReportRevisionsResult,
-  ServedLocalProjectSource,
-  ServedReportPublicationPhase,
-  ServedReportReadPhase,
-  ServedReportRevisionBootstrap,
-  ServedReportRevisionLocalSnapshot,
-  ServedReportRevisionManifest,
-  ServedReportRevisionPortableConfig,
-  ServedReportRevisionRows,
-  ServedReportRevisionSlices,
-  ServedReportRevisionSupport,
-  ServedSessionPullRequestLink,
-  ServedSessionPullRequestLinks,
-} from './served-report-store';
-export type {
-  ImportSkillObservationsInput,
-  QuerySkillObservationsInput,
-  QuerySkillObservationsResult,
-  RetainSkillObservationsInput,
-  RetainSkillObservationsResult,
-  SkillObservationImportResult,
-  StoredSkillObservation,
-} from './skill-observation-store';
-export type { StoredSourceAuthority, StoredUsageRowStatus } from './stored-usage-row';
-export type {
-  ImportCheckoutStatusObservationsInput,
-  ImportJiraIssueObservationsInput,
-  ImportPullRequestObservationsInput,
-  LatestCheckoutStatusObservations,
-  LatestJiraIssueObservations,
-  LatestPullRequestObservations,
-  QueryLatestCheckoutStatusObservationsInput,
-  QueryLatestJiraIssueObservationsInput,
-  QueryLatestPullRequestObservationsInput,
-  QueryWorkFactRunStatesInput,
-  RecordWorkFactRunInput,
-  WorkFactImportResult,
-  WorkFactRunState,
-  WorkFactRunStates,
-} from './work-fact-store';
 
 export interface UsageStore {
   confirmPeerMergeBundle: (input: ConfirmPeerMergeBundleInput) => Effect.Effect<ImportResult, UsageStoreError>;
@@ -328,7 +200,6 @@ export const {
   withUsageStoreReader,
   withUsageStoreWriter,
 });
-export { WORK_FACT_SOURCE_IDS, type WorkFactSourceId } from './work-fact-store';
 export const {
   countClaudeDesktopSessions,
   importClaudeDesktopSessions,
@@ -408,38 +279,6 @@ export const {
   withUsageStoreReader,
   withUsageStoreWriter,
 });
-export type {
-  ApplyWorkThreadCommandInput,
-  ApplyWorkThreadWaitObservationsInput,
-  ApplyWorkThreadWaitObservationsResult,
-  AttachDeclaredWorkThreadSessionsInput,
-  AttachDeclaredWorkThreadSessionsResult,
-  DeclaredWorkThreadSession,
-  JiraIntakeEntry,
-  QueryActiveWorkThreadLinksInput,
-  QueryActiveWorkThreadLinksResult,
-  QueryJiraIntakeInput,
-  QueryJiraIntakeResult,
-  QueryWorkThreadByIdInput,
-  QueryWorkThreadCombineSuggestionsResult,
-  QueryWorkThreadLinksInput,
-  QueryWorkThreadSessionEvidenceInput,
-  QueryWorkThreadsPageInput,
-  QueryWorkThreadsPageResult,
-  QueryWorkThreadWaitCandidatesInput,
-  QueryWorkThreadWaitCandidatesResult,
-  ReconcileWorkBranchesInput,
-  ReconcileWorkBranchesResult,
-  RecordJiraIntakeInput,
-  SeedWorkThreadsInput,
-  SeedWorkThreadsResult,
-  WorkThreadCombination,
-  WorkThreadCombineSuggestionEntry,
-  WorkThreadPageRow,
-  WorkThreadSeed,
-  WorkThreadSessionEvidence,
-  WorkThreadWaitCandidate,
-} from './work-thread-store';
 
 export const createUsageStore = (dbPath: string): UsageStore => ({
   exportLocalMergeBundle: (input) => exportLocalMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
