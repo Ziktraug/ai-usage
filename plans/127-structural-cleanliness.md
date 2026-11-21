@@ -89,8 +89,14 @@ down the part with the best return.
    may be *moved* by P2 but its body must stay byte-identical. Changing it
    falls under `docs/local-store-upgrade.md` and is out of scope.
 6. **Tests are exempt from the file-length rule** (44 test files exceed 1,000
-   lines; long characterization suites are not the problem being solved). They
-   are not exempt from the complexity rule.
+   lines; long characterization suites are not the problem being solved).
+   Amended after P1 (2026-11-21): tests are also exempt from the complexity
+   rule, because the Ultracite preset turns it off for `*.{test,spec}.*`. That
+   is accepted as is; no override re-enables it. The enforced baseline is
+   therefore 271 suppressed functions, not 284. The file-length rule does not
+   count lines inside multi-line template literals and counts only the
+   `<script>` block of a `.svelte` file, so P2 and P4 use `wc -l` and the
+   `awk` script count in their done criteria, not the rule.
 
 ## Commands you will need
 
