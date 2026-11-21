@@ -16,22 +16,22 @@
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
   import { browser } from '$app/env';
-  import { displayTitle } from '../../foundation/presentation/display-title';
-  import type { RuntimeMode } from '../../foundation/runtime-mode';
-  import { workAttemptsKey, workAttemptsQueryOptions } from '../../query/options/work-attempts';
-  import { workRoutingContextKey, workRoutingContextQueryOptions } from '../../query/options/work-routing';
-  import { useOptionalWebQueryRpcContext } from '../../query/rpc-context.svelte';
-  import { ssrUnavailableClient } from '../../rpc/ssr-placeholder';
-  import { createWorkAttemptsClient } from '../../rpc/work-attempts-client';
-  import { createWorkRoutingClient, createWorkRoutingQualifyClient } from '../../rpc/work-routing-client';
-  import WorkAttempts from './work-attempts.svelte';
+  import { displayTitle } from '../../../foundation/presentation/display-title';
+  import type { RuntimeMode } from '../../../foundation/runtime-mode';
+  import { workAttemptsKey, workAttemptsQueryOptions } from '../../../query/options/work-attempts';
+  import { workRoutingContextKey, workRoutingContextQueryOptions } from '../../../query/options/work-routing';
+  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
+  import { ssrUnavailableClient } from '../../../rpc/ssr-placeholder';
+  import { createWorkAttemptsClient } from '../../../rpc/work-attempts-client';
+  import { createWorkRoutingClient, createWorkRoutingQualifyClient } from '../../../rpc/work-routing-client';
+  import WorkAttempts from '../work-attempts.svelte';
   import {
     DEMO_EXECUTION_TEXT,
     launchGate,
     releaseOutcomeText,
     startReviewLabel,
     stopOutcomeText,
-  } from './work-attempts-model';
+  } from '../work-attempts-model';
   import { demoReviewCandidates, demoWorkEvidence } from './work-demo';
   import { projectWorkEvidence } from './work-evidence';
   import {
@@ -49,8 +49,8 @@
     workRoutingForm,
     workRow,
     workStack,
-  } from './work-styles';
-  import { WORK_DEMO_TIME } from './work-synthetic';
+  } from '../work-styles';
+  import { WORK_DEMO_TIME } from '../work-synthetic';
 
   let {
     attempts,

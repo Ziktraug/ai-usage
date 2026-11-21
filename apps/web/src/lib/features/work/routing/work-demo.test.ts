@@ -4,8 +4,8 @@ import {
   type ReviewTarget,
   simulateWorkReviewRouting,
 } from '@ai-usage/report-core/work-routing';
+import { WORK_DEMO_TIME } from '../work-synthetic';
 import { demoReviewCandidates } from './work-demo';
-import { WORK_DEMO_TIME } from './work-synthetic';
 
 const target: ReviewTarget = {
   kind: 'session',

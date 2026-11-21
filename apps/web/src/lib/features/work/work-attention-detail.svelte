@@ -38,7 +38,7 @@
     workRootObservedActivity,
     workRootStanding,
   } from './work-attention-model';
-  import WorkRouting from './work-routing.svelte';
+  import WorkRouting from './routing/work-routing.svelte';
   import {
     workButton,
     workCloseButton,

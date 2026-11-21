@@ -1,6 +1,6 @@
 import type { ReviewCandidate, ReviewTarget } from '@ai-usage/report-core/work-routing';
+import { WORK_DEMO_TIME } from '../work-synthetic';
 import type { WorkEvidence } from './work-evidence';
-import { WORK_DEMO_TIME } from './work-synthetic';
 
 /** Explicit simulation fixtures, never supplied to the real candidate path. */
 export const demoReviewCandidates = (target: ReviewTarget): readonly ReviewCandidate[] =>

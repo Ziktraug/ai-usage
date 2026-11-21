@@ -7,8 +7,8 @@ import type { WorkRoutingContext, WorkRoutingQualification } from '@ai-usage/web
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import { workRequest } from '../../query/options/work';
-import { syntheticSessionRow } from '../sessions/table/session-table.fixtures';
+import { workRequest } from '../../../query/options/work';
+import { syntheticSessionRow } from '../../sessions/table/session-table.fixtures';
 
 interface SvelteServerModule {
   readonly render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -33,17 +33,17 @@ const server = await createServer({
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: {
-    alias: { '$app/env': fileURLToPath(new URL('../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
+    alias: { '$app/env': fileURLToPath(new URL('../../sync/sync-ssr-environment.fixture.ts', import.meta.url)) },
     conditions: ['svelte'],
     dedupe: ['svelte'],
   },
-  root: fileURLToPath(new URL('../../../../../../', import.meta.url)),
+  root: fileURLToPath(new URL('../../../../../../../', import.meta.url)),
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 afterAll(() => server.close());
 const [fixtureModule, rendererModule] = await Promise.all([
-  server.ssrLoadModule('/apps/web/src/lib/features/work/work-routing.fixture.svelte'),
+  server.ssrLoadModule('/apps/web/src/lib/features/work/routing/work-routing.fixture.svelte'),
   server.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
