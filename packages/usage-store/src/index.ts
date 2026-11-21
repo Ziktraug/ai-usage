@@ -1,5 +1,4 @@
 import { createClaudeDesktopSessionStore } from './claude-desktop-session-store';
-import { createCodexWorkStore } from './codex-work-store';
 import { withUsageStoreReader, withUsageStoreWriter } from './connections';
 import { createDelegationStore } from './delegation-store';
 import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from './errors';
@@ -166,12 +165,7 @@ export const {
   withUsageStoreWriter,
 });
 
-export const { importCodexWorkObservations, queryCodexWorkObservations } = createCodexWorkStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-  withUsageStoreWriter,
-});
+export { importCodexWorkObservations, queryCodexWorkObservations } from './codex-work-store';
 
 export const {
   applyWorkThreadCommand,

@@ -299,19 +299,56 @@ const closeUsageStoreWriterDatabase = (dbPath: string, db: SqliteDatabase): Effe
     catch: (cause) => usageStoreError('closeUsageStoreWriter', dbPath, cause, 'storage-failure'),
   }).pipe(Effect.ignore);
 
+type UsageStoreConnection = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+) => Effect.Effect<A, UsageStoreError>;
+
+/** A fixture's own connections for one store path: an in-memory or reduced-schema database, counted opens. */
+export interface UsageStoreConnectionsForTesting {
+  readonly withUsageStoreReader?: UsageStoreConnection;
+  readonly withUsageStoreWriter?: UsageStoreConnection;
+}
+
+const connectionsForTesting = new Map<string, UsageStoreConnectionsForTesting>();
+
+/** Test seam: route the reader and writer of one store path through a fixture. Package internal. */
+export const setUsageStoreConnectionsForTesting = (
+  dbPath: string,
+  connections: UsageStoreConnectionsForTesting,
+): void => {
+  connectionsForTesting.set(dbPath, connections);
+};
+
+export const resetUsageStoreConnectionsForTesting = (): void => {
+  connectionsForTesting.clear();
+};
+
 export const withUsageStoreWriter = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
-): Effect.Effect<A, UsageStoreError> =>
-  Effect.acquireUseRelease(openUsageStoreWriterDatabase(dbPath), use, (db) =>
+): Effect.Effect<A, UsageStoreError> => {
+  const fixture = connectionsForTesting.get(dbPath)?.withUsageStoreWriter;
+  if (fixture) {
+    return fixture(dbPath, use);
+  }
+  return Effect.acquireUseRelease(openUsageStoreWriterDatabase(dbPath), use, (db) =>
     closeUsageStoreWriterDatabase(dbPath, db),
   );
+};
 
 export const withUsageStoreReader = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
-): Effect.Effect<A, UsageStoreError> =>
-  Effect.acquireUseRelease(openUsageStoreReaderDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+): Effect.Effect<A, UsageStoreError> => {
+  const fixture = connectionsForTesting.get(dbPath)?.withUsageStoreReader;
+  if (fixture) {
+    return fixture(dbPath, use);
+  }
+  return Effect.acquireUseRelease(openUsageStoreReaderDatabase(dbPath), use, (db) =>
+    closeUsageStoreDatabase(dbPath, db),
+  );
+};
 
 const withUsageStorePreviewReader = <A>(
   dbPath: string,
