@@ -3,7 +3,6 @@ import { usageStoreError, usageStoreReadError, usageStoreServedReadError } from 
 import { readUsageLocalMachineWithDatabase } from './machine-fleet';
 import { readUsageStoreGenerations } from './report-rows';
 import { createServedReportStore } from './served-report-store';
-import { createSkillObservationStore } from './skill-observation-store';
 import { createWorkThreadStore } from './work-thread-store';
 
 export { initializeUsageStore } from './connections';
@@ -58,26 +57,6 @@ export const {
 });
 
 export {
-  importProviderQuotaBatch,
-  queryLatestLocalProviderQuotaObservations,
-  queryLatestProviderQuotaObservations,
-  queryProviderQuotaObservations,
-  queryProviderQuotaSourceState,
-  queryProviderQuotaSourceStates,
-  recordProviderQuotaSourceAttempt,
-  retainProviderQuotaObservations,
-} from './provider-quota-store';
-
-export const { importSkillObservations, querySkillObservations, retainSkillObservations } = createSkillObservationStore(
-  {
-    usageStoreError,
-    usageStoreReadError,
-    withUsageStoreReader,
-    withUsageStoreWriter,
-  },
-);
-
-export {
   countClaudeDesktopSessions,
   importClaudeDesktopSessions,
   queryClaudeDesktopCollectionState,
@@ -107,6 +86,16 @@ export {
   queryLatestExecutorObservations,
 } from './executor-observation-store';
 export {
+  importProviderQuotaBatch,
+  queryLatestLocalProviderQuotaObservations,
+  queryLatestProviderQuotaObservations,
+  queryProviderQuotaObservations,
+  queryProviderQuotaSourceState,
+  queryProviderQuotaSourceStates,
+  recordProviderQuotaSourceAttempt,
+  retainProviderQuotaObservations,
+} from './provider-quota-store';
+export {
   markReviewAttemptsLost,
   queryReviewAttempts,
   queryReviewReservations,
@@ -115,6 +104,7 @@ export {
   requestReviewAttempt,
   transitionReviewAttempt,
 } from './review-attempt-store';
+export { importSkillObservations, querySkillObservations, retainSkillObservations } from './skill-observation-store';
 export {
   importCheckoutStatusObservations,
   importJiraIssueObservations,
