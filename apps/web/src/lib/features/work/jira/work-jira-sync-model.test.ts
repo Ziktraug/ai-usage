@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { SourceControlEntryView } from '@ai-usage/report-core/source-control';
-import type { SourceControlClientState } from '../../foundation/source-control-client';
+import type { SourceControlClientState } from '../../../foundation/source-control-client';
 import { presentJiraSync } from './work-jira-sync-model';
 
 const at = '2026-10-28T12:00:00.000Z';

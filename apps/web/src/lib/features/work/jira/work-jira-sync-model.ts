@@ -1,4 +1,4 @@
-import type { SourceControlClientState } from '../../foundation/source-control-client';
+import type { SourceControlClientState } from '../../../foundation/source-control-client';
 
 export const presentJiraSync = (state: SourceControlClientState) => {
   const source = state.snapshot?.sources.find((entry) => entry.id === 'jira.issues');

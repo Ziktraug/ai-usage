@@ -28,7 +28,7 @@
   import { createWorkThreadsClient, type WorkThreadsClient } from '../../rpc/work-threads-client';
   import { useShellNavigationOwner } from '../shell/navigation-owner-context';
   import WorkDiskView from './disk/work-disk-view.svelte';
-  import WorkJiraSync from './work-jira-sync.svelte';
+  import WorkJiraSync from './jira/work-jira-sync.svelte';
   import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
   import WorkThreadDetail, { type HistoryLayout } from './work-thread-detail.svelte';
   import WorkThreadList from './work-thread-list.svelte';

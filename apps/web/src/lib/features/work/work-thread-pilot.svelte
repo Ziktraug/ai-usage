@@ -11,7 +11,7 @@
     WorkThreadRow,
   } from '@ai-usage/report-core/work-thread-view';
   import WorkCombineSuggestions from './work-combine-suggestions.svelte';
-  import WorkJiraIntake from './work-jira-intake.svelte';
+  import WorkJiraIntake from './jira/work-jira-intake.svelte';
   import WorkThreadCompactRow from './work-thread-compact-row.svelte';
   import {
     groupThreadRowsByBand,

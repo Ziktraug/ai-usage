@@ -1,7 +1,7 @@
 <script lang="ts">
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { collectionSwrKey } from '../../query/keys';
-  import { useSourceControl } from '../sources/context.svelte';
+  import { collectionSwrKey } from '../../../query/keys';
+  import { useSourceControl } from '../../sources/context.svelte';
   import { presentJiraSync } from './work-jira-sync-model';
 
   let { timeZone }: { timeZone: string } = $props();

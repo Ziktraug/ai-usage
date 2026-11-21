@@ -13,7 +13,7 @@
   import { tick } from 'svelte';
   import WorkCombineSuggestions from './work-combine-suggestions.svelte';
   import WorkHarnessGlyph from './work-harness-glyph.svelte';
-  import WorkJiraIntake from './work-jira-intake.svelte';
+  import WorkJiraIntake from './jira/work-jira-intake.svelte';
   import WorkMilestoneGlyph from './work-milestone-glyph.svelte';
   import WorkThreadArtifacts from './work-thread-artifacts.svelte';
   import {
