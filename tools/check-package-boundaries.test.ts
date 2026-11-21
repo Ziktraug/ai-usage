@@ -833,6 +833,37 @@ describe('package boundary guard', () => {
     expect(violations).not.toContainEqual(expect.objectContaining({ specifier: '@ai-usage/skills' }));
   });
 
+  test('keeps Web foundation production modules from importing features', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const foundation = path.join(root, 'apps/web/src/lib/foundation');
+    await mkdir(path.join(foundation, 'presentation'), { recursive: true });
+    await Promise.all([
+      writeFile(path.join(foundation, 'relative.ts'), "import { a } from '../features/work/work-load';\n"),
+      writeFile(
+        path.join(foundation, 'presentation/aliased.svelte'),
+        "<script>import { b } from '#lib/features/report/report-export';</script>\n",
+      ),
+      writeFile(
+        path.join(foundation, 'neighbour.ts'),
+        "import { c } from './runtime-mode';\nimport '../query/keys';\n",
+      ),
+      writeFile(path.join(foundation, 'composed.test.ts'), "import { d } from '../features/work/work-load';\n"),
+    ]);
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual([
+      expect.objectContaining({
+        file: 'apps/web/src/lib/foundation/presentation/aliased.svelte',
+        specifier: '#lib/features/report/report-export',
+      }),
+      expect.objectContaining({
+        file: 'apps/web/src/lib/foundation/relative.ts',
+        specifier: '../features/work/work-load',
+      }),
+    ]);
+  });
+
   test('accepts the current workspace graph', async () => {
     expect(await collectViolations(repositoryRoot)).toEqual([]);
   });

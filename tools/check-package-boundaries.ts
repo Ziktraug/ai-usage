@@ -495,6 +495,33 @@ const collectTargetDependencyViolations = (
   return violations;
 };
 
+const webFoundationDirectory = 'apps/web/src/lib/foundation/';
+const webFeaturesDirectory = 'apps/web/src/lib/features/';
+const webLibAliasPattern = /^[#$]lib\//u;
+
+// Web foundation is the shared base that features build on: a production foundation module importing a
+// feature would invert that layering. Tests may still compose features.
+const webFoundationImportReason = (
+  packageName: string,
+  relativeFile: string,
+  specifier: string,
+): string | undefined => {
+  if (
+    packageName !== '@ai-usage/web' ||
+    !relativeFile.startsWith(webFoundationDirectory) ||
+    isTestOnlySource(relativeFile)
+  ) {
+    return;
+  }
+  const aliasTarget = webLibAliasPattern.test(specifier)
+    ? `apps/web/src/lib/${specifier.slice('#lib/'.length)}`
+    : undefined;
+  const target = specifier.startsWith('.') ? path.posix.join(path.posix.dirname(relativeFile), specifier) : aliasTarget;
+  if (target?.startsWith(webFeaturesDirectory)) {
+    return 'Web foundation modules must not import feature modules.';
+  }
+};
+
 const collectTargetImportViolations = async (
   root: string,
   packageInfo: PackageInfo,
@@ -510,7 +537,9 @@ const collectTargetImportViolations = async (
       if (specifier === undefined) {
         continue;
       }
-      const reason = targetImportReason(packageInfo.packageName, relativeFile, specifier, applicationPackages);
+      const reason =
+        webFoundationImportReason(packageInfo.packageName, relativeFile, specifier) ??
+        targetImportReason(packageInfo.packageName, relativeFile, specifier, applicationPackages);
       if (reason === undefined) {
         continue;
       }
