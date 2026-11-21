@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import type { SessionDetailAnchorResult } from '@ai-usage/report-core/session-detail';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import {
@@ -73,9 +74,6 @@ const defaultGhDependencies: GhResolverDependencies = {
 
 const unavailable = (reason: Extract<SessionVcsResolveResponse, { status: 'unavailable' }>['reason']) =>
   ({ reason, status: 'unavailable' }) as const;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const providerPullRequests = (stdout: string, repository: SessionVcsRepository): SessionVcsPullRequest[] | null => {
   let parsed: unknown;

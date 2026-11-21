@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { focusedRevisionFingerprint } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import {
@@ -22,8 +23,6 @@ const BOOTSTRAP_GLOB = '**/rpc/report/revisionBootstrap**';
 const CAMPAIGNS = 'main[data-route-shell="campaigns"]';
 const TIMELINE = '[data-project-timeline]';
 const OLDER_CAMPAIGN = '[data-timeline-campaign][data-campaign-key*="period-older-"]';
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 const requestInput = (request: Request): unknown => {
   const serialized = request.postData() ?? new URL(request.url()).searchParams.get('data');

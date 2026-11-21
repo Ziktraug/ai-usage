@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 /**
  * Re-applying a form's edits onto newer settings. A draft is bound to the revision it was read
  * from (its base); when the settings move on while it is dirty, the operator chooses: drop the
@@ -70,9 +71,6 @@ export const stableJson = (value: unknown): string => {
 
 /** Structural equality of two drafts (or parts of them); key order and `undefined` fields do not count. */
 export const sameDraft = (left: unknown, right: unknown): boolean => stableJson(left) === stableJson(right);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 type Entry = Record<string, unknown> & DraftEntry;
 

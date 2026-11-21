@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import AxeBuilder from '@axe-core/playwright';
 import type { APIRequestContext, Locator, Page, Request, Response } from '@playwright/test';
@@ -48,9 +49,6 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
  * fetched the chunk; Retry itself re-imports the module URL, which the served route answers.
  */
 const BROWSER_CHUNK_LOAD_ATTEMPTS = 2;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const drawerFor = (page: Page): Locator => page.getByRole('dialog', { name: 'Session details', exact: true });
 

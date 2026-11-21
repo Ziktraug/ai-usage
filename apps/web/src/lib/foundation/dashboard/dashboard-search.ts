@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import {
   isLocalTimeHour,
   isLocalTimeWeekday,
@@ -166,9 +167,6 @@ const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', '90d', 'cu
 const dateRangeModeSet = new Set<string>(dateRangeModes);
 const fieldFilterKeySet = new Set<string>(fieldFilterKeys);
 const dashboardTabSet = new Set<string>(dashboardTabs);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const cleanString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 

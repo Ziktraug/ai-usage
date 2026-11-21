@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import type { APIRequestContext, CDPSession, Page, Request, Response } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { rpcStringFieldValues } from './rpc-test-transport';
@@ -25,9 +26,6 @@ interface SessionQueryPerfPhaseStats {
   p95Ms: number;
   totalMs: number;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const requireNonNegativeNumber = (value: unknown, label: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {

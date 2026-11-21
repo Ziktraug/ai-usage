@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import AxeBuilder from '@axe-core/playwright';
@@ -31,8 +32,6 @@ const saveMeasurements = async (testInfo: TestInfo, name: string, measurements: 
   await writeFile(path, JSON.stringify(measurements, null, 2));
   await testInfo.attach(name, { contentType: 'application/json', path });
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 interface PageObservation {
   readonly bytes: number;
