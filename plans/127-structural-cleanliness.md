@@ -34,7 +34,7 @@
 | P2 | Split `packages/usage-store/src/index.ts` into owned modules (move-only) | L | P1 | DONE (merged into the integration branch at `8bc3be99`) |
 | P3 | Move the flat `apps/web/src/*.ts` root into `lib/features` and `lib/foundation` | M–L | P1 | DONE (merged into the integration branch at `9bf9a653`) |
 | P4 | Extract the `campaigns-page.svelte` script into tested controller modules | M | P3 | TODO |
-| P5 | Decompose the worst-complexity functions behind their existing tests | L | P1; P2 for any `usage-store` file | TODO |
+| P5 | Decompose the worst-complexity functions behind their existing tests | L | P1; P2 for any `usage-store` file | DONE (merged into the integration branch; 271 → 264 suppressed functions) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason).
 
@@ -1111,3 +1111,83 @@ returned no code defect. Three points are recorded here on its advice:
 - ADRs 0004, 0005 and 0046 still link to the old root paths; ADRs are records
   and were not edited. `browser-runtime-mode.ts` and `render-test-module.ts`
   have no importer and were moved, not deleted.
+
+### 2026-11-21 — P5 executed (branch `refactor/decompose-worst-functions`)
+
+Base: `184b1610` (P1 outcome). The integration branch `refactor/structural-cleanliness`
+has since gained `ffacf003` (plan doc) and the P2 merge `8bc3be99`; P5 touches none of
+their files and `git merge-tree` against it is clean.
+
+All seven targets now pass `bun run check` without their `legacy, plan 127` suppression.
+Scores were read with the repository Biome 2.5.15 (score of the function at the former
+suppression site; "largest new" is the highest-scoring function the extraction created).
+
+| # | Target | Before | After | Largest new | Commit |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `local-machine` `visit` | 245 | 7 | `classifyStartedTask` 20 | `85c2f4b0` |
+| 2 | `local-collectors` `readCodexSessions` use body | 114 | 6 (`readAndRetainCodexRollouts`) | `readListedCodexRollouts` 17 | `9bb3c1b6` |
+| 3 | `local-collectors` `readCodexUsageSessionsResultWith` body | 85 | 7 | `codexCollectedSession` 15 | `7b197676` |
+| 4 | `usage-engine-runtime` pull request source run | 102 | 20 (`runPullRequestSource`) | `discoverAccountPullRequests` 15 | `822e17a2` |
+| 5 | `usage-engine-runtime` session source run | 97 | 10 (`runSessionSource`) | `retireDeclaredSessions` 14 | `2bc44d62` |
+| 6 | `usage-engine-runtime` Jira source run | 85 | 13 (`runJiraIssueSource`) | `observeJiraCandidates` 17 | `046e7b86` |
+| 7 | `report-core` `topLevelArrayExceedsLimit` | 125 | 13 | `scanArrayCharacter` 20 | `4f714d36` |
+
+Debt counter: 271 → 264 (`git grep -c '…legacy, plan 127' -- ':!plans'`).
+
+Method notes:
+
+- Biome adds one nesting level per enclosing function, so a body nested inside
+  `withPerfSpan(…, Effect.gen(…))` or `run: (context) => Effect.gen(…)` pays 3–4 per `if`.
+  Targets 2–6 were therefore hoisted to module level with explicit arguments; the mutable
+  locals of target 2 became one `CodexSessionReadPass` object plus a read-only
+  `CodexSessionReadContext`, created once per pass. Target 1 kept the parser's existing
+  closure style (every helper there already closes over the parser's `let` state); the new
+  handlers are created once per parser, never per line.
+- New per-call allocations: one `Effect.gen` per rollout read that misses the cache
+  (target 2) and one per phase per source run (targets 4–6). None per history line. Target 7
+  allocates one state object per keyed-array scan and calls a function per array character.
+- One structural, not behavioural, deviation: in `visit` the two early `return`s of the
+  `task_started` branch now return from `startTask`; `visitTaskRecord` then tests
+  `payload.type` against `task_complete`/`turn_aborted`/`token_count`, which a
+  `task_started` payload (a JSON-parsed plain object) cannot match. In target 7 the
+  `else if` chain became early-returning `if`s with the same conditions in the same order.
+
+Characterization tests added first (each passed on unchanged code, committed separately):
+
+- `87a904cf` `packages/local-machine/src/internal/codex-history-parser.test.ts` (new): the
+  open-task capacity branch of `task_started` (evict oldest without context, drop when all
+  have context, restart an open task).
+- `732e6dc3` `packages/usage-engine-runtime/src/source-adapters.test.ts`, describe
+  `source run branches (plan 127 characterization)`: rejected Codex work observations fail the
+  session pass; a pull request source whose `gh` vanished returns the unavailable result
+  without running `gh`; a Jira pass whose detail reads find no `acli` records a disabled run.
+- `fb9cd03e` `packages/report-core/src/portable-usage.test.ts`: one case covering element
+  shapes, the close-time limit, unreadable strings, unterminated arrays and the key position.
+
+Branches still without line coverage (all moved verbatim): `visit`'s undated-catalogue and
+unreadable-exposure branches are covered only by `local-machine` tests; in target 2 the
+`Effect.sleep(0)` slice yield (timing-dependent); in target 3 the `lastObservedAt` fallback
+for a rejected session without `lastRejectedMetricAt`; in targets 4–6 the wait-truncated,
+wait-unproven, branch-reconcile truncated/failed, identity-uncertain and
+`rowRetirement.storeRefused` warning ternaries, and the non-Codex `collection` spread.
+
+Test counts (base → after): `local-machine` 382 → 385, `local-collectors` 613 → 613,
+`usage-engine-runtime` 390 → 393, `report-core` 886 → 887, all 0 fail. One full
+`usage-engine-runtime` run after target 5 had a 30 s timeout in
+`review-attempts.test.ts` ("a restart with the review still running…"); that file does not
+import `source-adapters` and passed 17/17 when rerun alone.
+
+Orchestrator review of P5 (2026-11-21): the diff touches only the four source
+files and their three test files; the test diff is additions only (zero
+removed lines); no suppression was added. The three characterization test
+commits were checked out at their own commits, where the code under test is
+still the unrefactored base, and pass there (3/3, 3/3, 3/3). Two adversarial
+reviews (agent plus Codex per refactor commit) returned no confirmed finding.
+Codex's differential runs against each parent commit matched: 1,608 parser
+comparisons for `visit`, 295 + 288 + 273 in-memory scenarios for the three
+source runs, and 600,030 scanner comparisons. Branches that remain protected
+by reading only, not by a test: the `Effect.sleep(0)` slice yield and the
+`lastObservedAt` fallback in the Codex collector; in the source adapters the
+wait-truncated and wait-unproven warnings, branch reconciliation truncated or
+failed, identity-uncertain, the `rowRetirement.storeRefused` warning and the
+non-Codex work-observation `collection` spread.
