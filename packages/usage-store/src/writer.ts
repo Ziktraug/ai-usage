@@ -243,14 +243,14 @@ export {
   recordJiraSyncState,
   recordWorkFactRun,
 } from './work-fact-store';
+export type { QueryActiveWorkThreadLinksInput, QueryActiveWorkThreadLinksResult } from './work-thread-reads';
+export { queryActiveWorkThreadLinks, queryWorkThreadsPage } from './work-thread-reads';
 export type {
   ApplyWorkThreadWaitObservationsInput,
   ApplyWorkThreadWaitObservationsResult,
   AttachDeclaredWorkThreadSessionsInput,
   AttachDeclaredWorkThreadSessionsResult,
   DeclaredWorkThreadSession,
-  QueryActiveWorkThreadLinksInput,
-  QueryActiveWorkThreadLinksResult,
   QueryWorkThreadWaitCandidatesInput,
   QueryWorkThreadWaitCandidatesResult,
   ReconcileWorkBranchesInput,
@@ -262,9 +262,7 @@ export {
   applyWorkThreadCommand,
   applyWorkThreadWaitObservations,
   attachDeclaredWorkThreadSessions,
-  queryActiveWorkThreadLinks,
   queryJiraIntake,
-  queryWorkThreadsPage,
   queryWorkThreadWaitCandidates,
   reconcileWorkBranches,
   recordJiraIntake,

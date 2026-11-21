@@ -208,23 +208,24 @@ export { MAX_WORK_SCOPE_CHECKOUTS, type WorkSessionReadScope } from './work-sess
 export type {
   QueryWorkThreadByIdInput,
   QueryWorkThreadLinksInput,
-  QueryWorkThreadSessionEvidenceBatchInput,
-  QueryWorkThreadSessionEvidenceInput,
   QueryWorkThreadsPageInput,
   QueryWorkThreadsPageResult,
   WorkThreadPageRow,
-  WorkThreadSessionEvidence,
-  WorkThreadSessionEvidenceBatchEntry,
-} from './work-thread-store';
+} from './work-thread-reads';
 export {
   countWorkThreads,
-  queryJiraIntake,
   queryWorkThreadById,
   queryWorkThreadCombinations,
   queryWorkThreadCombineSuggestions,
   queryWorkThreadEvents,
   queryWorkThreadLinks,
   queryWorkThreadProjects,
-  queryWorkThreadSessionEvidence,
   queryWorkThreadsPage,
+} from './work-thread-reads';
+export type {
+  QueryWorkThreadSessionEvidenceBatchInput,
+  QueryWorkThreadSessionEvidenceInput,
+  WorkThreadSessionEvidence,
+  WorkThreadSessionEvidenceBatchEntry,
 } from './work-thread-store';
+export { queryJiraIntake, queryWorkThreadSessionEvidence } from './work-thread-store';

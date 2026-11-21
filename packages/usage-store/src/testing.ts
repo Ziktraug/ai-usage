@@ -45,10 +45,5 @@ export {
   queryWorkFactRunStates,
   recordWorkFactRun,
 } from './work-fact-store';
-export {
-  attachDeclaredWorkThreadSessions,
-  queryWorkThreadById,
-  queryWorkThreadEvents,
-  queryWorkThreadLinks,
-  reconcileWorkBranches,
-} from './work-thread-store';
+export { queryWorkThreadById, queryWorkThreadEvents, queryWorkThreadLinks } from './work-thread-reads';
+export { attachDeclaredWorkThreadSessions, reconcileWorkBranches } from './work-thread-store';

@@ -31,12 +31,12 @@ import {
   queryWorkThreadsPage,
 } from './reader';
 import { workFactSchemaSql } from './work-fact-schema';
+import type { WorkThreadCombineSuggestionEntry } from './work-thread-reads';
 import { workThreadSchemaSql } from './work-thread-schema';
 import {
   applyWorkThreadCommand,
   queryWorkThreadSessionEvidence,
   seedWorkThreads,
-  type WorkThreadCombineSuggestionEntry,
   type WorkThreadSeed,
 } from './work-thread-store';
 import {
