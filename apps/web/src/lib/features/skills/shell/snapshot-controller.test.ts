@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { QueryObserver } from '@tanstack/svelte-query';
-import { parseSkillSnapshotResult } from '../../../../skills-client-contracts';
 import { createWebQueryClient } from '../../../query/client';
 import { skillsSnapshotKey } from '../../../query/options/skills';
 import { webQueryPolicies } from '../../../query/policies';
+import { parseSkillSnapshotResult } from '../skills-client-contracts';
 import { createSkillsSnapshotController } from './snapshot-controller';
 import { syntheticSnapshot } from './synthetic-fixture.test-helper';
 

@@ -23,7 +23,7 @@ import type {
   UnmanagedEntry,
 } from '@ai-usage/skills';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
-import type { KnownSkillProjectPath } from './server/skills-contracts';
+import type { KnownSkillProjectPath } from '../../../server/skills-contracts';
 
 export type SkillSnapshotResult =
   | { ok: true; data: SkillManagementSnapshot }

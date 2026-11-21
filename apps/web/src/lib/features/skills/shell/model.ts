@@ -3,7 +3,6 @@ import type {
   KnownSkillProjectPath,
   ProjectSkillInventory as WireProjectSkillInventory,
 } from '@ai-usage/web-contract/skills';
-import { parseProjectInventoriesResult, parseSkillSnapshotResult } from '../../../../skills-client-contracts';
 import {
   buildSkillTree,
   findGlobalSkill,
@@ -15,6 +14,7 @@ import {
   selectionKey,
   skillSelectionFromPath,
 } from '../../../../skills-page-model';
+import { parseProjectInventoriesResult, parseSkillSnapshotResult } from '../skills-client-contracts';
 
 /**
  * What the URL selects, if anything.

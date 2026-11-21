@@ -1,6 +1,9 @@
 import type { SkillManagementSnapshot, SkillMarkdownDocument } from '@ai-usage/skills';
-import type { StateSubscription } from './lib/foundation/subscription';
-import type { SkillMarkdownSaveResult as SkillMarkdownSaveData, SkillsServerResult } from './server/skills-contracts';
+import type {
+  SkillMarkdownSaveResult as SkillMarkdownSaveData,
+  SkillsServerResult,
+} from '../../../server/skills-contracts';
+import type { StateSubscription } from '../../foundation/subscription';
 
 export type SkillMarkdownDocumentResult = SkillsServerResult<SkillMarkdownDocument>;
 
