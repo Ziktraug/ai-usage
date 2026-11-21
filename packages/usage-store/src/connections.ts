@@ -312,16 +312,24 @@ export interface UsageStoreConnectionsForTesting {
 
 const connectionsForTesting = new Map<string, UsageStoreConnectionsForTesting>();
 
-/** Test seam: route the reader and writer of one store path through a fixture. Package internal. */
+/**
+ * Test seam: route the reader and writer of one store path through a fixture. Package internal. It covers
+ * `withUsageStoreReader` and `withUsageStoreWriter` only, not the preview or confirmation opens. One
+ * registration per path: a second one throws. The returned disposer removes exactly this registration.
+ */
 export const setUsageStoreConnectionsForTesting = (
   dbPath: string,
   connections: UsageStoreConnectionsForTesting,
-): void => {
+): (() => void) => {
+  if (connectionsForTesting.has(dbPath)) {
+    throw new Error(`Usage store test connections are already registered for ${dbPath}`);
+  }
   connectionsForTesting.set(dbPath, connections);
-};
-
-export const resetUsageStoreConnectionsForTesting = (): void => {
-  connectionsForTesting.clear();
+  return () => {
+    if (connectionsForTesting.get(dbPath) === connections) {
+      connectionsForTesting.delete(dbPath);
+    }
+  };
 };
 
 export const withUsageStoreWriter = <A>(

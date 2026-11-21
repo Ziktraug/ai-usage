@@ -16,7 +16,7 @@ import {
 } from '@ai-usage/report-core/work-thread';
 import type { WorkThreadListQuery } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import { resetUsageStoreConnectionsForTesting, setUsageStoreConnectionsForTesting } from './connections';
+import { setUsageStoreConnectionsForTesting } from './connections';
 import type { UsageStoreError } from './errors';
 import {
   countWorkThreads,
@@ -50,6 +50,7 @@ import {
 } from './writer';
 
 const roots: string[] = [];
+const connectionDisposers: Array<() => void> = [];
 const NOW = parseCanonicalInstant('2026-10-24T10:00:00.000Z');
 const LATER = parseCanonicalInstant('2026-10-24T11:00:00.000Z');
 const MACHINE = 'thread-machine';
@@ -309,7 +310,9 @@ describe('declared sessions join existing Work threads', () => {
 });
 
 afterEach(async () => {
-  resetUsageStoreConnectionsForTesting();
+  for (const dispose of connectionDisposers.splice(0)) {
+    dispose();
+  }
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
 
@@ -420,22 +423,24 @@ const evidenceFixture = async () => {
   db.query('INSERT INTO served_report_revisions VALUES (?, ?, 1)').run('fixture', NOW);
   let connections = 0;
   let queries = 0;
-  setUsageStoreConnectionsForTesting(dbPath, {
-    withUsageStoreReader: (_path, use) =>
-      Effect.suspend(() => {
-        connections++;
-        const reader = new Database(dbPath, { readonly: true });
-        reader.exec('PRAGMA query_only = ON');
-        return use({
-          exec: (sql: string) => reader.exec(sql),
-          query: (sql: string) => {
-            queries++;
-            return reader.query(sql) as unknown as ReturnType<Parameters<typeof use>[0]['query']>;
-          },
-        } as unknown as Parameters<typeof use>[0]).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
-      }),
-    withUsageStoreWriter: (_path, use) => use(db as unknown as Parameters<typeof use>[0]),
-  });
+  connectionDisposers.push(
+    setUsageStoreConnectionsForTesting(dbPath, {
+      withUsageStoreReader: (_path, use) =>
+        Effect.suspend(() => {
+          connections++;
+          const reader = new Database(dbPath, { readonly: true });
+          reader.exec('PRAGMA query_only = ON');
+          return use({
+            exec: (sql: string) => reader.exec(sql),
+            query: (sql: string) => {
+              queries++;
+              return reader.query(sql) as unknown as ReturnType<Parameters<typeof use>[0]['query']>;
+            },
+          } as unknown as Parameters<typeof use>[0]).pipe(Effect.ensuring(Effect.sync(() => reader.close())));
+        }),
+      withUsageStoreWriter: (_path, use) => use(db as unknown as Parameters<typeof use>[0]),
+    }),
+  );
   const store = {
     applyWorkThreadCommand,
     queryActiveWorkThreadLinks,

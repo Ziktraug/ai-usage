@@ -9,9 +9,15 @@ import {
   MAX_CODEX_WORK_SESSION_FILTER,
   queryCodexWorkObservations,
 } from './codex-work-store';
-import { resetUsageStoreConnectionsForTesting, setUsageStoreConnectionsForTesting } from './connections';
+import { setUsageStoreConnectionsForTesting } from './connections';
 
-afterEach(resetUsageStoreConnectionsForTesting);
+const connectionDisposers: Array<() => void> = [];
+
+afterEach(() => {
+  for (const dispose of connectionDisposers.splice(0)) {
+    dispose();
+  }
+});
 
 const at = (minute: number) =>
   canonicalInstantFromDate(new Date(`2026-10-22T10:${String(minute).padStart(2, '0')}:00.000Z`));
@@ -41,16 +47,18 @@ const observation = (): CodexWorkObservation => ({
 const fixture = () => {
   const db = new Database(':memory:');
   db.exec(codexWorkSchemaSql);
-  setUsageStoreConnectionsForTesting(':memory:', {
-    withUsageStoreWriter: (_path, use) => {
-      db.exec('PRAGMA query_only = OFF');
-      return use(db as unknown as Parameters<typeof use>[0]);
-    },
-    withUsageStoreReader: (_path, use) => {
-      db.exec('PRAGMA query_only = ON');
-      return use(db as unknown as Parameters<typeof use>[0]);
-    },
-  });
+  connectionDisposers.push(
+    setUsageStoreConnectionsForTesting(':memory:', {
+      withUsageStoreWriter: (_path, use) => {
+        db.exec('PRAGMA query_only = OFF');
+        return use(db as unknown as Parameters<typeof use>[0]);
+      },
+      withUsageStoreReader: (_path, use) => {
+        db.exec('PRAGMA query_only = ON');
+        return use(db as unknown as Parameters<typeof use>[0]);
+      },
+    }),
+  );
   return { db, importCodexWorkObservations, queryCodexWorkObservations };
 };
 

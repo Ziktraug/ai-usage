@@ -4,7 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
-import { initializeUsageStore, migrateWriterDatabase } from './connections';
+import {
+  initializeUsageStore,
+  migrateWriterDatabase,
+  setUsageStoreConnectionsForTesting,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+} from './connections';
 import { UsageStoreError } from './errors';
 import { createTrackedSqliteDatabase, type RawSqliteDatabase } from './sqlite-database';
 
@@ -70,6 +76,58 @@ describe('the writer migration boundary', () => {
       expect(failure).toMatchObject({ operation: 'openUsageStoreWriter', reason: 'migration-failure' });
     } finally {
       db.close(true);
+    }
+  });
+});
+
+describe('the connection test seam', () => {
+  const fixtureConnection =
+    (label: string) =>
+    <A>(_dbPath: string, _use: unknown): Effect.Effect<A, UsageStoreError> =>
+      Effect.succeed(label as A);
+
+  test('refuses a second registration for a path that already has one', () => {
+    const dispose = setUsageStoreConnectionsForTesting('/fixture/seam-double.sqlite', {
+      withUsageStoreReader: fixtureConnection('first'),
+    });
+    try {
+      expect(() =>
+        setUsageStoreConnectionsForTesting('/fixture/seam-double.sqlite', {
+          withUsageStoreReader: fixtureConnection('second'),
+        }),
+      ).toThrow('Usage store test connections are already registered for /fixture/seam-double.sqlite');
+    } finally {
+      dispose();
+    }
+  });
+
+  test('the disposer removes exactly its own registration', async () => {
+    const disposeFirst = setUsageStoreConnectionsForTesting('/fixture/seam-first.sqlite', {
+      withUsageStoreReader: fixtureConnection('first'),
+    });
+    const disposeSecond = setUsageStoreConnectionsForTesting('/fixture/seam-second.sqlite', {
+      withUsageStoreWriter: fixtureConnection('second'),
+    });
+    try {
+      disposeFirst();
+      const reopened = await Effect.runPromise(
+        Effect.result(withUsageStoreReader('/fixture/seam-first.sqlite', () => Effect.succeed('fixture'))),
+      );
+      expect(reopened._tag === 'Failure' ? reopened.failure.reason : reopened).toBe('store-missing');
+      expect(
+        await Effect.runPromise(withUsageStoreWriter('/fixture/seam-second.sqlite', () => Effect.succeed('real'))),
+      ).toBe('second');
+      // A disposer run again does not remove a later registration of the same path.
+      const disposeAgain = setUsageStoreConnectionsForTesting('/fixture/seam-first.sqlite', {
+        withUsageStoreReader: fixtureConnection('again'),
+      });
+      disposeFirst();
+      expect(
+        await Effect.runPromise(withUsageStoreReader('/fixture/seam-first.sqlite', () => Effect.succeed('real'))),
+      ).toBe('again');
+      disposeAgain();
+    } finally {
+      disposeSecond();
     }
   });
 });
