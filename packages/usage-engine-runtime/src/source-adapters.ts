@@ -342,26 +342,25 @@ const cursorOptions = (
     Effect.mapError((cause) => sourceFailure('cursor.sessions', cause)),
   );
 
+/** What one session-source pass collected from its harness. */
+interface SessionPassCollection {
+  // Optional, and deliberately so: a harness that cannot observe skills
+  // (Cursor) omits this rather than reporting an empty list, which would be
+  // indistinguishable from having observed nothing (ADR 0022).
+  observationCompleteness?: SkillObservationCollectionCompleteness;
+  /** Set by an incremental collector whose pass returned the observations of changed inputs only. */
+  observationScope?: 'changed';
+  observations?: readonly SkillObservation[];
+  /** Collector-declared retirements (ADR 0089); absent or empty when the pass retires nothing. */
+  retiredSourceSessionIds?: readonly string[];
+  rows: CollectorRow[];
+  warnings: readonly SanitizableSourceWarning[];
+  workObservations?: readonly CodexWorkObservation[];
+}
+
 const collectHarness = (
   adapter: HarnessAdapter,
-): Effect.Effect<
-  {
-    workObservations?: readonly CodexWorkObservation[];
-    // Optional, and deliberately so: a harness that cannot observe skills
-    // (Cursor) omits this rather than reporting an empty list, which would be
-    // indistinguishable from having observed nothing (ADR 0022).
-    observationCompleteness?: SkillObservationCollectionCompleteness;
-    /** Set by an incremental collector whose pass returned the observations of changed inputs only. */
-    observationScope?: 'changed';
-    observations?: readonly SkillObservation[];
-    /** Collector-declared retirements (ADR 0089); absent or empty when the pass retires nothing. */
-    retiredSourceSessionIds?: readonly string[];
-    rows: CollectorRow[];
-    warnings: readonly SanitizableSourceWarning[];
-  },
-  unknown,
-  LocalHistoryStorageService
-> => {
+): Effect.Effect<SessionPassCollection, unknown, LocalHistoryStorageService> => {
   if (adapter.collectResult) {
     return adapter.collectResult;
   }
@@ -443,13 +442,7 @@ export const prepareSkillObservationImport = (input: {
   };
 };
 
-/**
- * Exported for the adapter-level tests: they inject an adapter whose collection carries
- * `retiredSourceSessionIds` and check the list reaches the store without depending on what the
- * shipped collectors (Claude, Codex and OpenCode declare retirements; Cursor never does) happen to
- * retire. The registry builds the real sources through `createScheduledSourceRegistry`.
- */
-export const createSessionSource = (input: {
+interface SessionSourceInput {
   adapter: () => Effect.Effect<HarnessAdapter, SourceRunError>;
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
@@ -458,297 +451,389 @@ export const createSessionSource = (input: {
   machine: UsageMachine;
   now: () => Date;
   storage: LocalHistoryStorageService;
-}): ScheduledSource => {
+}
+
+const collectSessionSource = (
+  input: SessionSourceInput,
+  memory: SessionSourceMemory,
+  adapter: HarnessAdapter,
+  complete: boolean,
+) => {
+  if (memory.collector === undefined) {
+    memory.collector = adapter.createIncrementalCollector?.() ?? null;
+  }
+  return withPerfSpan(
+    `aiUsage.engine.${input.id}.collect`,
+    memory.collector === null ? collectHarness(adapter) : memory.collector({ complete }),
+    (result) => ({
+      complete,
+      observations: result.observations?.length ?? 0,
+      retiredSourceSessionIds: result.retiredSourceSessionIds?.length ?? 0,
+      rows: result.rows.length,
+      workObservations: result.workObservations?.length ?? 0,
+    }),
+  ).pipe(
+    Effect.provideService(LocalHistoryStorage, input.storage),
+    Effect.mapError((cause) => sourceFailure(input.id, cause)),
+  );
+};
+
+/**
+ * Rows sharing an identity are imported together every time: which one the store keeps
+ * depends on their order, which one fingerprint per identity cannot stand for.
+ */
+const rememberedSessionIdentity = (
+  rowIdentities: readonly (string | null)[],
+  identityCounts: ReadonlyMap<string, number>,
+  index: number,
+): string | null => {
+  const identity = rowIdentities[index] ?? null;
+  return identity !== null && identityCounts.get(identity) === 1 ? identity : null;
+};
+
+const countSessionIdentities = (rowIdentities: readonly (string | null)[]): Map<string, number> => {
+  const identityCounts = new Map<string, number>();
+  for (const identity of rowIdentities) {
+    if (identity !== null) {
+      identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
+    }
+  }
+  return identityCounts;
+};
+
+const rememberImportedSessionRows = (
+  memory: SessionSourceMemory,
+  importEveryRow: boolean,
+  importBucket: number,
+  rowIdentities: readonly (string | null)[],
+  rowFingerprints: readonly string[],
+  identityCounts: ReadonlyMap<string, number>,
+): void => {
+  if (importEveryRow) {
+    // Rebuilt, not merged: a session this pass did not emit missed its heartbeat, so it must
+    // be imported when it comes back.
+    memory.imported = new Map();
+    memory.completeImportBucket = importBucket;
+  }
+  for (const [index, fingerprint] of rowFingerprints.entries()) {
+    const identity = rememberedSessionIdentity(rowIdentities, identityCounts, index);
+    if (identity !== null) {
+      memory.imported.set(identity, fingerprint);
+    }
+  }
+  // The store now holds the last of the rows that shared an identity, not the row this source
+  // remembered for it: the next single row under that identity must be imported.
+  for (const [identity, count] of identityCounts) {
+    if (count > 1) {
+      memory.imported.delete(identity);
+    }
+  }
+};
+
+const importSessionRows = (
+  input: SessionSourceInput,
+  memory: SessionSourceMemory,
+  rows: CollectorRow[],
+  harnessKey: HarnessAdapter['metadata']['key'],
+  complete: boolean,
+) =>
+  Effect.gen(function* () {
+    const importedAt = input.now();
+    const importBucket = Math.floor(importedAt.getTime() / USAGE_ROW_FRESHNESS_HEARTBEAT_MS);
+    // A row is left out only when the store would classify it unchanged and write nothing: this
+    // source imported the same row before, no one rewrote this harness's rows since (the
+    // watermark), and its hourly freshness heartbeat is not due (same clock-hour bucket as the
+    // last pass that imported every row). Anything else imports every row, as before.
+    const watermarkBefore = complete
+      ? null
+      : yield* queryLocalRowsWatermark({ dbPath: input.dbPath, harnessKey, machineId: input.machine.id }).pipe(
+          Effect.mapError((cause) => sourceFailure(input.id, cause)),
+        );
+    const importEveryRow =
+      complete || memory.completeImportBucket !== importBucket || !sameWatermark(watermarkBefore, memory.watermark);
+    const rowIdentities = rows.map((row) => sessionRowIdentity(row.source?.harnessKey, row.source?.sourceSessionId));
+    const rowFingerprints = rows.map(sessionRowFingerprint);
+    const identityCounts = countSessionIdentities(rowIdentities);
+    const rowsToImport = importEveryRow
+      ? rows
+      : rows.filter((_row, index) => {
+          const identity = rememberedSessionIdentity(rowIdentities, identityCounts, index);
+          return identity === null || memory.imported.get(identity) !== rowFingerprints[index];
+        });
+    const imported = yield* withPerfSpan(
+      `aiUsage.engine.${input.id}.importLocalRows`,
+      importEveryRow || rowsToImport.length > 0
+        ? importLocalRows({
+            dbPath: input.dbPath,
+            importedAt,
+            machine: input.machine,
+            rows: rowsToImport,
+          })
+        : Effect.succeed(emptyLocalImport()),
+      (result) => ({
+        fleetChanged: result.fleetChanged,
+        inserted: result.inserted,
+        leftInStore: rows.length - rowsToImport.length,
+        rows: rowsToImport.length,
+        unchanged: result.unchanged,
+        updated: result.updated,
+      }),
+    ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+    rememberImportedSessionRows(memory, importEveryRow, importBucket, rowIdentities, rowFingerprints, identityCounts);
+    return imported;
+  });
+
+/**
+ * Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
+ * collector positively declared, never what it stopped emitting. A session both emitted and
+ * declared retired in one pass is a collector defect; the emitted row wins (it was observed as
+ * usage) and the conflict is reported as a warning instead of being dropped silently.
+ */
+const retireDeclaredSessions = (
+  input: SessionSourceInput,
+  context: SourceRunContext,
+  memory: SessionSourceMemory,
+  rows: CollectorRow[],
+  harnessKey: HarnessAdapter['metadata']['key'],
+  declaredRetirements: readonly string[],
+) =>
+  Effect.gen(function* () {
+    const emittedSessionIds = new Set(
+      rows.flatMap((row) => (row.source?.sourceSessionId == null ? [] : [row.source.sourceSessionId])),
+    );
+    const conflictingRetirements = declaredRetirements.filter((sessionId) => emittedSessionIds.has(sessionId));
+    const retirements = declaredRetirements.filter((sessionId) => !emittedSessionIds.has(sessionId));
+    yield* abortIfRequested(context.signal);
+    const retired = yield* withPerfSpan(
+      `aiUsage.engine.${input.id}.retireLocalRows`,
+      retireLocalRows({
+        dbPath: input.dbPath,
+        harnessKey,
+        machine: input.machine,
+        retiredAt: input.now(),
+        sourceSessionIds: retirements,
+      }),
+      (result) => ({ declared: retirements.length, retired: result.retired, skipped: result.skipped }),
+    ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+    // A retired session's stored row is no longer the row this source imported: if the collector
+    // emits the session again, the row must reach the store to become active again.
+    for (const sessionId of retirements) {
+      const identity = sessionRowIdentity(harnessKey, sessionId);
+      if (identity !== null) {
+        memory.imported.delete(identity);
+      }
+    }
+    if (retired.retired > 0) {
+      yield* reportProgress(context, {
+        completed: rows.length,
+        message: `Retired ${retired.retired} ${retired.retired === 1 ? 'session' : 'sessions'} the collector no longer counts as ${input.label}.`,
+        phase: 'importing',
+        total: rows.length,
+      });
+    }
+    const retirementWarnings: SanitizableSourceWarning[] = [
+      ...(conflictingRetirements.length > 0
+        ? [{ operation: 'rowRetirement.emittedAndRetired', rejectedRecords: conflictingRetirements.length }]
+        : []),
+      ...(retired.skipped > 0 ? [{ operation: 'rowRetirement.storeRefused', rejectedRecords: retired.skipped }] : []),
+    ];
+    return { retired, retirementWarnings };
+  });
+
+/**
+ * Skill observations are an auxiliary fact family with their own table,
+ * written on the same engine-owned pass as the rows they were parsed
+ * beside. The engine is the only writer (ADR 0009), so this is the one
+ * place they can reach the store.
+ */
+const importSessionSkillObservations = (
+  input: SessionSourceInput,
+  context: SourceRunContext,
+  harnessKey: HarnessAdapter['metadata']['key'],
+  collection: SessionPassCollection,
+) =>
+  Effect.gen(function* () {
+    const minimumExposureObservedAt = new Date(
+      input.now().getTime() - SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
+    ).toISOString();
+    const preparedObservations = prepareSkillObservationImport({
+      completeness: collection.observationCompleteness ?? {
+        exposure: { rejected: 0, truncated: true },
+        invocation: { rejected: 0, truncated: true },
+      },
+      minimumExposureObservedAt,
+      observations: collection.observations ?? [],
+    });
+    yield* abortIfRequested(context.signal);
+    return collection.observations === undefined
+      ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
+      : yield* withPerfSpan(
+          `aiUsage.engine.${input.id}.importSkillObservations`,
+          importSkillObservations({
+            collection: {
+              completeness: preparedObservations.completeness,
+              harnessKey,
+            },
+            dbPath: input.dbPath,
+            machineId: input.machine.id,
+            minimumExposureObservedAt,
+            observations: preparedObservations.observations,
+          }),
+          (result) => ({
+            inserted: result.inserted,
+            observations: preparedObservations.observations.length,
+            scope: collection.observationScope ?? 'all',
+            unchanged: result.unchanged,
+            updated: result.updated,
+          }),
+        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+  });
+
+const importSessionWorkObservations = (
+  input: SessionSourceInput,
+  context: SourceRunContext,
+  collection: SessionPassCollection,
+  codexCollectionId: string | null,
+) =>
+  Effect.gen(function* () {
+    const importedWork = { changed: 0, rejected: 0 };
+    const workObservations = collection.workObservations ?? [];
+    const observedAt = input.now().toISOString();
+    // The store bound applies to each transaction, not to the user's history. Empty snapshots
+    // must also survive: they clear request evidence from an earlier parse of that session.
+    for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
+      yield* abortIfRequested(context.signal);
+      const observations = workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH);
+      const batch = yield* withPerfSpan(
+        `aiUsage.engine.${input.id}.importCodexWorkObservations`,
+        importCodexWorkObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+          observedAt,
+          observations,
+          ...(codexCollectionId === null
+            ? {}
+            : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
+        }),
+        (result) => ({ changed: result.changed, observations: observations.length, rejected: result.rejected }),
+      ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      importedWork.changed += batch.changed;
+      importedWork.rejected += batch.rejected;
+    }
+    if (importedWork.rejected > 0) {
+      return yield* Effect.fail(
+        sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
+      );
+    }
+    if (codexCollectionId !== null && collection.workObservations !== undefined) {
+      yield* abortIfRequested(context.signal);
+      yield* importCodexWorkObservations({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        observedAt,
+        observations: [],
+        collection: { id: codexCollectionId, phase: 'complete' },
+      }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+    }
+    return importedWork;
+  });
+
+const runSessionSource = (input: SessionSourceInput, memory: SessionSourceMemory, context: SourceRunContext) =>
+  Effect.gen(function* () {
+    // Nothing an earlier pass returned may be taken as recorded unless that pass ended cleanly.
+    const complete = !memory.settled;
+    memory.settled = false;
+    const codexCollectionId = input.id === 'codex.sessions' ? randomUUID() : null;
+    if (codexCollectionId !== null) {
+      yield* importCodexWorkObservations({
+        dbPath: input.dbPath,
+        machineId: input.machine.id,
+        observedAt: input.now().toISOString(),
+        observations: [],
+        collection: { id: codexCollectionId, phase: 'start' },
+      }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+    }
+    yield* reportProgress(context, { phase: 'reading' });
+    const availability = yield* input.detect;
+    if (availability.availability !== 'detected') {
+      return sourceUnavailableResult();
+    }
+    const adapter = yield* input.adapter();
+    const collection = yield* collectSessionSource(input, memory, adapter, complete);
+    yield* abortIfRequested(context.signal);
+    const retentionWarnings =
+      input.id === 'claude.sessions'
+        ? yield* collectClaudeRetentionWarnings.pipe(Effect.provideService(LocalHistoryStorage, input.storage))
+        : [];
+    yield* reportProgress(context, {
+      completed: collection.rows.length,
+      phase: 'normalizing',
+      total: collection.rows.length,
+    });
+    const rows = collection.rows.map(stripRtkContribution).map(stripProjectPath);
+    yield* reportProgress(context, {
+      completed: 0,
+      phase: 'importing',
+      total: rows.length,
+    });
+    yield* abortIfRequested(context.signal);
+    const harnessKey = adapter.metadata.key;
+    const imported = yield* importSessionRows(input, memory, rows, harnessKey, complete);
+    const { retired, retirementWarnings } = yield* retireDeclaredSessions(
+      input,
+      context,
+      memory,
+      rows,
+      harnessKey,
+      collection.retiredSourceSessionIds ?? [],
+    );
+    const importedObservations = yield* importSessionSkillObservations(input, context, harnessKey, collection);
+    const importedWork = yield* importSessionWorkObservations(input, context, collection, codexCollectionId);
+    const warnings = sanitizeSourceWarnings(input.label, [
+      ...collection.warnings,
+      ...retentionWarnings,
+      ...retirementWarnings,
+    ]);
+    // Everything this pass collected is recorded: the next pass may build on it.
+    memory.watermark = yield* queryLocalRowsWatermark({
+      dbPath: input.dbPath,
+      harnessKey,
+      machineId: input.machine.id,
+    }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+    // The store adds the observations it refused to the completeness it records. A pass that
+    // delivers changed inputs only reports the same figure as a full one as long as nothing
+    // delivered before was refused; once the store refuses one, passes are complete until it
+    // accepts everything again.
+    memory.settled = importedObservations.rejected === 0;
+    return {
+      changed:
+        imported.inserted > 0 ||
+        imported.updated > 0 ||
+        retired.retired > 0 ||
+        importedObservations.inserted > 0 ||
+        importedObservations.updated > 0 ||
+        importedWork.changed > 0 ||
+        importedObservations.stateChanged,
+      inputCount: collection.rows.length,
+      outputCount: rows.length,
+      servedProjectionChanged: imported.fleetChanged,
+      warnings,
+    };
+  });
+
+/**
+ * Exported for the adapter-level tests: they inject an adapter whose collection carries
+ * `retiredSourceSessionIds` and check the list reaches the store without depending on what the
+ * shipped collectors (Claude, Codex and OpenCode declare retirements; Cursor never does) happen to
+ * retire. The registry builds the real sources through `createScheduledSourceRegistry`.
+ */
+export const createSessionSource = (input: SessionSourceInput): ScheduledSource => {
   const memory = createSessionSourceMemory();
   return {
     cadence: Duration.millis(getCollectionSourceDefinition(input.id).cadenceMs),
     detect: input.detect,
     id: input.id,
-    run: (context) =>
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-      Effect.gen(function* () {
-        // Nothing an earlier pass returned may be taken as recorded unless that pass ended cleanly.
-        const complete = !memory.settled;
-        memory.settled = false;
-        const codexCollectionId = input.id === 'codex.sessions' ? randomUUID() : null;
-        if (codexCollectionId !== null) {
-          yield* importCodexWorkObservations({
-            dbPath: input.dbPath,
-            machineId: input.machine.id,
-            observedAt: input.now().toISOString(),
-            observations: [],
-            collection: { id: codexCollectionId, phase: 'start' },
-          }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        }
-        yield* reportProgress(context, { phase: 'reading' });
-        const availability = yield* input.detect;
-        if (availability.availability !== 'detected') {
-          return sourceUnavailableResult();
-        }
-        const adapter = yield* input.adapter();
-        if (memory.collector === undefined) {
-          memory.collector = adapter.createIncrementalCollector?.() ?? null;
-        }
-        const collection = yield* withPerfSpan(
-          `aiUsage.engine.${input.id}.collect`,
-          memory.collector === null ? collectHarness(adapter) : memory.collector({ complete }),
-          (result) => ({
-            complete,
-            observations: result.observations?.length ?? 0,
-            retiredSourceSessionIds: result.retiredSourceSessionIds?.length ?? 0,
-            rows: result.rows.length,
-            workObservations: result.workObservations?.length ?? 0,
-          }),
-        ).pipe(
-          Effect.provideService(LocalHistoryStorage, input.storage),
-          Effect.mapError((cause) => sourceFailure(input.id, cause)),
-        );
-        yield* abortIfRequested(context.signal);
-        const retentionWarnings =
-          input.id === 'claude.sessions'
-            ? yield* collectClaudeRetentionWarnings.pipe(Effect.provideService(LocalHistoryStorage, input.storage))
-            : [];
-        yield* reportProgress(context, {
-          completed: collection.rows.length,
-          phase: 'normalizing',
-          total: collection.rows.length,
-        });
-        const rows = collection.rows.map(stripRtkContribution).map(stripProjectPath);
-        yield* reportProgress(context, {
-          completed: 0,
-          phase: 'importing',
-          total: rows.length,
-        });
-        yield* abortIfRequested(context.signal);
-        const harnessKey = adapter.metadata.key;
-        const importedAt = input.now();
-        const importBucket = Math.floor(importedAt.getTime() / USAGE_ROW_FRESHNESS_HEARTBEAT_MS);
-        // A row is left out only when the store would classify it unchanged and write nothing: this
-        // source imported the same row before, no one rewrote this harness's rows since (the
-        // watermark), and its hourly freshness heartbeat is not due (same clock-hour bucket as the
-        // last pass that imported every row). Anything else imports every row, as before.
-        const watermarkBefore = complete
-          ? null
-          : yield* queryLocalRowsWatermark({ dbPath: input.dbPath, harnessKey, machineId: input.machine.id }).pipe(
-              Effect.mapError((cause) => sourceFailure(input.id, cause)),
-            );
-        const importEveryRow =
-          complete || memory.completeImportBucket !== importBucket || !sameWatermark(watermarkBefore, memory.watermark);
-        const rowIdentities = rows.map((row) =>
-          sessionRowIdentity(row.source?.harnessKey, row.source?.sourceSessionId),
-        );
-        const rowFingerprints = rows.map(sessionRowFingerprint);
-        const identityCounts = new Map<string, number>();
-        for (const identity of rowIdentities) {
-          if (identity !== null) {
-            identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
-          }
-        }
-        // Rows sharing an identity are imported together every time: which one the store keeps
-        // depends on their order, which one fingerprint per identity cannot stand for.
-        const rememberedIdentity = (index: number): string | null => {
-          const identity = rowIdentities[index] ?? null;
-          return identity !== null && identityCounts.get(identity) === 1 ? identity : null;
-        };
-        const rowsToImport = importEveryRow
-          ? rows
-          : rows.filter((_row, index) => {
-              const identity = rememberedIdentity(index);
-              return identity === null || memory.imported.get(identity) !== rowFingerprints[index];
-            });
-        const imported = yield* withPerfSpan(
-          `aiUsage.engine.${input.id}.importLocalRows`,
-          importEveryRow || rowsToImport.length > 0
-            ? importLocalRows({
-                dbPath: input.dbPath,
-                importedAt,
-                machine: input.machine,
-                rows: rowsToImport,
-              })
-            : Effect.succeed(emptyLocalImport()),
-          (result) => ({
-            fleetChanged: result.fleetChanged,
-            inserted: result.inserted,
-            leftInStore: rows.length - rowsToImport.length,
-            rows: rowsToImport.length,
-            unchanged: result.unchanged,
-            updated: result.updated,
-          }),
-        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        if (importEveryRow) {
-          // Rebuilt, not merged: a session this pass did not emit missed its heartbeat, so it must
-          // be imported when it comes back.
-          memory.imported = new Map();
-          memory.completeImportBucket = importBucket;
-        }
-        for (const [index, fingerprint] of rowFingerprints.entries()) {
-          const identity = rememberedIdentity(index);
-          if (identity !== null) {
-            memory.imported.set(identity, fingerprint);
-          }
-        }
-        // The store now holds the last of the rows that shared an identity, not the row this source
-        // remembered for it: the next single row under that identity must be imported.
-        for (const [identity, count] of identityCounts) {
-          if (count > 1) {
-            memory.imported.delete(identity);
-          }
-        }
-        // Explicit retirement (ADR 0089) follows the import: the store only ever retires what the
-        // collector positively declared, never what it stopped emitting. A session both emitted and
-        // declared retired in one pass is a collector defect; the emitted row wins (it was observed as
-        // usage) and the conflict is reported as a warning instead of being dropped silently.
-        const emittedSessionIds = new Set(
-          rows.flatMap((row) => (row.source?.sourceSessionId == null ? [] : [row.source.sourceSessionId])),
-        );
-        const declaredRetirements = collection.retiredSourceSessionIds ?? [];
-        const conflictingRetirements = declaredRetirements.filter((sessionId) => emittedSessionIds.has(sessionId));
-        const retirements = declaredRetirements.filter((sessionId) => !emittedSessionIds.has(sessionId));
-        yield* abortIfRequested(context.signal);
-        const retired = yield* withPerfSpan(
-          `aiUsage.engine.${input.id}.retireLocalRows`,
-          retireLocalRows({
-            dbPath: input.dbPath,
-            harnessKey,
-            machine: input.machine,
-            retiredAt: input.now(),
-            sourceSessionIds: retirements,
-          }),
-          (result) => ({ declared: retirements.length, retired: result.retired, skipped: result.skipped }),
-        ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        // A retired session's stored row is no longer the row this source imported: if the collector
-        // emits the session again, the row must reach the store to become active again.
-        for (const sessionId of retirements) {
-          const identity = sessionRowIdentity(harnessKey, sessionId);
-          if (identity !== null) {
-            memory.imported.delete(identity);
-          }
-        }
-        if (retired.retired > 0) {
-          yield* reportProgress(context, {
-            completed: rows.length,
-            message: `Retired ${retired.retired} ${retired.retired === 1 ? 'session' : 'sessions'} the collector no longer counts as ${input.label}.`,
-            phase: 'importing',
-            total: rows.length,
-          });
-        }
-        const retirementWarnings: SanitizableSourceWarning[] = [
-          ...(conflictingRetirements.length > 0
-            ? [{ operation: 'rowRetirement.emittedAndRetired', rejectedRecords: conflictingRetirements.length }]
-            : []),
-          ...(retired.skipped > 0
-            ? [{ operation: 'rowRetirement.storeRefused', rejectedRecords: retired.skipped }]
-            : []),
-        ];
-        // Skill observations are an auxiliary fact family with their own table,
-        // written on the same engine-owned pass as the rows they were parsed
-        // beside. The engine is the only writer (ADR 0009), so this is the one
-        // place they can reach the store.
-        const minimumExposureObservedAt = new Date(
-          input.now().getTime() - SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
-        ).toISOString();
-        const preparedObservations = prepareSkillObservationImport({
-          completeness: collection.observationCompleteness ?? {
-            exposure: { rejected: 0, truncated: true },
-            invocation: { rejected: 0, truncated: true },
-          },
-          minimumExposureObservedAt,
-          observations: collection.observations ?? [],
-        });
-        yield* abortIfRequested(context.signal);
-        const importedObservations =
-          collection.observations === undefined
-            ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
-            : yield* withPerfSpan(
-                `aiUsage.engine.${input.id}.importSkillObservations`,
-                importSkillObservations({
-                  collection: {
-                    completeness: preparedObservations.completeness,
-                    harnessKey,
-                  },
-                  dbPath: input.dbPath,
-                  machineId: input.machine.id,
-                  minimumExposureObservedAt,
-                  observations: preparedObservations.observations,
-                }),
-                (result) => ({
-                  inserted: result.inserted,
-                  observations: preparedObservations.observations.length,
-                  scope: collection.observationScope ?? 'all',
-                  unchanged: result.unchanged,
-                  updated: result.updated,
-                }),
-              ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        const importedWork = { changed: 0, rejected: 0 };
-        const workObservations = collection.workObservations ?? [];
-        const observedAt = input.now().toISOString();
-        // The store bound applies to each transaction, not to the user's history. Empty snapshots
-        // must also survive: they clear request evidence from an earlier parse of that session.
-        for (let offset = 0; offset < workObservations.length; offset += MAX_CODEX_WORK_BATCH) {
-          yield* abortIfRequested(context.signal);
-          const observations = workObservations.slice(offset, offset + MAX_CODEX_WORK_BATCH);
-          const batch = yield* withPerfSpan(
-            `aiUsage.engine.${input.id}.importCodexWorkObservations`,
-            importCodexWorkObservations({
-              dbPath: input.dbPath,
-              machineId: input.machine.id,
-              observedAt,
-              observations,
-              ...(codexCollectionId === null
-                ? {}
-                : { collection: { id: codexCollectionId, phase: 'observations' as const } }),
-            }),
-            (result) => ({ changed: result.changed, observations: observations.length, rejected: result.rejected }),
-          ).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-          importedWork.changed += batch.changed;
-          importedWork.rejected += batch.rejected;
-        }
-        if (importedWork.rejected > 0) {
-          return yield* Effect.fail(
-            sourceFailure(input.id, new Error(`Codex request import rejected ${importedWork.rejected} observations`)),
-          );
-        }
-        if (codexCollectionId !== null && collection.workObservations !== undefined) {
-          yield* abortIfRequested(context.signal);
-          yield* importCodexWorkObservations({
-            dbPath: input.dbPath,
-            machineId: input.machine.id,
-            observedAt,
-            observations: [],
-            collection: { id: codexCollectionId, phase: 'complete' },
-          }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        }
-        const warnings = sanitizeSourceWarnings(input.label, [
-          ...collection.warnings,
-          ...retentionWarnings,
-          ...retirementWarnings,
-        ]);
-        // Everything this pass collected is recorded: the next pass may build on it.
-        memory.watermark = yield* queryLocalRowsWatermark({
-          dbPath: input.dbPath,
-          harnessKey,
-          machineId: input.machine.id,
-        }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-        // The store adds the observations it refused to the completeness it records. A pass that
-        // delivers changed inputs only reports the same figure as a full one as long as nothing
-        // delivered before was refused; once the store refuses one, passes are complete until it
-        // accepts everything again.
-        memory.settled = importedObservations.rejected === 0;
-        return {
-          changed:
-            imported.inserted > 0 ||
-            imported.updated > 0 ||
-            retired.retired > 0 ||
-            importedObservations.inserted > 0 ||
-            importedObservations.updated > 0 ||
-            importedWork.changed > 0 ||
-            importedObservations.stateChanged,
-          inputCount: collection.rows.length,
-          outputCount: rows.length,
-          servedProjectionChanged: imported.fleetChanged,
-          warnings,
-        };
-      }),
+    run: (context) => runSessionSource(input, memory, context),
   };
 };
 
