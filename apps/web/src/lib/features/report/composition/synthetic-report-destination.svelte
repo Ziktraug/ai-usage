@@ -26,12 +26,6 @@
     presentFocusedOverviewSessionItem,
     presentServedCampaignDisplayRow,
   } from '../../../../campaign-label-overrides';
-  import { buildCampaignTableRows, buildCampaignViews } from '../../../../dashboard-model';
-  import {
-    type DashboardSearch,
-    primaryDashboardTabFor,
-    serializeDashboardTimeCell,
-  } from '../../../../dashboard-search';
   import {
     machineFreshnessSnapshotFromFocused,
     machineFreshnessStatusLabel,
@@ -46,6 +40,12 @@
     columnVisibilitySearchForVisibility,
     sortFromSortingState,
   } from '../../../../session-table-schema';
+  import { buildCampaignTableRows, buildCampaignViews } from '../../../foundation/dashboard/dashboard-model';
+  import {
+    type DashboardSearch,
+    primaryDashboardTabFor,
+    serializeDashboardTimeCell,
+  } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { withSessionDisplayTitle } from '../../../foundation/presentation/display-title';
   import { applyStateUpdate } from '../../../foundation/table/state';

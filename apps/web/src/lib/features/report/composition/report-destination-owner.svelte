@@ -5,8 +5,8 @@
   import { dev } from '$app/env';
   import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
-  import type { DashboardSearch } from '../../../../dashboard-search';
   import type { RuntimeMode } from '../../../../runtime-mode';
+  import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
     createDashboardSearchNavigation,

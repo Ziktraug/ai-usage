@@ -10,7 +10,7 @@
   } from '@ai-usage/design-system/svelte';
   import { projectBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
-  import type { ProjectGroup } from '../../../../dashboard-analytics';
+  import type { ProjectGroup } from '../../../foundation/dashboard/dashboard-analytics';
   import { fmtNum } from '../../../foundation/presentation/format';
   import ProjectGroupEditor from '../actions/project-group-editor.svelte';
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryFilters, SessionQueryRange } from '@ai-usage/report-core/session-query';
-import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
 import { demoReportPayload } from '../../../../report-data';
+import type { DashboardDateRangeSearch } from '../../../foundation/dashboard/dashboard-search';
 import { rangeBounds } from '../range/report-range-model';
 import { buildExecutiveOverviewModel } from './executive-overview-model';
 import { executivePeriodFor, type OverviewResultScope, overviewResultScope } from './overview-result-scope';

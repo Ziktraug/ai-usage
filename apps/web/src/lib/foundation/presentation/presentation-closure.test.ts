@@ -18,8 +18,8 @@ const FORBIDDEN_RUNTIME_PREFIXES = [
 ] as const;
 const sourceDirectory = fileURLToPath(new URL('../../../', import.meta.url));
 const entryPaths = [
-  'dashboard-analytics.ts',
-  'dashboard-model.ts',
+  'lib/foundation/dashboard/dashboard-analytics.ts',
+  'lib/foundation/dashboard/dashboard-model.ts',
   'lib/features/sessions/dashboard-sort.ts',
   'overview-model.ts',
   'lib/features/report/provider-status-model.ts',

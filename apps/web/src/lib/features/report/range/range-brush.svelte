@@ -19,7 +19,6 @@
   } from '@ai-usage/design-system/svelte';
   import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
   import { untrack } from 'svelte';
-  import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex } from '../../../../date-range';
   import {
     createTimeRangeControlState,
@@ -27,6 +26,7 @@
     type TimeRangeSelectionIndexes,
     transitionTimeRangeControl,
   } from '../../../../time-range-control-state';
+  import type { DashboardDateRangeSearch, DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
   import { fmtDateOnly } from '../../../foundation/presentation/format';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { MetricPeriodComparison, PeriodWindow } from '../../../../dashboard-model';
+import type { MetricPeriodComparison, PeriodWindow } from '../../../foundation/dashboard/dashboard-model';
 import { fmtCompact, fmtDateOnly, fmtMoney } from '../../../foundation/presentation/format';
 import {
   explanationWithCaveat,

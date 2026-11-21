@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dashboardSearchDefaultsFor } from '../../../../dashboard-search';
+import { dashboardSearchDefaultsFor } from '../../../foundation/dashboard/dashboard-search';
 import { activeTimelineSeriesKeys } from './active-timeline-series';
 
 const search = {

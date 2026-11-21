@@ -44,11 +44,6 @@
     presentServedCampaignDisplayRow,
   } from '../../../../campaign-label-overrides';
   import {
-    type DashboardSearch,
-    primaryDashboardTabFor,
-    serializeDashboardTimeCell,
-  } from '../../../../dashboard-search';
-  import {
     machineFreshnessSnapshotFromFocused,
     machineFreshnessStatusLabel,
     machineLabelPresentationForSnapshot,
@@ -59,6 +54,11 @@
     sessionAnalysisTargetForOverviewRow,
     sessionAnalysisTargetForSession,
   } from '../../../../session-analysis-target';
+  import {
+    type DashboardSearch,
+    primaryDashboardTabFor,
+    serializeDashboardTimeCell,
+  } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
     campaignLabelOverridesQueryOptions,

@@ -4,7 +4,7 @@
     FocusedOverviewSessionItem,
     FocusedTimelineSeries,
   } from '@ai-usage/report-core/focused-report-query';
-  import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
+  import type { DashboardDateRangeSearch } from '../../../foundation/dashboard/dashboard-search';
   import type { ProviderStatusView } from '../provider-status-model';
   import ReportPeriodControl from '../range/report-period-control.svelte';
   import OverviewPage from './overview-page.svelte';

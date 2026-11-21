@@ -21,8 +21,8 @@ import {
   usageRowModelApiPriceMeasurements,
   usageRowModelContributions,
 } from '@ai-usage/report-core/usage-row';
-import type { CampaignView } from './dashboard-model';
 import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
+import type { CampaignView } from './lib/foundation/dashboard/dashboard-model';
 import type { DashboardRow, ReportSummary } from './lib/foundation/presentation/report-value';
 
 export interface OverviewHeroData {

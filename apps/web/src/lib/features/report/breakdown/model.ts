@@ -1,7 +1,7 @@
 import { type AnalyticsGroup, processedTokensForAnalytics } from '@ai-usage/report-core/analytics';
 import type { AnalyticsExportRow } from '@ai-usage/report-core/csv';
 import { type ApiPriceMeasurementState, PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
-import type { BreakdownSort } from '../../../../dashboard-search';
+import type { BreakdownSort } from '../../../foundation/dashboard/dashboard-search';
 import { fmtCompact, fmtCount, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   type ApiValuePresentation,

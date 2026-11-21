@@ -1,6 +1,6 @@
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import type { ApiPriceMeasurementState } from '@ai-usage/report-core/provenance';
-import type { BreakdownSort } from '../../../dashboard-search';
+import type { BreakdownSort } from '../../foundation/dashboard/dashboard-search';
 
 export type BreakdownPriceState = ApiPriceMeasurementState | 'unavailable';
 

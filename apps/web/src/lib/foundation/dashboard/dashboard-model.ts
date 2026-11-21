@@ -9,6 +9,17 @@ import {
   sessionCampaignIdentityForRow,
   sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
+import { DAY_MS, type DateBounds, rowMatchesDateBounds } from '../../../date-range';
+import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from '../../../session-table-schema';
+import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../presentation/format';
+import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
+  buildReportSummary,
+  type DashboardRow,
+  type ReportSummary,
+} from '../presentation/report-value';
+import type { TableSortingState } from '../table/state';
 import {
   buildAnalyticsGroups,
   buildHarnessProviderAnalyticsGroups,
@@ -18,17 +29,6 @@ import {
 } from './dashboard-analytics';
 import type { Metric, MetricDelta } from './dashboard-metric-model';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
-import { DAY_MS, type DateBounds, rowMatchesDateBounds } from './date-range';
-import { fmtCompact, fmtMoney, fmtNum, fmtPct } from './lib/foundation/presentation/format';
-import {
-  aggregateApiPriceProvenance,
-  aggregateApiValuePresentation,
-  buildReportSummary,
-  type DashboardRow,
-  type ReportSummary,
-} from './lib/foundation/presentation/report-value';
-import type { TableSortingState } from './lib/foundation/table/state';
-import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 
 export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
   if (key === 'campaign') {

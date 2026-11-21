@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { UsageReportProjectGroup, UsageReportProjectSource } from '@ai-usage/report-core/report-data';
-import type { ProjectGroup } from '../../../dashboard-analytics';
+import type { ProjectGroup } from '../../foundation/dashboard/dashboard-analytics';
 import {
   projectDataQualityLabel,
   projectIdentityPresentation,

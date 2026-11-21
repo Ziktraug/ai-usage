@@ -6,7 +6,6 @@
     SessionQueryRequest,
   } from '@ai-usage/report-core/session-query';
   import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-  import type { DashboardSearch } from '../../../../dashboard-search';
   import {
     sessionAnalysisTargetForPageItem,
     sessionAnalysisTargetForSession,
@@ -16,6 +15,7 @@
     columnVisibilitySearchForVisibility,
     sortFromSortingState,
   } from '../../../../session-table-schema';
+  import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import {

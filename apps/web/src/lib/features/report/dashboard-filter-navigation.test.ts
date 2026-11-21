@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../../dashboard-search';
+import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../foundation/dashboard/dashboard-search';
 import { applyTimelineDimensionFilter } from './dashboard-filter-navigation';
 
 describe('dashboard timeline filter navigation', () => {

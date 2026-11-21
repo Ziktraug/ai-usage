@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { buildCampaignChronology, type SessionPageItem } from '@ai-usage/report-core/session-query';
 import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
-import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../../dashboard-search';
 import { endOfDay, startOfDay } from '../../../date-range';
+import { dashboardSearchDefaultsFor, validateDashboardSearch } from '../../foundation/dashboard/dashboard-search';
 import { barForInterval, buildCampaignTimeline, campaignTimelineRange } from './campaign-timeline-model';
 import { campaignProjectSegments } from './campaign-timeline-projection';
 import { campaignsRequest } from './campaigns-query';

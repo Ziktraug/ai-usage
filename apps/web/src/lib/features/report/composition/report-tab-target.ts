@@ -1,6 +1,6 @@
 import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
-import type { DashboardSearch } from '../../../../dashboard-search';
 import type { TimelineDimension } from '../../../../overview-model';
+import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
 import { parseDashboardSearchUrl } from '../../../foundation/navigation/svelte/dashboard-url';
 import { initialSessionWindowIntent, type SessionWindowIntent } from '../../../query/options/session-window';
 import { sessionRouteFor } from '../../sessions/detail/session-route';

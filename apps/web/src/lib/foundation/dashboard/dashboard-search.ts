@@ -6,8 +6,7 @@ import {
   type SessionOrigin,
   sessionOrigins,
 } from '@ai-usage/report-core/session-query';
-import { type DateRangeMode, parseLocalDate } from './date-range';
-import type { TableSortingState } from './lib/foundation/table/state';
+import { type DateRangeMode, parseLocalDate } from '../../../date-range';
 import {
   isSearchableColumnDiffId,
   isSessionColumnId,
@@ -15,7 +14,8 @@ import {
   type SearchableColumnDiffId,
   type SessionColumnId,
   type SessionColumnVisibilityBase,
-} from './session-table-schema';
+} from '../../../session-table-schema';
+import type { TableSortingState } from '../table/state';
 
 export const fieldFilterKeys = ['campaign', 'provider', 'model', 'project'] as const;
 export type FieldFilterKey = (typeof fieldFilterKeys)[number];

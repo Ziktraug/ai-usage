@@ -1,5 +1,5 @@
 import type { UsageReportProjectGroup } from '@ai-usage/report-core/report-data';
-import type { ProjectGroup } from '../../../dashboard-analytics';
+import type { ProjectGroup } from '../../foundation/dashboard/dashboard-analytics';
 import { fmtNum } from '../../foundation/presentation/format';
 import { breakdownLabelMatchesSearch } from './group-panel-presentation';
 

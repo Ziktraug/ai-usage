@@ -9,7 +9,7 @@ import {
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
-import { dashboardSearchDefaultsFor } from '../../../../dashboard-search';
+import { dashboardSearchDefaultsFor } from '../../../foundation/dashboard/dashboard-search';
 import { initialSessionWindowIntent, type SessionWindowQueryData } from '../../../query/options/session-window';
 import { syntheticCampaignRow } from '../../sessions/table/session-table.fixtures';
 import { sessionsExportScopeLabel } from '../dashboard-breakdown-export';

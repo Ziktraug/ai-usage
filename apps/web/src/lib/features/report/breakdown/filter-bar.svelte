@@ -3,7 +3,7 @@
   import { css } from '@ai-usage/design-system/css';
   import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
-  import type { DashboardSearch } from '../../../../dashboard-search';
+  import type { DashboardSearch } from '../../../foundation/dashboard/dashboard-search';
   import CheckboxFilter from './checkbox-filter.svelte';
   import { shouldFocusReportFilter } from './filter-shortcut';
   import type { BreakdownNavigation } from './navigation';

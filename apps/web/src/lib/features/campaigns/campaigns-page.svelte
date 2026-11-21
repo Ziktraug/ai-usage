@@ -23,7 +23,7 @@
   import { page } from '$app/state';
   import { campaignDisplayLabelFor, indexCampaignLabelOverrides } from '../../../campaign-label-overrides';
   import { campaignMapFixtureGeneratedAt } from '../../../campaign-map-fixture';
-  import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../../dashboard-search';
+  import { type DashboardSearch, dashboardSearchDefaultsFor } from '../../foundation/dashboard/dashboard-search';
   import { dashboardUrlFor, parseDashboardSearchUrl } from '../../foundation/navigation/svelte/dashboard-url';
   import { displayTitle } from '../../foundation/presentation/display-title';
   import { fmtCompact } from '../../foundation/presentation/format';

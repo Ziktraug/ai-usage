@@ -1,6 +1,6 @@
 import { type AnalyticsGroup, compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
 import type { AnalyticsExportRow } from '@ai-usage/report-core/csv';
-import type { BreakdownSort } from '../../../../dashboard-search';
+import type { BreakdownSort } from '../../../foundation/dashboard/dashboard-search';
 import {
   breakdownLabelMatchesSearch,
   filterAndSortBreakdownGroups,

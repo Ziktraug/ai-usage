@@ -1,3 +1,4 @@
+import type { RuntimeMode } from '../../../runtime-mode';
 import {
   breakdownTabFor,
   type DashboardSearch,
@@ -6,8 +7,7 @@ import {
   type PrimaryDashboardTab,
   primaryDashboardTabFor,
   validateDashboardSearch,
-} from '../../../dashboard-search';
-import type { RuntimeMode } from '../../../runtime-mode';
+} from '../../foundation/dashboard/dashboard-search';
 import {
   type DashboardSearchCodec,
   dashboardUrlFor,

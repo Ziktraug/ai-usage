@@ -10,12 +10,12 @@ import {
   presentFocusedOverviewSessionItem,
   presentServedCampaignDisplayRow,
 } from '../../../../campaign-label-overrides';
-import { buildCampaignTableRows } from '../../../../dashboard-model';
 import {
   machineFreshnessSnapshotFromFocused,
   machineLabelPresentationForSnapshot,
 } from '../../../../machine-freshness-presentation';
 import { demoReportPayload } from '../../../../report-data';
+import { buildCampaignTableRows } from '../../../foundation/dashboard/dashboard-model';
 import type { SessionSelectionInput } from '../../sessions/detail/types';
 
 describe('synthetic report campaign presentation', () => {

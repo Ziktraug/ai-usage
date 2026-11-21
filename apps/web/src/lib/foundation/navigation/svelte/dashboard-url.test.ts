@@ -49,7 +49,7 @@ interface SessionSchemaModule {
 
 // Keep Solid-only type dependencies outside Svelte's static closure while still
 // exercising the frozen production parser at runtime.
-const dashboardSearchModuleId: string = '../../../../dashboard-search';
+const dashboardSearchModuleId: string = '../../dashboard/dashboard-search';
 const dashboardSearchModule = (await import(dashboardSearchModuleId)) as DashboardSearchModule;
 const dashboardFilterModuleId: string = '../../../features/report/dashboard-filter-navigation';
 const dashboardFilterModule = (await import(dashboardFilterModuleId)) as DashboardFilterModule;

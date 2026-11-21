@@ -14,7 +14,7 @@
   } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import { analyticsBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
-  import type { BreakdownSort } from '../../../../dashboard-search';
+  import type { BreakdownSort } from '../../../foundation/dashboard/dashboard-search';
   import { fmtNum } from '../../../foundation/presentation/format';
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';
   import BreakdownRow from './breakdown-row.svelte';
