@@ -12,7 +12,7 @@
     type QueryKey,
     useQueryClient,
   } from '@tanstack/svelte-query';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { browser } from '$app/env';
   import { afterNavigate, beforeNavigate, snapshot } from '$app/navigation';
   import { page } from '$app/state';
@@ -47,6 +47,7 @@
   import { buildCampaignTimeline, type CampaignTimelineAxis, campaignTimelineRange } from './campaign-timeline-model';
   import CampaignVirtualList from './campaign-virtual-list.svelte';
   import type { CampaignScrollState } from './campaign-virtual-window';
+  import { createCampaignFocusRestoration } from './campaigns-focus-restoration.svelte';
   import type { CampaignsPageData } from './campaigns-load';
   import {
     activeCard,
@@ -146,15 +147,15 @@
   let collapsedProjects = $state<ReadonlySet<string>>(new Set());
   let expansion = $state<{ key: string; open: boolean } | null>(null);
   let timelineAxis = $state<{ context: string; axis: CampaignTimelineAxis | null } | null>(null);
-  let mapVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
-  let timelineVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
   let mobileMap = $state(false);
   let searchExpanded = $state(false);
   let searchNavigation = $state<CampaignScrollState>({});
-  let searchVirtualList = $state<{ focusKey: (key: string) => Promise<boolean> }>();
-  let pendingFocus = '';
-  let detailOpenerId = $state('');
-  let focusRestoreGeneration = 0;
+  const focusRestoration = createCampaignFocusRestoration({
+    campaignView: () => campaignView,
+    pathname: () => page.url.pathname,
+    searchExpanded: () => searchExpanded,
+    selectedSessionId: () => selectedSessionId,
+  });
   let checkedExpiredRevision = '';
   let previousScope = '';
   const bootstrapQuery = createQuery(() =>
@@ -529,7 +530,7 @@
     }
     mobileMap = true;
     if (!selectedSessionId) {
-      detailOpenerId = row.rowId;
+      focusRestoration.detailOpenerId = row.rowId;
     }
     const url = new URL(page.url.href);
     url.searchParams.set('selectedCampaign', selectedKey);
@@ -540,67 +541,19 @@
       state: replacing && !panelOpenedFromReport(page.state) ? page.state : sessionPanelHistoryState(page.state),
     });
   };
-  const restoreFocus = async (): Promise<void> => {
-    if (!pendingFocus) {
-      return;
-    }
-    const key = pendingFocus;
-    pendingFocus = '';
-    const generation = focusRestoreGeneration;
-    await tick();
-    if (generation !== focusRestoreGeneration || selectedSessionId || page.url.pathname !== '/campaigns') {
-      return;
-    }
-    detailOpenerId = '';
-    let restored = false;
-    if (searchExpanded) {
-      restored = (await searchVirtualList?.focusKey(key)) ?? false;
-    } else {
-      const direct = document.querySelector<HTMLElement>(`[data-matching-row-id="${CSS.escape(key)}"]`);
-      if (direct) {
-        direct.focus({ preventScroll: true });
-        restored = document.activeElement === direct;
-      } else {
-        restored = (await (campaignView === 'timeline' ? timelineVirtualList : mapVirtualList)?.focusKey(key)) ?? false;
-      }
-    }
-    if (restored || generation !== focusRestoreGeneration || selectedSessionId || page.url.pathname !== '/campaigns') {
-      return;
-    }
-    // A direct mobile link can close onto the campaign list while the Map is
-    // hidden. Focus the visible viewport without revealing or acquiring rows.
-    const visibleSurfaces = [...document.querySelectorAll<HTMLElement>('[data-campaign-scroll]')].filter(
-      (element) =>
-        element.getClientRects().length > 0 &&
-        getComputedStyle(element).visibility !== 'hidden' &&
-        !element.closest('[hidden], [inert]'),
-    );
-    if (!visibleSurfaces.some((element) => element === document.activeElement)) {
-      visibleSurfaces[0]?.focus({ preventScroll: true });
-    }
-  };
-  beforeNavigate((navigation) => {
-    focusRestoreGeneration += 1;
-    const from = navigation.from?.url;
-    const to = navigation.to?.url;
-    if (from?.pathname === '/campaigns' && to?.pathname === '/campaigns' && !to.searchParams.has('selectedSession')) {
-      pendingFocus = detailOpenerId || from.searchParams.get('selectedSession') || '';
-    }
-  });
+  beforeNavigate(focusRestoration.beforeNavigate);
   afterNavigate(() => {
-    restoreFocus().catch((cause: unknown) => {
+    focusRestoration.restoreFocus().catch((cause: unknown) => {
       navigationError = cause instanceof Error ? cause.message : 'Session focus could not be restored.';
     });
   });
-  onDestroy(() => {
-    focusRestoreGeneration += 1;
-  });
+  onDestroy(focusRestoration.destroy);
   const changeSelection = (next: SessionSelectionInput | null): void => {
     if (next) {
       openSession(next.row);
       return;
     }
-    pendingFocus = selection?.row.rowId ?? selectedSessionId;
+    focusRestoration.pendingFocus = selection?.row.rowId ?? selectedSessionId;
     if (panelOpenedFromReport(page.state)) {
       window.history.back();
       return;
@@ -642,7 +595,7 @@
     mobileMap,
     searchExpanded,
     searchNavigation,
-    detailOpenerId,
+    detailOpenerId: focusRestoration.detailOpenerId,
   });
   const restore = (saved: ReturnType<typeof capture>): void => {
     previousScope = saved.scope;
@@ -662,7 +615,7 @@
     mobileMap = saved.mobileMap;
     searchExpanded = saved.searchExpanded;
     searchNavigation = saved.searchNavigation;
-    detailOpenerId = saved.detailOpenerId;
+    focusRestoration.detailOpenerId = saved.detailOpenerId;
   };
   snapshot({ capture, id: 'campaigns-page', restore });
 </script>
@@ -863,7 +816,7 @@
         onNearEnd={loadMatches}
         rows={matchRows}
         surface="search"
-        bind:this={searchVirtualList}
+        bind:this={focusRestoration.searchVirtualList}
         bind:navigation={searchNavigation}
       >
         {#snippet children(
@@ -928,7 +881,7 @@
         bind:collapsedProjects
         bind:expansion
         bind:navigation={timelineNavigation}
-        bind:virtualList={timelineVirtualList}
+        bind:virtualList={focusRestoration.timelineVirtualList}
       />
       <p class={notice}>
         {items.length}
@@ -1006,7 +959,7 @@
               onOpen={openSession}
               bind:collapsed={collapsedNodes}
               bind:navigation={mapNavigation}
-              bind:virtualList={mapVirtualList}
+              bind:virtualList={focusRestoration.mapVirtualList}
             />
           {:else if isRefreshing}
             <p role="status">Loading campaign hierarchy…</p>
