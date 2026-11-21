@@ -610,7 +610,7 @@ test('renders retryable route errors and the default accessible Not Found shell'
 
 test('retries a failed route through the same URL before JavaScript runs', async ({ baseURL, browser }) => {
   const context = await browser.newContext({
-    baseURL,
+    ...(baseURL === undefined ? {} : { baseURL }),
     extraHTTPHeaders: { 'x-ai-usage-sveltekit-error': 'once' },
     javaScriptEnabled: false,
   });
