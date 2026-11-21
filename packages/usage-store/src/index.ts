@@ -10,7 +10,6 @@ import { createReviewAttemptStore } from './review-attempt-store';
 import { createServedReportStore } from './served-report-store';
 import { createSkillObservationStore } from './skill-observation-store';
 import { createWorkFactStore } from './work-fact-store';
-import { createWorkSessionJoinStore } from './work-session-join';
 import { createWorkThreadStore } from './work-thread-store';
 
 export { initializeUsageStore } from './connections';
@@ -193,8 +192,4 @@ export const {
   withUsageStoreWriter,
 });
 
-export const { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } = createWorkSessionJoinStore({
-  usageStoreError,
-  usageStoreReadError,
-  withUsageStoreReader,
-});
+export { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds } from './work-session-join';

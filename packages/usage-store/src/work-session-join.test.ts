@@ -1,8 +1,14 @@
 import { Database } from 'bun:sqlite';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import { UsageStoreError } from './errors';
-import { createWorkSessionJoinStore, MAX_WORK_HARNESS_SESSION_MEMBERS } from './work-session-join';
+import { resetUsageStoreConnectionsForTesting, setUsageStoreConnectionsForTesting } from './connections';
+import {
+  MAX_WORK_HARNESS_SESSION_MEMBERS,
+  queryRecentServedHarnessSessions,
+  querySessionRowsBySourceSessionIds,
+} from './work-session-join';
+
+afterEach(resetUsageStoreConnectionsForTesting);
 
 const fixture = (count: number) => {
   const db = new Database(':memory:');
@@ -49,14 +55,11 @@ const fixture = (count: number) => {
     }
   })();
   db.exec('PRAGMA query_only = ON');
-  const store = createWorkSessionJoinStore({
-    usageStoreError: (operation, _dbPath, cause, reason) =>
-      new UsageStoreError({ operation, message: String(cause), reason }),
-    usageStoreReadError: (operation, _dbPath, cause) =>
-      new UsageStoreError({ operation, message: String(cause), reason: 'storage-failure' }),
+  setUsageStoreConnectionsForTesting(':memory:', {
     // Bun 1.4 types `query` bindings more narrowly than the store's structural reader seam.
     withUsageStoreReader: (_dbPath, use) => use(db as unknown as Parameters<typeof use>[0]),
   });
+  const store = { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds };
   return { db, store };
 };
 
