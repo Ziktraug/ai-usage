@@ -1,4 +1,5 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
+import { isRecord } from './datasets';
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
 import { parseServedRevision } from './served-revision';
@@ -338,9 +339,6 @@ export type SessionDetailUnavailableReason =
 export type SessionDetailResponse =
   | { consistency: SessionDetailConsistency; detail: SessionDetail; revision: string; status: 'available' }
   | { message: string; reason: SessionDetailUnavailableReason; status: 'unavailable' };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const assertExactKeys = (record: Record<string, unknown>, keys: readonly string[], label: string): void => {
   const allowed = new Set(keys);

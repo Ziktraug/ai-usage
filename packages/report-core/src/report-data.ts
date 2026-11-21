@@ -1,5 +1,5 @@
 import { type AnalyticsSummary, calculateAnalytics } from './analytics';
-import type { ReportDatasets } from './datasets';
+import { isRecord, type ReportDatasets } from './datasets';
 import {
   isProjectGroupConfigArray,
   type ProjectGroupConfig,
@@ -9,7 +9,6 @@ import {
 import {
   hasOnlyKeys,
   isJsonSafeObject,
-  isRecord,
   isSerializedUsageRow,
   isStrictIsoTimestamp,
   isUsageReportWarnings,

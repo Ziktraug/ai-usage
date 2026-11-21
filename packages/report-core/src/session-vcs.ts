@@ -1,3 +1,4 @@
+import { isRecord } from './datasets';
 import { parseServedRevision } from './served-revision';
 
 export const MAX_SESSION_VCS_BRANCHES = 32;
@@ -85,8 +86,6 @@ const CONTEXT_KEYS = new Set(['branches', 'headCommit', 'partial', 'pullRequests
 const RESOLVE_RESPONSE_AVAILABLE_KEYS = new Set(['pullRequests', 'repositoryUrl', 'status']);
 const RESOLVE_RESPONSE_UNAVAILABLE_KEYS = new Set(['reason', 'status']);
 const RESOLVE_REQUEST_KEYS = new Set(['revision', 'rowId']);
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const hasOnlyKeys = (value: Record<string, unknown>, keys: ReadonlySet<string>): boolean =>
   Object.keys(value).every((key) => keys.has(key));
