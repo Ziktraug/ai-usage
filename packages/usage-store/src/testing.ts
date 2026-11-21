@@ -1,7 +1,6 @@
 export type { NewDelegationJob } from './delegation-store';
 export {
   attachDeclaredWorkThreadSessions,
-  createUsageStore,
   importCheckoutStatusObservations,
   importClaudeDesktopSessions,
   importCodexWorkObservations,
