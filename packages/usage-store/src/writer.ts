@@ -243,6 +243,8 @@ export {
   recordJiraSyncState,
   recordWorkFactRun,
 } from './work-fact-store';
+export type { ReconcileWorkBranchesInput, ReconcileWorkBranchesResult } from './work-thread-branches';
+export { reconcileWorkBranches } from './work-thread-branches';
 export { applyWorkThreadCommand } from './work-thread-commands';
 export { queryJiraIntake, recordJiraIntake } from './work-thread-jira-intake';
 export type { QueryActiveWorkThreadLinksInput, QueryActiveWorkThreadLinksResult } from './work-thread-reads';
@@ -254,8 +256,6 @@ export type {
   WorkThreadSeed,
 } from './work-thread-seeding';
 export { attachDeclaredWorkThreadSessions, seedWorkThreads } from './work-thread-seeding';
-export type { ReconcileWorkBranchesInput, ReconcileWorkBranchesResult } from './work-thread-store';
-export { reconcileWorkBranches } from './work-thread-store';
 export type {
   ApplyWorkThreadWaitObservationsInput,
   ApplyWorkThreadWaitObservationsResult,
