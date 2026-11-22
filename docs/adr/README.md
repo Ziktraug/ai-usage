@@ -122,6 +122,7 @@ was deleted.
 | [0090](0090-cross-harness-usage-ownership.md) | One harness owns a session's usage; OpenCode retires `claude-agent` sessions the Claude collector counts | 2026-11-10 | Accepted; extends 0075 |
 | [0091](0091-imported-transcripts-are-not-harness-usage.md) | Transcripts a harness imported from another harness are not its usage; collectors retire them explicitly | 2026-11-10 | Accepted; extends 0009, 0075 |
 | [0092](0092-known-facts-rank-a-task-unread-sources-mark-a-milestone.md) | Known facts rank a Work task; an unread source marks a milestone and does not rank | 2026-11-11 | Accepted; amends 0063, 0082; extends 0016, 0078 |
+| [0093](0093-typescript-7-native-type-check.md) | Non-Svelte projects are type-checked by native TypeScript 7, once per package; `tsc` always names its package | 2026-11-21 | Accepted |
 
 ADRs 0015–0021 were recorded on 2026-08-25 by extracting standing decisions
 from executed plans (048/049, 053, 064, 088, 089), merged PRs (#41), and the
