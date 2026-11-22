@@ -839,21 +839,17 @@ const RESET_ROW_MIGRATIONS_SQL = `
   );
 `;
 
-// `index.test.ts`: a pre-VCS row fingerprint, a row with embedded RTK fields and no enrichment, plus a row
-// whose JSON does not parse, with every row-level migration marker reset.
-const shapeLegacyRows = async (dbPath: string): Promise<void> => {
-  const preVcs = codexRow('pre-vcs-row');
-  const embeddedRtk = {
-    ...codexRow('legacy-rtk'),
-    rtkCommandCount: 2,
-    rtkInputTokens: 30,
-    rtkOutputTokens: 10,
-    rtkSavedTokens: 20,
-  };
-  await Effect.runPromise(importLocalRows({ dbPath, machine: MACHINE, rows: [preVcs, embeddedRtk] }));
-  await Effect.runPromise(quiesceUsageStoreForShutdown({ dbPath }));
-  const current = toSerializedMergeRow(preVcs, MACHINE);
-  const legacySourceFingerprint = usageContentHash({
+const RTK_CONTRIBUTION = { rtkCommandCount: 2, rtkInputTokens: 30, rtkOutputTokens: 10, rtkSavedTokens: 20 };
+
+const withEmbeddedRtk = (row: UsageRowWithOptionalSource): UsageRowWithOptionalSource => ({
+  ...row,
+  ...RTK_CONTRIBUTION,
+});
+
+// The row as a pre-VCS writer stored it: the legacy source fingerprint, and the content hash over it.
+const preVcsStoredRow = (row: UsageRowWithOptionalSource) => {
+  const current = toSerializedMergeRow(row, MACHINE);
+  const sourceFingerprint = usageContentHash({
     activeDate: current.activeDate,
     date: current.date,
     endDate: current.endDate,
@@ -867,15 +863,38 @@ const shapeLegacyRows = async (dbPath: string): Promise<void> => {
     tokenTotal: current.tokenTotal,
   });
   const { contentHash: _contentHash, sourceFingerprint: _sourceFingerprint, ...legacyContent } = current;
-  const legacy = { ...legacyContent, sourceFingerprint: legacySourceFingerprint };
-  const legacyContentHash = usageContentHash(legacy);
+  const legacy = { ...legacyContent, sourceFingerprint };
+  const contentHash = usageContentHash(legacy);
+  return {
+    contentHash,
+    rowJson: JSON.stringify({ ...legacy, contentHash }),
+    rowKey: current.rowKey,
+    sourceFingerprint,
+  };
+};
+
+// `index.test.ts`: a pre-VCS row fingerprint, a row with embedded RTK fields and no enrichment, a pre-VCS row
+// that also embeds RTK fields (the RTK step can only read it once the VCS step has rewritten it), plus a row
+// whose JSON does not parse, with every row-level migration marker reset.
+const shapeLegacyRows = async (dbPath: string): Promise<void> => {
+  const preVcs = codexRow('pre-vcs-row');
+  const embeddedRtk = withEmbeddedRtk(codexRow('legacy-rtk'));
+  const preVcsRtk = withEmbeddedRtk(codexRow('pre-vcs-rtk'));
+  await Effect.runPromise(importLocalRows({ dbPath, machine: MACHINE, rows: [preVcs, embeddedRtk, preVcsRtk] }));
+  await Effect.runPromise(quiesceUsageStoreForShutdown({ dbPath }));
+  const current = toSerializedMergeRow(preVcs, MACHINE);
   const serializedRtk = toSerializedMergeRow(embeddedRtk, MACHINE);
   withDatabase(dbPath, (db) => {
-    db.query('UPDATE usage_rows SET source_fingerprint = ?, content_hash = ?, row_json = ? WHERE row_key = ?').run(
-      legacySourceFingerprint,
-      legacyContentHash,
-      JSON.stringify({ ...legacy, contentHash: legacyContentHash }),
-      current.rowKey,
+    for (const legacy of [preVcsStoredRow(preVcs), preVcsStoredRow(preVcsRtk)]) {
+      db.query('UPDATE usage_rows SET source_fingerprint = ?, content_hash = ?, row_json = ? WHERE row_key = ?').run(
+        legacy.sourceFingerprint,
+        legacy.contentHash,
+        legacy.rowJson,
+        legacy.rowKey,
+      );
+    }
+    db.query('DELETE FROM usage_row_enrichments WHERE row_key = ?').run(
+      toSerializedMergeRow(preVcsRtk, MACHINE).rowKey,
     );
     db.query('UPDATE usage_rows SET content_hash = ?, row_json = ? WHERE row_key = ?').run(
       serializedRtk.contentHash,
@@ -1029,6 +1048,21 @@ const FRESH_INDEXES: readonly string[] = [
   'idx_work_threads_scope',
 ];
 
+// The SHA-256 of the fresh store's DDL: the `sqlite_schema` text of every table, index, trigger and view,
+// `--` comments removed and whitespace normalised, one `type name: sql` line each, ordered by name. See the
+// tripwire test for what a change means.
+const FRESH_SCHEMA_DIGEST = 'c07c4cf582ddf3cbd219c59c4e2733ca4b9b28386ef8b71fe5e93828c699f261';
+
+const freshSchemaDigest = (dbPath: string): string => {
+  const lines = (
+    rowsOf(
+      dbPath,
+      "SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name, type",
+    ) as SchemaRow[]
+  ).map((row) => `${row.type} ${row.name}: ${normalizedSql((row.sql ?? '').replace(/--[^\n]*/g, ''))}`);
+  return new Bun.CryptoHasher('sha256').update(lines.join('\n')).digest('hex');
+};
+
 let templatePromise: Promise<string> | undefined;
 
 // The populated store every `populatedShape` copies, built once per file through the public writer on
@@ -1091,6 +1125,23 @@ describe('a store created from nothing', () => {
       'migration.merge-row-v3-vcs': 1,
       'migration.rtk-contributions-v1': 1,
     });
+  });
+
+  // Tripwire. Every other shape is compared with a fresh store built by the same code, so a change to the
+  // fresh DDL alone (a CHECK dropped from `usage_rows`, a new NOT NULL column) passes all of them while
+  // existing stores keep the old definition. This digest of the fresh store's DDL text forces the question
+  // the comparison cannot ask. It is one line on purpose: the DDL diff itself is reviewed in the source.
+  test('the fresh schema DDL is the one whose convergence the shapes in this file prove', async () => {
+    const dbPath = await temporaryPath();
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const digest = freshSchemaDigest(dbPath);
+    expect(
+      digest,
+      'The fresh schema changed. Existing stores do not get this change unless a migration step carries it. ' +
+        'Add or extend a legacy shape in migration-outcomes.test.ts that proves an existing store converges ' +
+        '(an additive `ALTER TABLE ... ADD COLUMN` cannot carry a CHECK, a NOT NULL without default, or a ' +
+        'foreign key: see the known outcome_code gap), then update FRESH_SCHEMA_DIGEST to the received value.',
+    ).toBe(FRESH_SCHEMA_DIGEST);
   });
 });
 
@@ -1234,6 +1285,63 @@ describe('provider quota read projections', () => {
     }).toEqual(maintained);
   });
 
+  test('rebuilt heads rank by confidence, then the latest first observation, then the highest id, per account scope', async () => {
+    const observation = (id: number, scope: string | null, source: string, confidence: string, observedAt: string) =>
+      `(${id}, 'codex', 'Codex', ${scope === null ? 'NULL' : `'${scope}'`}, '${MACHINE.id}', NULL, '${source}', 'poll',
+        '${confidence}', NULL, 'ok', NULL, NULL, '${observedAt}', '${observedAt}', 'hash-${id}')`;
+    // Beside the populated observation 1 (no scope, authoritative, 09:30): a newer derived one without a
+    // scope from another source, and for one account scope derived observations tied on time (3 and 4), an
+    // older derived one (5) and a newer historical one (6).
+    const dbPath = await populatedShape(
+      execOn(`
+        INSERT INTO provider_quota_observations (
+          id, provider_key, provider_label, account_scope, machine_id, machine_label, source_key, source_mode,
+          source_confidence, source_event_key, state, plan, provider_generated_at, first_observed_at,
+          last_observed_at, content_hash
+        ) VALUES
+          ${observation(2, null, 'push', 'derived', '2026-10-20T11:00:00.000Z')},
+          ${observation(3, 'account-a', 'poll', 'derived', '2026-10-20T10:00:00.000Z')},
+          ${observation(4, 'account-a', 'poll', 'derived', '2026-10-20T10:00:00.000Z')},
+          ${observation(5, 'account-a', 'poll', 'derived', '2026-10-20T09:00:00.000Z')},
+          ${observation(6, 'account-a', 'poll', 'historical', '2026-10-20T12:00:00.000Z')};
+        DROP TABLE provider_quota_latest_heads;
+        DROP TABLE provider_quota_streams;
+      `),
+    );
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    const stream = (accountScope: string | null, sourceKey: string) => ({
+      account_scope: accountScope,
+      account_scope_key: accountScope === null ? 'n:' : `s:${accountScope}`,
+      machine_id: MACHINE.id,
+      provider_key: 'codex',
+      source_key: sourceKey,
+    });
+    expect(rowsOf(dbPath, 'SELECT * FROM provider_quota_streams ORDER BY account_scope_key, source_key')).toEqual([
+      stream(null, 'poll'),
+      stream(null, 'push'),
+      stream('account-a', 'poll'),
+    ]);
+    // The heads key the scope as the writer does (`account_scope ?? ''`), not as the streams do.
+    expect(rowsOf(dbPath, 'SELECT * FROM provider_quota_latest_heads ORDER BY account_scope_key')).toEqual([
+      {
+        account_scope_key: '',
+        confidence_rank: 0,
+        first_observed_at: '2026-10-20T09:30:00.000Z',
+        machine_id: MACHINE.id,
+        observation_id: 1,
+        provider_key: 'codex',
+      },
+      {
+        account_scope_key: 'account-a',
+        confidence_rank: 1,
+        first_observed_at: '2026-10-20T10:00:00.000Z',
+        machine_id: MACHINE.id,
+        observation_id: 4,
+        provider_key: 'codex',
+      },
+    ]);
+  });
+
   test('history over the stream read budget fails with migration-failure and leaves the store untouched', async () => {
     const dbPath = await populatedShape(execOn(QUOTA_OVER_STREAM_BUDGET_SQL));
     const { failure, storeAfter, storeBefore } = await failWriterOpen(dbPath);
@@ -1270,6 +1378,26 @@ describe('skill observation collection state', () => {
     expect(metadataOf(dbPath).generation).toBe(generation + 1);
   });
 
+  // A copy of the populated Claude row under another key, machine, harness and source authority.
+  const usageRowLike = (rowKey: string, machineId: string, harnessKey: string, authority: string): string => `
+    INSERT INTO usage_rows (
+      origin_machine_id, harness_key, source_session_id, source_fingerprint, source_authority, row_key,
+      content_hash, row_json, machine_label, fleet_metadata_valid, status, active_date, project, model,
+      token_total, first_seen_at, last_seen_at, updated_at
+    )
+    SELECT
+      '${machineId}', '${harnessKey}', source_session_id, source_fingerprint, '${authority}', '${rowKey}',
+      content_hash, row_json, machine_label, fleet_metadata_valid, status, active_date, project, model,
+      token_total, first_seen_at, last_seen_at, updated_at
+    FROM usage_rows WHERE row_key = '${CLAUDE_ROW_KEY}';
+  `;
+  // Rows the backfill must ignore: a portable (not locally observed) row of an observable harness, and a
+  // locally observed row of a harness that records no skill invocation.
+  const IGNORED_USAGE_ROWS_SQL = `
+    ${usageRowLike('portable-codex-row', 'machine-portable', 'codex', 'portable-opaque')}
+    ${usageRowLike('local-cursor-row', 'machine-cursor', 'cursor', 'local-observed')}
+  `;
+
   test('a missing collection state is backfilled from local usage rows and observations of observable harnesses', async () => {
     const dbPath = await populatedShape(
       execOn(`
@@ -1279,15 +1407,32 @@ describe('skill observation collection state', () => {
         VALUES
           ('codex', 'skill', 'declared', 'machine-b', 'session-b', 'call-b', '${FROZEN_NOW}', '${FROZEN_NOW}', '${FROZEN_NOW}'),
           ('cursor', 'skill', 'declared', 'machine-c', 'session-c', 'call-c', '${FROZEN_NOW}', '${FROZEN_NOW}', '${FROZEN_NOW}');
+        ${IGNORED_USAGE_ROWS_SQL}
       `),
     );
     const generation = metadataOf(dbPath).generation ?? Number.NaN;
     expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    // Not machine-portable (portable row), machine-c (cursor observation) or machine-cursor (cursor row).
     expect(rowsOf(dbPath, 'SELECT * FROM skill_observation_collection_state ORDER BY machine_id')).toEqual([
       backfilledState(MACHINE.id, 'claude'),
       backfilledState('machine-b', 'codex'),
     ]);
     expect(metadataOf(dbPath).generation).toBe(generation + 1);
+  });
+
+  test('a missing collection state with nothing to backfill stays empty and leaves the generation alone', async () => {
+    const dbPath = await populatedShape(
+      execOn(`
+        DROP TABLE skill_observation_collection_state;
+        DELETE FROM skill_observations;
+        ${IGNORED_USAGE_ROWS_SQL}
+        DELETE FROM usage_rows WHERE row_key = '${CLAUDE_ROW_KEY}';
+      `),
+    );
+    const generation = metadataOf(dbPath).generation ?? Number.NaN;
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    expect(rowsOf(dbPath, 'SELECT * FROM skill_observation_collection_state')).toEqual([]);
+    expect(metadataOf(dbPath).generation).toBe(generation);
   });
 });
 
@@ -1664,20 +1809,30 @@ describe('usage rows', () => {
     expect(migrated?.content_hash).toBe(current.contentHash);
     expect(JSON.parse(migrated?.row_json ?? 'null')).toEqual(current);
     expect(migrated?.updated_at).toBe(FROZEN_NOW);
-    // RTK contributions: the embedded savings become an enrichment row.
+    // RTK contributions: the embedded savings become an enrichment row, also for the pre-VCS row, which
+    // the RTK step can only read after the VCS step rewrote it.
     const rtkRowKey = toSerializedMergeRow(codexRow('legacy-rtk'), MACHINE).rowKey;
-    const contribution = { rtkCommandCount: 2, rtkInputTokens: 30, rtkOutputTokens: 10, rtkSavedTokens: 20 };
+    const preVcsRtk = toSerializedMergeRow(withEmbeddedRtk(codexRow('pre-vcs-rtk')), MACHINE);
+    const enrichment = (rowKey: string) => ({
+      content_hash: enrichmentContentHash(RTK_CONTRIBUTION),
+      first_seen_at: FROZEN_NOW,
+      last_seen_at: FROZEN_NOW,
+      payload_json: JSON.stringify(RTK_CONTRIBUTION),
+      row_key: rowKey,
+      schema_version: RTK_SAVINGS_SCHEMA_VERSION,
+      source_id: RTK_SAVINGS_SOURCE_ID,
+      updated_at: FROZEN_NOW,
+    });
     expect(rowsOf(dbPath, `SELECT * FROM usage_row_enrichments WHERE row_key = '${rtkRowKey}'`)).toEqual([
-      {
-        content_hash: enrichmentContentHash(contribution),
-        first_seen_at: FROZEN_NOW,
-        last_seen_at: FROZEN_NOW,
-        payload_json: JSON.stringify(contribution),
-        row_key: rtkRowKey,
-        schema_version: RTK_SAVINGS_SCHEMA_VERSION,
-        source_id: RTK_SAVINGS_SOURCE_ID,
-        updated_at: FROZEN_NOW,
-      },
+      enrichment(rtkRowKey),
+    ]);
+    expect(
+      rowsOf(dbPath, `SELECT row_json FROM usage_rows WHERE row_key = '${preVcsRtk.rowKey}'`).map((row) =>
+        JSON.parse((row as { row_json: string }).row_json),
+      ),
+    ).toEqual([preVcsRtk]);
+    expect(rowsOf(dbPath, `SELECT * FROM usage_row_enrichments WHERE row_key = '${preVcsRtk.rowKey}'`)).toEqual([
+      enrichment(preVcsRtk.rowKey),
     ]);
     // Machine fleet metadata: valid rows carry their machine label, the unparseable row is invalid.
     const fleet = rowsOf(dbPath, 'SELECT row_key, machine_label, fleet_metadata_valid FROM usage_rows') as Array<{
@@ -1686,7 +1841,7 @@ describe('usage rows', () => {
       row_key: string;
     }>;
     expect(fleet.map(({ row_key }) => row_key).sort()).toEqual(
-      [CLAUDE_ROW_KEY, current.rowKey, rtkRowKey, 'unparseable-row-key'].sort(),
+      [CLAUDE_ROW_KEY, current.rowKey, rtkRowKey, preVcsRtk.rowKey, 'unparseable-row-key'].sort(),
     );
     for (const row of fleet) {
       expect(row).toEqual(
