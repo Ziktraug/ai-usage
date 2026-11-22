@@ -150,9 +150,13 @@ export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>
  * A column check cannot be altered in SQLite, and the additive `outcome_code` above carries none. A
  * `work_fact_run_state` whose stored definition lacks the outcome code CHECK is rebuilt under the same name
  * (still `WITHOUT ROWID`), inside the caller's migration transaction, after `migrateWorkFactSchema` added
- * the column. Every row the CHECK accepts is copied unchanged; a row whose code it refuses is not copied:
- * the reader already skips such a row, and its source rewrites its one row (keyed by `source_id`) on its
- * next run. No index, trigger, view or foreign key refers to the table. `true` when a rebuild ran; a second
+ * the column. Every row the CHECK accepts is copied unchanged. A row whose code it refuses is not copied:
+ * copying it with a null code would make an invalid row look valid, and failing the migration would make the
+ * store unopenable over one row. Every writer in the repository's history checks the code first, so such a
+ * row only comes from a hand edit. The drop is visible: before it, the reader skips and counts the row, and
+ * `sourcesOf` in report-data shows a source with no valid run as `unavailable` ("Some source run records
+ * could not be read."); after it, that source shows as `never-run`, with no message, until its next run
+ * writes its one row (keyed by `source_id`) again. No index, trigger, view or foreign key refers to the table. `true` when a rebuild ran; a second
  * call finds the CHECK and changes nothing. Only `migrate()` calls it.
  */
 export const rebuildWorkFactRunStateForOutcomeCode = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {

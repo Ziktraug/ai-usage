@@ -1633,7 +1633,8 @@ describe('families added under the same version', () => {
 // whose stored definition lacks that CHECK, copying every row the CHECK accepts.
 describe('work fact run state from before the outcome code', () => {
   const OUTCOME_CODE_CHECK = "CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')";
-  // The table as `4088634a` (2026-10-25) created it, verbatim: no outcome_code column.
+  // The table as `b6bf3074` (2026-10-21, Work resume branches) created it and `4088634a` (2026-10-25, PR #67)
+  // brought it to main, verbatim: no outcome_code column.
   const FIRST_VERSION_SQL = `
     DROP TABLE work_fact_run_state;
     CREATE TABLE IF NOT EXISTS work_fact_run_state (
@@ -1646,8 +1647,10 @@ describe('work fact run state from before the outcome code', () => {
       message TEXT
     ) WITHOUT ROWID;
   `;
-  // The same table after any open by `fbb8c50b` (2026-10-26) or later, before this rebuild existed: the
-  // additive step's own statement appended the column, without its CHECK. The real-world shape.
+  // The same table after any open by a build that has the column, before this rebuild existed: from
+  // `6033c2d5` (2026-10-24) on the `work-unit-*` branches, from `fbb8c50b` (2026-10-26, PR #74) on main. Such a
+  // build declares the CHECK only in its fresh definition; its additive step's own statement appended the
+  // column to the existing table without it. The real-world shape.
   const COLUMN_WITHOUT_CHECK_SQL = `${FIRST_VERSION_SQL} ALTER TABLE work_fact_run_state ADD COLUMN outcome_code TEXT;`;
   const storedDefinitionOf = (dbPath: string): string => {
     const [row] = rowsOf(dbPath, "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'work_fact_run_state'");

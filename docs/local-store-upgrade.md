@@ -458,22 +458,32 @@ that a real local store has been backed up or upgraded.
 
 Two migration fixes under usage version 5; `user_version` does not move.
 
-`work_fact_run_state` gained `outcome_code` on 2026-10-26 through a bare
-`ALTER TABLE … ADD COLUMN outcome_code TEXT`, which did not carry the
-`CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')` a fresh store
-declares. A store whose table was created by a build from 2026-10-25 (`4088634a`,
-before `fbb8c50b`) and opened since holds the column without the CHECK. On its
-next open the engine reads the table's stored
+`work_fact_run_state` was first created without `outcome_code` by `b6bf3074`
+(2026-10-21), on the Work resume branches; that table reached `main` with
+`4088634a` (2026-10-25, PR #67). The column first appeared in `6033c2d5`
+(2026-10-24), on the `work-unit-*` branches, and reached `main` with `fbb8c50b`
+(2026-10-26, PR #74). Those builds declare the column with
+`CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')` in a fresh
+store, but add it to an existing table through a bare
+`ALTER TABLE … ADD COLUMN outcome_code TEXT`, which carries no CHECK. A store
+whose table was created by a build from `b6bf3074` up to, but not including, a
+build that has the column in its fresh definition, whether from `main` or from
+one of those branches, holds the column without the CHECK once any later build
+opened it. On its next open the engine reads the table's stored
 definition in `sqlite_schema`; when the CHECK is absent, it creates a new table
 with the current definition (still `WITHOUT ROWID`), copies the rows, drops the
 old table and renames the new one, inside the migration transaction, after the
 additive columns. A store whose table still lacks the column gets it first and is
 rebuilt in the same open. Rows whose `outcome_code` is null or `unauthenticated`
-are copied unchanged. A row with any other code is not copied: the reader already
-skips such a row and never shows it, copying it with a null code would make an
-invalid row look valid, and failing the migration would make the whole store
-unopenable over one row. The table holds one row per source, which that source's
-next run writes again. No index, trigger, view or foreign key refers to the
+are copied unchanged. A row with any other code is not copied: copying it with a
+null code would make an invalid row look valid, and failing the migration would
+make the whole store unopenable over one row. Every writer in the repository's
+history checks the code before writing, so such a row can only come from editing
+the store by hand. The drop is visible. Before the rebuild, the reader skips and
+counts such a row, and the Work view shows a source with no valid run as
+unavailable, with the message "Some source run records could not be read.".
+After the rebuild the row is gone, and that source shows as never run, with no
+message, until its next run writes its one row again. No index, trigger, view or foreign key refers to the
 table. A store that has the CHECK, fresh or already rebuilt, is not touched: a
 second open changes nothing. An older binary at usage version 5 opens the rebuilt
 store; it finds the column and changes nothing.
