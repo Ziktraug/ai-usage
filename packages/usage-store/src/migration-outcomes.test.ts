@@ -56,8 +56,11 @@ afterAll(async () => {
 // `ALTER TABLE ... ADD COLUMN` appends the column to the stored text, so a migrated table differs in text
 // and column order from a fresh `CREATE`. What is compared is what SQLite enforces: per column its
 // declared type, NOT NULL, DEFAULT, primary-key position and hidden flag; per table every CHECK clause,
-// every COLLATE, every foreign key, STRICT and WITHOUT ROWID; per index its columns, uniqueness,
-// partial flag and text; triggers by name and text; views by name.
+// every COLLATE with the column it belongs to, every foreign key, STRICT and WITHOUT ROWID; per index its
+// columns, uniqueness, partial flag and text; triggers by name and text; views by name.
+// Blind spots (none of these constructs exists in the production DDL today): a column's `ON CONFLICT`
+// clause, `DEFERRABLE` on a foreign key, `AUTOINCREMENT`, a generated column's expression (only its hidden
+// flag is seen) and a view's body. A change to one of them reaches only the fresh schema digest.
 
 interface ColumnDescription {
   readonly default: string | null;
@@ -120,8 +123,42 @@ const checkClauses = (sql: string): string[] => {
   return clauses.sort();
 };
 
+// A table's definitions (columns and table constraints, an added column appended last): its text inside
+// the outer parentheses, `--` comments removed, split at the commas outside parentheses and quotes.
+const tableDefinitions = (sql: string): string[] => {
+  const text = sql.replace(/--[^\n]*/g, '');
+  const definitions: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = text.indexOf('(') + 1;
+  for (let index = start; index < text.length && depth >= 0; index++) {
+    const char = text[index] ?? '';
+    if (quote !== null) {
+      quote = char === quote ? null : quote;
+    } else if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+    } else if (char === '(' || char === ')') {
+      depth += char === '(' ? 1 : -1;
+    }
+    if (quote === null && ((char === ',' && depth === 0) || depth < 0)) {
+      definitions.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  return definitions;
+};
+
+const DEFINITION_OWNER = /^\s*["`[]?(\w+)/;
+const COLLATE_CLAUSE = /\bCOLLATE\s+("?\w+"?)/gi;
+
+// Every COLLATE as `<column> COLLATE <name>` (a table constraint's COLLATE under its keyword), sorted.
 const collationClauses = (sql: string): string[] =>
-  [...sql.matchAll(/\bCOLLATE\s+("?\w+"?)/gi)].map((match) => `COLLATE ${match[1]?.toUpperCase()}`).sort();
+  tableDefinitions(sql)
+    .flatMap((definition) => {
+      const owner = DEFINITION_OWNER.exec(definition)?.[1] ?? '';
+      return [...definition.matchAll(COLLATE_CLAUSE)].map((match) => `${owner} COLLATE ${match[1]?.toUpperCase()}`);
+    })
+    .sort();
 
 interface SchemaRow {
   readonly name: string;
