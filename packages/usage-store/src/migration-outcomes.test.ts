@@ -1177,7 +1177,7 @@ describe('a store created from nothing', () => {
       'The fresh schema changed. Existing stores do not get this change unless a migration step carries it. ' +
         'Add or extend a legacy shape in migration-outcomes.test.ts that proves an existing store converges ' +
         '(an additive `ALTER TABLE ... ADD COLUMN` cannot carry a CHECK, a NOT NULL without default, or a ' +
-        'foreign key: see the known outcome_code gap), then update FRESH_SCHEMA_DIGEST to the received value.',
+        'foreign key: see the work_fact_run_state rebuild), then update FRESH_SCHEMA_DIGEST to the received value.',
     ).toBe(FRESH_SCHEMA_DIGEST);
   });
 });
@@ -1628,19 +1628,46 @@ describe('families added under the same version', () => {
   });
 });
 
-// Known gap (plan 128 A5, finding for the operator): `migrateWorkFactSchema` adds a missing column with a
-// bare `ALTER TABLE ... ADD COLUMN outcome_code TEXT`, which cannot carry the CHECK a fresh store declares.
-// Closing it needs a table rebuild migration, which plan 128 does not do. When one lands, four tests fail
-// together and must be updated in the same change:
-// - the three tests of this describe block: delete the "known gap" test; in the "store itself accepts"
-//   test expect `convergedToFresh(true)` and the migrated store to refuse the value as a fresh one does; in
-//   the writer and reader test expect `convergedToFresh(true)` too, and since the store then refuses its raw
-//   invalid insert, drop that insert and the reader's skip count with it;
-// - the "every column an additive migration adds" test below: its one expected difference line goes, it
-//   then expects `[]`.
+// `migrateWorkFactSchema` adds a missing `outcome_code` with a bare `ALTER TABLE ... ADD COLUMN`, which does
+// not carry the CHECK a fresh store declares; `rebuildWorkFactRunStateForOutcomeCode` then rebuilds a table
+// whose stored definition lacks that CHECK, copying every row the CHECK accepts.
 describe('work fact run state from before the outcome code', () => {
   const OUTCOME_CODE_CHECK = "CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')";
-  const OUTCOME_CODE_GAP = `- check work_fact_run_state: ${OUTCOME_CODE_CHECK}`;
+  // The table as `4088634a` (2026-10-25) created it, verbatim: no outcome_code column.
+  const FIRST_VERSION_SQL = `
+    DROP TABLE work_fact_run_state;
+    CREATE TABLE IF NOT EXISTS work_fact_run_state (
+      source_id TEXT PRIMARY KEY,
+      machine_id TEXT NOT NULL,
+      ran_at TEXT NOT NULL,
+      observed INTEGER NOT NULL CHECK (observed >= 0),
+      failed INTEGER NOT NULL CHECK (failed >= 0),
+      disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
+      message TEXT
+    ) WITHOUT ROWID;
+  `;
+  // The same table after any open by `fbb8c50b` (2026-10-26) or later, before this rebuild existed: the
+  // additive step's own statement appended the column, without its CHECK. The real-world shape.
+  const COLUMN_WITHOUT_CHECK_SQL = `${FIRST_VERSION_SQL} ALTER TABLE work_fact_run_state ADD COLUMN outcome_code TEXT;`;
+  const storedDefinitionOf = (dbPath: string): string => {
+    const [row] = rowsOf(dbPath, "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'work_fact_run_state'");
+    if (typeof row !== 'object' || row === null || !('sql' in row) || typeof row.sql !== 'string') {
+      throw new Error('work_fact_run_state has no stored definition.');
+    }
+    return row.sql;
+  };
+  // Every column the table has, of every row, as an SQL literal (`quote()`), so a changed storage class
+  // shows too.
+  const storedRunsOf = (dbPath: string): Record<string, string>[] =>
+    withDatabase(dbPath, (db) => {
+      const columns = Object.keys(describeTable(db, { name: 'work_fact_run_state', sql: null, type: 'table' }).columns);
+      return db
+        .query(
+          `SELECT ${columns.map((column) => `quote(${column}) AS ${column}`).join(', ')} FROM work_fact_run_state ORDER BY source_id`,
+        )
+        .all() as Record<string, string>[];
+    });
+  const sourceIdsOf = (dbPath: string): (string | undefined)[] => storedRunsOf(dbPath).map((row) => row.source_id);
   const evidenceColumnsMissing = (): Promise<string> =>
     populatedShape(
       execOn(
@@ -1657,60 +1684,110 @@ describe('work fact run state from before the outcome code', () => {
       );
     });
 
-  test('known gap: the added outcome_code column lacks the CHECK a fresh store declares, and only that', async () => {
-    const dbPath = await evidenceColumnsMissing();
-    const { schema, ...outcome } = await migrateShape(dbPath);
-    expect(outcome).toEqual(idempotent(true));
-    expect(schemaDifferences(schema, await freshSchema())).toEqual([
-      `- check work_fact_run_state: ${OUTCOME_CODE_CHECK}`,
-    ]);
-    expect(schema.tables.work_fact_run_state?.columns.outcome_code).toEqual({
-      default: null,
-      hidden: 0,
-      notnull: 0,
-      pk: 0,
-      type: 'TEXT',
-    });
-  });
+  const recordRun = (dbPath: string, sourceId: 'github.pull-requests' | 'jira.issues', outcomeCode: string | null) =>
+    Effect.runPromise(
+      Effect.result(
+        recordWorkFactRun({
+          dbPath,
+          disabled: false,
+          failed: 0,
+          machineId: MACHINE.id,
+          message: null,
+          observed: 1,
+          // Deliberately unnarrowed: the writer's own validation is what is exercised.
+          outcomeCode: outcomeCode as 'unauthenticated' | null,
+          ranAt: FROZEN_NOW,
+          sourceId,
+        }),
+      ),
+    );
 
-  test('the store itself accepts an invalid outcome code there, a fresh store refuses it', async () => {
+  test('the migrated store converges to the fresh schema and refuses an invalid outcome code as a fresh store does', async () => {
     const legacy = await evidenceColumnsMissing();
-    expect(await migrationAgainstFresh(legacy)).toEqual(convergedToFresh(true, [OUTCOME_CODE_GAP]));
-    expect(() => insertRun(legacy, 'github.pull-requests', 'bogus')).not.toThrow();
+    expect(await migrationAgainstFresh(legacy)).toEqual(convergedToFresh(true));
+    expect(checkClauses(storedDefinitionOf(legacy))).toContain(OUTCOME_CODE_CHECK);
+    expect(() => insertRun(legacy, 'github.pull-requests', 'bogus')).toThrow('CHECK constraint failed');
     const fresh = await temporaryPath();
     await Effect.runPromise(initializeUsageStore({ dbPath: fresh }));
     expect(() => insertRun(fresh, 'github.pull-requests', 'bogus')).toThrow('CHECK constraint failed');
   });
 
-  test('the writer still refuses an invalid outcome code and the reader skips and counts a stored one', async () => {
+  test('the writer still refuses an invalid outcome code and the reader reads the valid one', async () => {
     const dbPath = await evidenceColumnsMissing();
-    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true, [OUTCOME_CODE_GAP]));
-    const run = (outcomeCode: 'unauthenticated' | null) =>
-      Effect.runPromise(
-        Effect.result(
-          recordWorkFactRun({
-            dbPath,
-            disabled: false,
-            failed: 0,
-            machineId: MACHINE.id,
-            message: null,
-            observed: 1,
-            outcomeCode,
-            ranAt: FROZEN_NOW,
-            sourceId: 'github.pull-requests',
-          }),
-        ),
-      );
-    const refused = await run('bogus' as unknown as 'unauthenticated');
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    const refused = await recordRun(dbPath, 'github.pull-requests', 'bogus');
     expect(refused._tag === 'Failure' ? refused.failure.reason : refused).toBe('invalid-input');
     expect(rowsOf(dbPath, 'SELECT * FROM work_fact_run_state')).toEqual([]);
-    expect((await run('unauthenticated'))._tag).toBe('Success');
-    insertRun(dbPath, 'jira.issues', 'bogus');
+    expect((await recordRun(dbPath, 'github.pull-requests', 'unauthenticated'))._tag).toBe('Success');
     const states = await Effect.runPromise(queryWorkFactRunStates({ dbPath }));
-    expect(states.skipped).toBe(1);
     expect(states.runs.map((state) => [state.sourceId, state.outcomeCode])).toEqual([
       ['github.pull-requests', 'unauthenticated'],
     ]);
+  });
+
+  test('a table from before the column keeps every row, which reads no outcome code', async () => {
+    const dbPath = await populatedShape(
+      execOn(`${FIRST_VERSION_SQL}
+        INSERT INTO work_fact_run_state VALUES ('github.pull-requests', '${MACHINE.id}', '${FROZEN_NOW}', 3, 1, 0, 'partial');
+        INSERT INTO work_fact_run_state VALUES ('jira.issues', '${MACHINE.id}', '${FROZEN_NOW}', 0, 0, 1, NULL);
+      `),
+    );
+    const before = storedRunsOf(dbPath);
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    expect(storedRunsOf(dbPath)).toEqual(before.map((row) => ({ ...row, outcome_code: 'NULL' })));
+    expect(checkClauses(storedDefinitionOf(dbPath))).toContain(OUTCOME_CODE_CHECK);
+  });
+
+  test('a table with the column but not its CHECK is rebuilt: valid rows kept exactly, the invalid one dropped', async () => {
+    const dbPath = await populatedShape(
+      execOn(`${COLUMN_WITHOUT_CHECK_SQL}
+        INSERT INTO work_fact_run_state VALUES
+          ('checkouts.status', '${MACHINE.id}', '2026-10-30T07:00:00.000Z', 0, 0, 1, NULL, NULL),
+          ('github.pull-requests', '${MACHINE.id}', '2026-10-31T08:00:00.000Z', 4, 2, 0, 'sign in', 'unauthenticated'),
+          ('jira.issues', 'machine-other', '${FROZEN_NOW}', 1, 0, 0, 'odd', 'bogus');
+      `),
+    );
+    const before = storedRunsOf(dbPath);
+    expect(sourceIdsOf(dbPath)).toEqual(["'checkouts.status'", "'github.pull-requests'", "'jira.issues'"]);
+    expect(checkClauses(storedDefinitionOf(dbPath))).not.toContain(OUTCOME_CODE_CHECK);
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    expect(storedRunsOf(dbPath)).toEqual(before.slice(0, 2));
+    expect(schemaOf(dbPath).tables.work_fact_run_state?.withoutRowid).toBe(true);
+    // The reader sees both kept rows and has nothing to skip.
+    const states = await Effect.runPromise(queryWorkFactRunStates({ dbPath }));
+    expect(states).toEqual({
+      runs: [
+        expect.objectContaining({ outcomeCode: null, sourceId: 'checkouts.status' }),
+        expect.objectContaining({ outcomeCode: 'unauthenticated', sourceId: 'github.pull-requests' }),
+      ],
+      skipped: 0,
+    });
+    // The dropped row's source writes its row again on its next run.
+    expect((await recordRun(dbPath, 'jira.issues', null))._tag).toBe('Success');
+    expect(sourceIdsOf(dbPath)).toEqual(["'checkouts.status'", "'github.pull-requests'", "'jira.issues'"]);
+  });
+
+  test('a fresh store and an already converged store are not rebuilt', async () => {
+    const fresh = await populatedShape();
+    expect((await recordRun(fresh, 'github.pull-requests', 'unauthenticated'))._tag).toBe('Success');
+    const freshDefinition = storedDefinitionOf(fresh);
+    const freshRuns = storedRunsOf(fresh);
+    expect(migrateOnBoundary(fresh)).toBe(false);
+    expect(storedDefinitionOf(fresh)).toEqual(freshDefinition);
+    expect(storedRunsOf(fresh)).toEqual(freshRuns);
+
+    const converged = await populatedShape(
+      execOn(`${COLUMN_WITHOUT_CHECK_SQL}
+        INSERT INTO work_fact_run_state VALUES ('github.pull-requests', '${MACHINE.id}', '${FROZEN_NOW}', 1, 0, 0, NULL, 'unauthenticated');
+      `),
+    );
+    expect(migrateOnBoundary(converged)).toBe(true);
+    const convergedDefinition = storedDefinitionOf(converged);
+    const convergedRuns = storedRunsOf(converged);
+    expect(migrateOnBoundary(converged)).toBe(false);
+    await Effect.runPromise(initializeUsageStore({ dbPath: converged }));
+    expect(storedDefinitionOf(converged)).toEqual(convergedDefinition);
+    expect(storedRunsOf(converged)).toEqual(convergedRuns);
   });
 });
 
@@ -1773,7 +1850,7 @@ const ADDITIVE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
 };
 
 describe('every column an additive migration adds', () => {
-  test('keeps the type, NOT NULL, DEFAULT, CHECK, COLLATE and foreign keys of the fresh DDL, except the known outcome_code gap', async () => {
+  test('keeps the type, NOT NULL, DEFAULT, CHECK, COLLATE and foreign keys of the fresh DDL', async () => {
     const dbPath = await populatedShape(
       execOn(`
         DROP TRIGGER usage_rows_invalidate_fleet_metadata_after_insert;
@@ -1791,9 +1868,7 @@ describe('every column an additive migration adds', () => {
     }
     const { schema, ...outcome } = await migrateShape(dbPath);
     expect(outcome).toEqual(idempotent(true));
-    expect(schemaDifferences(schema, await freshSchema())).toEqual([
-      "- check work_fact_run_state: CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')",
-    ]);
+    expect(schemaDifferences(schema, await freshSchema())).toEqual([]);
   });
 });
 

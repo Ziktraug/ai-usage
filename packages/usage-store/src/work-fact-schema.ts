@@ -2,6 +2,23 @@
 
 import type { SqliteDatabase } from './sqlite-database';
 
+/** The outcome codes a run state row may carry; the column's CHECK and the rebuild's row filter. */
+const OUTCOME_CODE_ACCEPTED_SQL = "outcome_code IS NULL OR outcome_code = 'unauthenticated'";
+const OUTCOME_CODE_CHECK_SQL = `CHECK (${OUTCOME_CODE_ACCEPTED_SQL})`;
+
+// The run state columns, shared by the fresh table and its rebuild. The text, newlines and indentation
+// included, is what a fresh store's `sqlite_schema` holds; it must not change.
+const workFactRunStateColumnsSql = `
+    source_id TEXT PRIMARY KEY,
+    machine_id TEXT NOT NULL,
+    ran_at TEXT NOT NULL,
+    observed INTEGER NOT NULL CHECK (observed >= 0),
+    failed INTEGER NOT NULL CHECK (failed >= 0),
+    disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
+    message TEXT,
+    outcome_code TEXT ${OUTCOME_CODE_CHECK_SQL}
+  `;
+
 export const workFactSchemaSql = `
   CREATE TABLE IF NOT EXISTS pull_request_observations (
     id INTEGER PRIMARY KEY,
@@ -83,16 +100,7 @@ export const workFactSchemaSql = `
     state_json TEXT NOT NULL
   ) WITHOUT ROWID;
 
-  CREATE TABLE IF NOT EXISTS work_fact_run_state (
-    source_id TEXT PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    ran_at TEXT NOT NULL,
-    observed INTEGER NOT NULL CHECK (observed >= 0),
-    failed INTEGER NOT NULL CHECK (failed >= 0),
-    disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
-    message TEXT,
-    outcome_code TEXT CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')
-  ) WITHOUT ROWID;
+  CREATE TABLE IF NOT EXISTS work_fact_run_state (${workFactRunStateColumnsSql}) WITHOUT ROWID;
 `;
 
 export const WORK_FACT_TABLES = [
@@ -136,4 +144,34 @@ export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>
     }
   }
   return changed;
+};
+
+/**
+ * A column check cannot be altered in SQLite, and the additive `outcome_code` above carries none. A
+ * `work_fact_run_state` whose stored definition lacks the outcome code CHECK is rebuilt under the same name
+ * (still `WITHOUT ROWID`), inside the caller's migration transaction, after `migrateWorkFactSchema` added
+ * the column. Every row the CHECK accepts is copied unchanged; a row whose code it refuses is not copied:
+ * the reader already skips such a row, and its source rewrites its one row (keyed by `source_id`) on its
+ * next run. No index, trigger, view or foreign key refers to the table. `true` when a rebuild ran; a second
+ * call finds the CHECK and changes nothing. Only `migrate()` calls it.
+ */
+export const rebuildWorkFactRunStateForOutcomeCode = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
+  const stored = db
+    .query("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'work_fact_run_state'")
+    .get() as { sql?: unknown } | null;
+  if (typeof stored?.sql !== 'string' || stored.sql.includes(OUTCOME_CODE_CHECK_SQL)) {
+    return false;
+  }
+  db.exec('DROP TABLE IF EXISTS work_fact_run_state_rebuilt');
+  db.exec(`CREATE TABLE work_fact_run_state_rebuilt (${workFactRunStateColumnsSql}) WITHOUT ROWID`);
+  const names = (db.query('PRAGMA table_info(work_fact_run_state_rebuilt)').all() as { name?: unknown }[])
+    .map((column) => column.name)
+    .filter((name): name is string => typeof name === 'string')
+    .join(', ');
+  db.exec(
+    `INSERT INTO work_fact_run_state_rebuilt (${names}) SELECT ${names} FROM work_fact_run_state WHERE (${OUTCOME_CODE_ACCEPTED_SQL})`,
+  );
+  db.exec('DROP TABLE work_fact_run_state');
+  db.exec('ALTER TABLE work_fact_run_state_rebuilt RENAME TO work_fact_run_state');
+  return true;
 };
