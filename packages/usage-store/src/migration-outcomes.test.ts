@@ -1791,27 +1791,59 @@ describe('work fact run state from before the outcome code', () => {
   });
 });
 
-// Known defect (plan 128 A5, finding for the operator): `backfillSkillObservationCollectionState` (step 7)
-// reads `usage_rows.source_authority`, a column only `addUsageRowColumns` (step 15) adds. A store whose
-// usage_rows predates that column and which has no skill collection state yet cannot be opened: the
-// migration fails cleanly and is rolled back. That is a store last opened by a build older than `85b7c2a7`
-// (2026-07-15, the column's ALTER), opened by a build from `8e637c51` (2026-09-03, the backfill, placed
-// before the ALTER) or later. Fixing it means moving the backfill after `addUsageRowColumns`, which changes
-// the migration order and so is outside plan 128. When that fix lands, this test fails by design: replace
-// it with a convergence assertion (`convergedToFresh(true)`, and the collection state of the locally
-// observed pairs).
+// `backfillSkillObservationCollectionState` reads `usage_rows.source_authority`, which `addUsageRowColumns`
+// adds; the backfill runs directly after it. Before that order, a store whose usage_rows predates the column
+// (last opened by a build older than `85b7c2a7`, 2026-07-15) and which has no skill collection state failed
+// the writer open with `no such column: source_authority`. The added column gives every existing row its
+// default `'portable-opaque'`, so for such a store only the skill observations name a pair to backfill; its
+// usage rows, though locally collected, cannot be told apart from portable ones.
 describe('a store from before source authority with no skill collection state', () => {
-  test('known defect: the writer open fails with migration-failure on the missing column and leaves the store untouched', async () => {
+  const backfilledState = (machineId: string, harnessKey: string) => ({
+    collected_at: FROZEN_NOW,
+    exposure_rejected: 0,
+    exposure_truncated: 0,
+    harness_key: harnessKey,
+    invocation_rejected: 0,
+    invocation_truncated: 1,
+    machine_id: machineId,
+  });
+
+  test('converges to the fresh schema, the pair its skill observation names marked incomplete', async () => {
     const dbPath = await populatedShape(
       execOn(`${USAGE_ROWS_BEFORE_FLEET_COLUMNS_SQL} DROP TABLE skill_observation_collection_state;`),
     );
-    const { failure, storeAfter, storeBefore } = await failWriterOpen(dbPath);
-    expect(storeAfter).toEqual(storeBefore);
-    expect(failure).toMatchObject({ operation: 'openUsageStoreWriter', reason: 'migration-failure' });
-    expect(failure.message).toBe(`openUsageStoreWriter ${dbPath}: no such column: source_authority`);
-    expect(failure.cause).toMatchObject({ code: 'SQLITE_ERROR', name: 'SQLiteError' });
-    expect(Object.keys(storeAfter.schema.tables)).not.toContain('skill_observation_collection_state');
-    expect(Object.keys(storeAfter.schema.tables.usage_rows?.columns ?? {})).not.toContain('source_authority');
+    const generation = metadataOf(dbPath).generation ?? Number.NaN;
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    expect(rowsOf(dbPath, 'SELECT * FROM skill_observation_collection_state')).toEqual([
+      backfilledState(MACHINE.id, 'claude'),
+    ]);
+    expect(rowsOf(dbPath, 'SELECT origin_machine_id, harness_key, source_authority FROM usage_rows')).toEqual([
+      { harness_key: 'claude', origin_machine_id: MACHINE.id, source_authority: 'portable-opaque' },
+    ]);
+    expect(metadataOf(dbPath).generation).toBe(generation + 1);
+  });
+
+  test('backfills the observable pairs of its skill observations, never a pair only its usage rows name', async () => {
+    const dbPath = await populatedShape(
+      execOn(`${USAGE_ROWS_BEFORE_FLEET_COLUMNS_SQL}
+        DROP TABLE skill_observation_collection_state;
+        DELETE FROM skill_observations;
+        INSERT INTO skill_observations (harness_key, skill_name, tier, machine_id, session_id, observation_key,
+          observed_at, first_observed_at, last_observed_at)
+        VALUES
+          ('codex', 'skill', 'declared', 'machine-b', 'session-b', 'call-b', '${FROZEN_NOW}', '${FROZEN_NOW}', '${FROZEN_NOW}'),
+          ('opencode', 'skill', 'exposed', 'machine-b', 'session-o', 'call-o', '${FROZEN_NOW}', '${FROZEN_NOW}', '${FROZEN_NOW}'),
+          ('cursor', 'skill', 'declared', 'machine-c', 'session-c', 'call-c', '${FROZEN_NOW}', '${FROZEN_NOW}', '${FROZEN_NOW}');
+      `),
+    );
+    const generation = metadataOf(dbPath).generation ?? Number.NaN;
+    expect(await migrationAgainstFresh(dbPath)).toEqual(convergedToFresh(true));
+    // Not machine-c (cursor records no skill invocation), not the characterization machine (its Claude
+    // usage row reads the added column's default, 'portable-opaque').
+    expect(rowsOf(dbPath, 'SELECT * FROM skill_observation_collection_state ORDER BY machine_id, harness_key')).toEqual(
+      [backfilledState('machine-b', 'codex'), backfilledState('machine-b', 'opencode')],
+    );
+    expect(metadataOf(dbPath).generation).toBe(generation + 1);
   });
 });
 

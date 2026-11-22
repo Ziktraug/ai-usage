@@ -818,7 +818,8 @@ const migrateMachineFleetOrder: MigrationStep = (db) => {
   return true;
 };
 
-// The order is the migration's order; every step runs on every open.
+// The order is the migration's order; every step runs on every open. The skill collection-state backfill
+// reads `usage_rows.source_authority`, so it runs directly after `addUsageRowColumns`, which adds it.
 const MIGRATION_STEPS: readonly MigrationStep[] = [
   createBaseSchema,
   migrateWorkFactFamily,
@@ -826,7 +827,6 @@ const MIGRATION_STEPS: readonly MigrationStep[] = [
   migrateExecutorObservations,
   migrateReviewAttempts,
   migrateDelegation,
-  backfillSkillObservationCollectionState,
   createClaudeDesktopSessionTables,
   createCodexWorkTables,
   addClaudeDesktopMessageTime,
@@ -835,6 +835,7 @@ const MIGRATION_STEPS: readonly MigrationStep[] = [
   assertLocalMachineProjection,
   backfillProviderQuotaReadProjections,
   addUsageRowColumns,
+  backfillSkillObservationCollectionState,
   createMachineFleetInvalidation,
   migrateMergeRowsToVcs,
   migrateRtkContributions,
