@@ -483,8 +483,8 @@ the store by hand. The drop is visible. Before the rebuild, the reader skips and
 counts such a row, and the Work view shows a source with no valid run as
 unavailable, with the message "Some source run records could not be read.".
 After the rebuild the row is gone, and that source shows as never run, with no
-message, until its next run writes its one row again. No index, trigger, view or foreign key refers to the
-table. A store that has the CHECK, fresh or already rebuilt, is not touched: a
+message, until its next run writes its one row again. No index, trigger, view
+or foreign key refers to the table. A store that has the CHECK, fresh or already rebuilt, is not touched: a
 second open changes nothing. An older binary at usage version 5 opens the rebuilt
 store; it finds the column and changes nothing.
 

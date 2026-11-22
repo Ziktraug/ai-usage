@@ -156,8 +156,9 @@ export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>
  * row only comes from a hand edit. The drop is visible: before it, the reader skips and counts the row, and
  * `sourcesOf` in report-data shows a source with no valid run as `unavailable` ("Some source run records
  * could not be read."); after it, that source shows as `never-run`, with no message, until its next run
- * writes its one row (keyed by `source_id`) again. No index, trigger, view or foreign key refers to the table. `true` when a rebuild ran; a second
- * call finds the CHECK and changes nothing. Only `migrate()` calls it.
+ * writes its one row (keyed by `source_id`) again. No index, trigger, view or foreign key refers to the
+ * table. `true` when a rebuild ran; a second call finds the CHECK and changes nothing. Only `migrate()` calls
+ * it.
  */
 export const rebuildWorkFactRunStateForOutcomeCode = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
   const stored = db
