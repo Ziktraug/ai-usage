@@ -894,6 +894,27 @@ describe('package boundary guard', () => {
     ]);
   });
 
+  test('reports violations in path order whatever order the filesystem lists entries in', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writeWebPresentationClosure(root);
+    const foundation = path.join(root, 'apps/web/src/lib/foundation/ordering');
+    // Created one by one in an order that is neither ascending nor descending, so neither a creation-order nor
+    // a reverse-creation-order listing is already sorted; hashed listings (ext4) are unsorted too.
+    const creationOrder = ['c.ts', 'd/k.ts', 'a.ts', 'b/z.ts', 'f.ts', 'd/e/m.ts', 'b/a.ts'];
+    for (const file of creationOrder) {
+      await mkdir(path.dirname(path.join(foundation, file)), { recursive: true });
+      await writeFile(path.join(foundation, file), "import { a } from '#lib/features/work/work-load';\n");
+    }
+
+    const violations = await collectFixtureViolations(root);
+    expect(violations.map(({ file }) => file)).toEqual(
+      ['a.ts', 'b/a.ts', 'b/z.ts', 'c.ts', 'd/e/m.ts', 'd/k.ts', 'f.ts'].map(
+        (file) => `apps/web/src/lib/foundation/ordering/${file}`,
+      ),
+    );
+  });
+
   test('keeps the framework-neutral Web presentation closure free of frameworks, Node and server code', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
