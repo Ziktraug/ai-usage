@@ -454,6 +454,44 @@ ten to two minutes, and control-plane snapshot validation requires agreement.
 Disposable-store tests prove checkpoint persistence and additive creation, not
 that a real local store has been backed up or upgraded.
 
+## Run state rebuild and backfill order (2026-11-22)
+
+Two migration fixes under usage version 5; `user_version` does not move.
+
+`work_fact_run_state` gained `outcome_code` on 2026-10-26 through a bare
+`ALTER TABLE … ADD COLUMN outcome_code TEXT`, which did not carry the
+`CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')` a fresh store
+declares. A store whose table was created by a build from 2026-10-25 (`4088634a`,
+before `fbb8c50b`) and opened since holds the column without the CHECK. On its
+next open the engine reads the table's stored
+definition in `sqlite_schema`; when the CHECK is absent, it creates a new table
+with the current definition (still `WITHOUT ROWID`), copies the rows, drops the
+old table and renames the new one, inside the migration transaction, after the
+additive columns. A store whose table still lacks the column gets it first and is
+rebuilt in the same open. Rows whose `outcome_code` is null or `unauthenticated`
+are copied unchanged. A row with any other code is not copied: the reader already
+skips such a row and never shows it, copying it with a null code would make an
+invalid row look valid, and failing the migration would make the whole store
+unopenable over one row. The table holds one row per source, which that source's
+next run writes again. No index, trigger, view or foreign key refers to the
+table. A store that has the CHECK, fresh or already rebuilt, is not touched: a
+second open changes nothing. An older binary at usage version 5 opens the rebuilt
+store; it finds the column and changes nothing.
+
+The skill collection-state backfill now runs directly after the step that adds
+`usage_rows.source_authority`, which it reads. Before, a store whose `usage_rows`
+predated that column and which had no `skill_observation_collection_state` table
+failed the writer open with `no such column: source_authority` and was rolled
+back; such a store now opens and converges. Its existing usage rows receive the
+column's default, `portable-opaque`, so the backfill marks incomplete only the
+Claude, Codex and OpenCode machine and harness pairs its skill observations name,
+not the pairs only its usage rows name. No other store is affected by the order.
+
+There is no downgrade path: back up the usage store before restarting the engine
+with this change (see [Backup](#backup)). These changes were validated on
+disposable stores only; that validation does not show that a real local store has
+been backed up or upgraded, and it authorizes no upgrade of one.
+
 ## Backup
 
 1. With the revision that last wrote the store still checked out, stop the
