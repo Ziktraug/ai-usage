@@ -1593,8 +1593,14 @@ describe('families added under the same version', () => {
 
 // Known gap (plan 128 A5, finding for the operator): `migrateWorkFactSchema` adds a missing column with a
 // bare `ALTER TABLE ... ADD COLUMN outcome_code TEXT`, which cannot carry the CHECK a fresh store declares.
-// Closing it needs a table rebuild migration, which plan 128 does not do. When one lands, the first test
-// fails: delete it and let the shape assert full convergence.
+// Closing it needs a table rebuild migration, which plan 128 does not do. When one lands, four tests fail
+// together and must be updated in the same change:
+// - the three tests of this describe block: delete the "known gap" test; in the "store itself accepts"
+//   test expect `convergedToFresh(true)` and the migrated store to refuse the value as a fresh one does; in
+//   the writer and reader test expect `convergedToFresh(true)` too, and since the store then refuses its raw
+//   invalid insert, drop that insert and the reader's skip count with it;
+// - the "every column an additive migration adds" test below: its one expected difference line goes, it
+//   then expects `[]`.
 describe('work fact run state from before the outcome code', () => {
   const OUTCOME_CODE_CHECK = "CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')";
   const OUTCOME_CODE_GAP = `- check work_fact_run_state: ${OUTCOME_CODE_CHECK}`;
