@@ -19,7 +19,12 @@ import {
 import { servedReportSchemaSql } from './served-revision';
 import type { SqliteDatabase } from './sqlite-database';
 import type { StoredUsageRowStatus } from './stored-usage-row';
-import { migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-schema';
+import {
+  migrateWorkFactSchema,
+  rebuildWorkFactRunStateForOutcomeCode,
+  WORK_FACT_TABLES,
+  workFactSchemaSql,
+} from './work-fact-schema';
 import { WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-schema';
 
 export const USAGE_STORE_SCHEMA_VERSION = 5;
@@ -445,9 +450,14 @@ const createBaseSchema: MigrationStep = (db) => {
   return false;
 };
 
+// The additive columns first, so a run state table without `outcome_code` has it before the rebuild that
+// gives the column its CHECK. The rebuild runs here only, inside the migration transaction; the importers'
+// own calls to `migrateWorkFactSchema` run after the writer open has migrated, so they never need it.
 const migrateWorkFactFamily: MigrationStep = (db) => {
   db.exec(workFactSchemaSql);
-  return migrateWorkFactSchema(db);
+  const columnsAdded = migrateWorkFactSchema(db);
+  const runStateRebuilt = rebuildWorkFactRunStateForOutcomeCode(db);
+  return columnsAdded || runStateRebuilt;
 };
 
 const createWorkThreadTables: MigrationStep = (db) => {
@@ -808,7 +818,8 @@ const migrateMachineFleetOrder: MigrationStep = (db) => {
   return true;
 };
 
-// The order is the migration's order; every step runs on every open.
+// The order is the migration's order; every step runs on every open. The skill collection-state backfill
+// reads `usage_rows.source_authority`, so it runs directly after `addUsageRowColumns`, which adds it.
 const MIGRATION_STEPS: readonly MigrationStep[] = [
   createBaseSchema,
   migrateWorkFactFamily,
@@ -816,7 +827,6 @@ const MIGRATION_STEPS: readonly MigrationStep[] = [
   migrateExecutorObservations,
   migrateReviewAttempts,
   migrateDelegation,
-  backfillSkillObservationCollectionState,
   createClaudeDesktopSessionTables,
   createCodexWorkTables,
   addClaudeDesktopMessageTime,
@@ -825,6 +835,7 @@ const MIGRATION_STEPS: readonly MigrationStep[] = [
   assertLocalMachineProjection,
   backfillProviderQuotaReadProjections,
   addUsageRowColumns,
+  backfillSkillObservationCollectionState,
   createMachineFleetInvalidation,
   migrateMergeRowsToVcs,
   migrateRtkContributions,

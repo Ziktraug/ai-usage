@@ -454,6 +454,54 @@ ten to two minutes, and control-plane snapshot validation requires agreement.
 Disposable-store tests prove checkpoint persistence and additive creation, not
 that a real local store has been backed up or upgraded.
 
+## Run state rebuild and backfill order (2026-11-22)
+
+Two migration fixes under usage version 5; `user_version` does not move.
+
+`work_fact_run_state` was first created without `outcome_code` by `b6bf3074`
+(2026-10-21), on the Work resume branches; that table reached `main` with
+`4088634a` (2026-10-25, PR #67). The column first appeared in `6033c2d5`
+(2026-10-24), on the `work-unit-*` branches, and reached `main` with `fbb8c50b`
+(2026-10-26, PR #74). Those builds declare the column with
+`CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')` in a fresh
+store, but add it to an existing table through a bare
+`ALTER TABLE … ADD COLUMN outcome_code TEXT`, which carries no CHECK. A store
+whose table was created by a build from `b6bf3074` up to, but not including, a
+build that has the column in its fresh definition, whether from `main` or from
+one of those branches, holds the column without the CHECK once any later build
+opened it. On its next open the engine reads the table's stored
+definition in `sqlite_schema`; when the CHECK is absent, it creates a new table
+with the current definition (still `WITHOUT ROWID`), copies the rows, drops the
+old table and renames the new one, inside the migration transaction, after the
+additive columns. A store whose table still lacks the column gets it first and is
+rebuilt in the same open. Rows whose `outcome_code` is null or `unauthenticated`
+are copied unchanged. A row with any other code is not copied: copying it with a
+null code would make an invalid row look valid, and failing the migration would
+make the whole store unopenable over one row. Every writer in the repository's
+history checks the code before writing, so such a row can only come from editing
+the store by hand. The drop is visible. Before the rebuild, the reader skips and
+counts such a row, and the Work view shows a source with no valid run as
+unavailable, with the message "Some source run records could not be read.".
+After the rebuild the row is gone, and that source shows as never run, with no
+message, until its next run writes its one row again. No index, trigger, view
+or foreign key refers to the table. A store that has the CHECK, fresh or already rebuilt, is not touched: a
+second open changes nothing. An older binary at usage version 5 opens the rebuilt
+store; it finds the column and changes nothing.
+
+The skill collection-state backfill now runs directly after the step that adds
+`usage_rows.source_authority`, which it reads. Before, a store whose `usage_rows`
+predated that column and which had no `skill_observation_collection_state` table
+failed the writer open with `no such column: source_authority` and was rolled
+back; such a store now opens and converges. Its existing usage rows receive the
+column's default, `portable-opaque`, so the backfill marks incomplete only the
+Claude, Codex and OpenCode machine and harness pairs its skill observations name,
+not the pairs only its usage rows name. No other store is affected by the order.
+
+There is no downgrade path: back up the usage store before restarting the engine
+with this change (see [Backup](#backup)). These changes were validated on
+disposable stores only; that validation does not show that a real local store has
+been backed up or upgraded, and it authorizes no upgrade of one.
+
 ## Backup
 
 1. With the revision that last wrote the store still checked out, stop the
