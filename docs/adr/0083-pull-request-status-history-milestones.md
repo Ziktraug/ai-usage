@@ -60,4 +60,4 @@ merge has been read with its history. CI history and Jira status transitions are
 - `packages/local-collectors/src/github-pull-requests.ts` (`PULL_REQUEST_DETAIL_QUERY`)
 - `packages/report-core/src/work-attention.ts` (`PullRequestHistory`)
 - `packages/report-data/src/work-thread-read.ts` (`factEventsOf`, `timelineMarksOf`)
-- `apps/web/src/lib/features/work/work-thread-list.svelte`, `work-milestone-glyph.svelte`
+- `apps/web/src/lib/features/work/threads/work-thread-list.svelte`, `apps/web/src/lib/features/work/work-milestone-glyph.svelte`

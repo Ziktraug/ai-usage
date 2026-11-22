@@ -40,5 +40,5 @@ A full-query render was rejected because it broke the response and mobile DOM bu
 - [Paging query options](../../apps/web/src/lib/query/options/session-window.ts)
   (paging lifecycle ownership moved to TanStack Query by
   [ADR 0012](0012-tanstack-query-browser-server-state-ownership.md))
-- [Window model](../../apps/web/src/session-row-window.ts)
+- [Window model](../../apps/web/src/lib/features/sessions/session-row-window.ts)
 - [5,000-session proof](../../apps/web/e2e/session-scroll.scale.ts)

@@ -124,7 +124,7 @@ stay in every new store as schema for a feature that no longer exists.
 ## Evidence
 
 - [Engine composition](../../apps/usage-engine/src/main.ts)
-- [Usage store migration](../../packages/usage-store/src/index.ts) and its
+- [Usage store migration](../../packages/usage-store/src/migration.ts) and its
   [tests](../../packages/usage-store/src/migration.test.ts)
 - [Engine control contract](../../packages/usage-engine-control/src/contracts.ts)
   (`USAGE_ENGINE_PROTOCOL_VERSION`)
