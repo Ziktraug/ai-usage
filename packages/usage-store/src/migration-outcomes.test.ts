@@ -1671,6 +1671,30 @@ describe('work fact run state from before the outcome code', () => {
   });
 });
 
+// Known defect (plan 128 A5, finding for the operator): `backfillSkillObservationCollectionState` (step 7)
+// reads `usage_rows.source_authority`, a column only `addUsageRowColumns` (step 15) adds. A store whose
+// usage_rows predates that column and which has no skill collection state yet cannot be opened: the
+// migration fails cleanly and is rolled back. That is a store last opened by a build older than `85b7c2a7`
+// (2026-07-15, the column's ALTER), opened by a build from `8e637c51` (2026-09-03, the backfill, placed
+// before the ALTER) or later. Fixing it means moving the backfill after `addUsageRowColumns`, which changes
+// the migration order and so is outside plan 128. When that fix lands, this test fails by design: replace
+// it with a convergence assertion (`convergedToFresh(true)`, and the collection state of the locally
+// observed pairs).
+describe('a store from before source authority with no skill collection state', () => {
+  test('known defect: the writer open fails with migration-failure on the missing column and leaves the store untouched', async () => {
+    const dbPath = await populatedShape(
+      execOn(`${USAGE_ROWS_BEFORE_FLEET_COLUMNS_SQL} DROP TABLE skill_observation_collection_state;`),
+    );
+    const { failure, storeAfter, storeBefore } = await failWriterOpen(dbPath);
+    expect(storeAfter).toEqual(storeBefore);
+    expect(failure).toMatchObject({ operation: 'openUsageStoreWriter', reason: 'migration-failure' });
+    expect(failure.message).toBe(`openUsageStoreWriter ${dbPath}: no such column: source_authority`);
+    expect(failure.cause).toMatchObject({ code: 'SQLITE_ERROR', name: 'SQLiteError' });
+    expect(Object.keys(storeAfter.schema.tables)).not.toContain('skill_observation_collection_state');
+    expect(Object.keys(storeAfter.schema.tables.usage_rows?.columns ?? {})).not.toContain('source_authority');
+  });
+});
+
 // Every column an additive step adds with `ALTER TABLE ... ADD COLUMN`: `addUsageRowColumns`,
 // `migrateExecutorObservations` and `addClaudeDesktopMessageTime` in `migration.ts`, `ADDED_COLUMNS` in
 // `review-attempt-schema.ts` and the additions of `migrateWorkFactSchema` in `work-fact-schema.ts`.
