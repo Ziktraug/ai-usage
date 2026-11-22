@@ -17,6 +17,11 @@ mock.module('$app/env', () => ({ dev: false }));
 interface DocumentAcquisitionRecorder {
   readonly acquisitions: { readonly pageUrl: URL; readonly rpc: unknown }[];
   readonly clientRequests: Request[];
+  /**
+   * The delta the stand-in acquisition answers with. A test compares a load's result with this one
+   * object: a second delta built for the comparison would carry its own `Date.now()` stamps.
+   */
+  readonly reportQueryState: WebQueryHydrationState;
 }
 let documentRecorder: DocumentAcquisitionRecorder | undefined;
 
@@ -49,7 +54,7 @@ mock.module('#lib/features/report/core/report-bootstrap.ts', () => ({
       return realReportBootstrap.acquireLiveReportQueryState(...args);
     }
     documentRecorder.acquisitions.push(args[0]);
-    return Promise.resolve(acquiredServerDelta());
+    return Promise.resolve(documentRecorder.reportQueryState);
   },
 }));
 
@@ -312,7 +317,7 @@ describe('server document acquisition', () => {
 
   beforeEach(() => {
     fetchCalls.length = 0;
-    documentRecorder = { acquisitions: [], clientRequests: [] };
+    documentRecorder = { acquisitions: [], clientRequests: [], reportQueryState: acquiredServerDelta() };
     realFetch = globalThis.fetch;
     globalThis.fetch = Object.assign(recordFetch, { preconnect: realFetch.preconnect });
   });
@@ -327,7 +332,9 @@ describe('server document acquisition', () => {
     const request = new Request(PAGE_HREF);
     const probe = probeLoadEvent({ fetch: recordFetch, isDataRequest: false, locals: {}, request });
 
-    expect(await runLoad(load, probe)).toEqual({ reportQueryState: acquiredServerDelta() });
+    const acquired = documentRecorder?.reportQueryState;
+    expect(acquired?.dehydratedState.queries).toHaveLength(1);
+    expect(await runLoad(load, probe)).toEqual({ reportQueryState: acquired });
 
     expect(probe.tracked).toEqual([]);
     expect(probe.untracked).toEqual(['url.href']);
