@@ -251,4 +251,27 @@ a named test in `migration-outcomes.test.ts` that fails when a fix lands.
 
 ### Final gate
 
-(recorded below once the full gate has run on the merged branch)
+Run on `544424f9` on 2026-11-22 by a verifier agent, Turbo cache disabled
+(`TURBO_FORCE=true`, 0 cached tasks):
+
+| Command | Exit | Result |
+|---|---|---|
+| `bun run check` | 0 | 1,733 files, no fixes |
+| `bun run lint` | 0 | Biome and every `tools/check-*` checker |
+| `bun run typecheck` | 0 | 31/31 tasks; svelte-check 0 errors |
+| `bun run test` | 0 | 31/31 tasks; 6,452 tests, 0 fail (web 2,451, usage-store 517, tools 174) |
+| `bun run build` | 0 | 17/17 tasks |
+| `bun run test:web-bundle` | 0 | 7 pass |
+| `bun run test:web-client-manifest` | 0 | no violation |
+| `bun run test:e2e` | 1 | 416 passed, 1 failed; the work-pagination run, skipped by the `&&` chain, was run separately: 3 passed |
+
+The one e2e failure is not caused by this branch.
+`e2e/dashboard-presentation.spec.ts:431` ("scales Punchcard size and brightness
+inside fixed accessible targets with a four-dot key") asserts
+`toHaveCSS('justify-content', 'flex-end')` and receives `flow-end`. The
+assertion (from #27) and `punchcard.svelte` are untouched by the plan; the same
+test fails identically on the unmodified `main` tree (`73606226`) with the
+same browser. The machine restarted during the plan and came back with Google
+Chrome 158.0.8127.36 in place of 157; the full suite had passed on this branch
+the day before (417 + 3, packet D1, Chrome 157). The assertion is left as it
+is: `main` is affected equally and the fix is the operator's call.
