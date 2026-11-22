@@ -23,15 +23,16 @@
 
 | Packet | What | Chain | Status |
 |---|---|---|---|
-| A1 | A failed migration carries a typed reason | A | TODO |
-| A2 | Split `migrate()` into one step per table family | A | TODO |
-| A3 | Move schema DDL out of the store files; stores import `connections` directly; delete the per-store dependency interfaces | A | TODO |
-| A4 | Split `work-thread-store.ts` into owned modules (move-only) | A | TODO |
-| A5 | Replace source-text tests in `packages/usage-store` | A | TODO |
-| B1 | Give `apps/web/src/lib/features/work` a folder structure; delete dead web modules; enforce foundation ↛ features | B | TODO |
-| B2 | Replace source-text tests in `apps/web` and `packages/design-system` | B | TODO |
-| C1 | Replace source-text tests everywhere else | C | TODO |
-| D1 | One `isRecord` per package, shared where a dependency already exists | after A, B, C | TODO |
+| A1 | A failed migration carries a typed reason | A | DONE |
+| A2 | Split `migrate()` into one step per table family | A | DONE |
+| A3 | Move schema DDL out of the store files; stores import `connections` directly; delete the per-store dependency interfaces | A | DONE |
+| A4 | Split `work-thread-store.ts` into owned modules (move-only) | A | DONE |
+| A5 | Replace source-text tests in `packages/usage-store` | A | DONE |
+| B1 | Give `apps/web/src/lib/features/work` a folder structure; delete dead web modules; enforce foundation ↛ features | B | DONE |
+| B2 | Replace source-text tests in `apps/web` and `packages/design-system` | B | DONE |
+| C1 | Replace source-text tests everywhere else | C | DONE |
+| D1 | One `isRecord` per package, shared where a dependency already exists | after A, B, C | DONE |
+| E | Replace the copies of the same guard that survived under other names; restore one import placement | after D1 | DONE |
 
 ## Why
 
@@ -128,4 +129,126 @@ run it under `flock /tmp/claude-1000/ai-usage-e2e.lock` with a short private
 
 ## Execution notes
 
-(recorded by the orchestrator as packets land)
+Executed 2026-11-21 and 2026-11-22 by implementer agents under an orchestrator
+that implemented nothing itself. Each packet was verified by the orchestrator
+and adversarially reviewed (an independent agent plus Codex); the confirmed
+findings were fixed before the next step. Per-packet notes with inventories and
+proofs: `ai-usage-wt/_notes/128-*.md` (outside the repository).
+
+### Results
+
+- **A1** `f5f71ca9`: the writer open reports `schema-too-new` for a newer
+  store and `migration-failure` for a failure inside `migrate()`; A2 step 0
+  (`2f19c523`) keeps `storage-failure` for lock contention raised while
+  migrating. No consumer branches on the reason of a writer-open error, so the
+  only visible change is the `reason` field. Review: no defect.
+- **A2** `302ccba3`: `migrate()` is 18 lines calling `probeStore` and 20
+  module-level steps in the original order. A characterization test recorded
+  the exact SQL sequence, schema and data for 35 store shapes; it was green on
+  the unrefactored code and after the split with unchanged expectations
+  (replayed independently by the orchestrator). The complexity suppression on
+  `migrate` is gone. Review: no defect.
+- **A3** `29b720fd`..`2c821a16`: eight `<family>-schema.ts` modules hold the
+  DDL and per-family migrate helpers and import no store; `migration.ts`
+  imports no store; the 11 dependency interfaces and 12 factories are deleted
+  and every store imports `connections.ts` directly. Three fixtures that used
+  to inject fake connections now register them through
+  `setUsageStoreConnectionsForTesting`, a path-keyed test seam in
+  `connections.ts` that no entry point exports. Entry-point exported names
+  identical before and after (192 / 232 / 47 / 5). Six complexity suppressions
+  became unused and were removed. Review: no defect; the seam was hardened in
+  A5 (throws on a second registration, per-registration disposer).
+- **A4** `2d638815`..`da36771c`: `work-thread-store.ts` (3,381 lines) is
+  replaced by nine `work-thread-*.ts` modules of 92 to 680 lines. Move-only:
+  1,030 top-level statements in the package before and after, three textual
+  differences (an inline import path, one line reflowed after gaining
+  `export`, one comment block attached to its neighbour). The file-length
+  suppression is gone.
+- **A5** `6ee6be9b`..`ba456af3`, review fixes `cff421c8`..`f32ceb5f`: the
+  337 KB characterization snapshot is replaced by
+  `migration-outcomes.test.ts` (41 tests): migrated schema equivalent to a
+  fresh store through a normalised description, idempotence, row-level results
+  of each data step, typed failures with the store untouched, and a digest of
+  the fresh schema that forces the question "do existing stores get this
+  change?". Removing any of the 20 steps fails at least one test, and ten
+  wrong-implementation mutations found by review are caught. `index.ts` is
+  deleted. No source-text test existed in `packages/usage-store`.
+- **B1** `29176e08`..`76f421e7`: `features/work` has 15 files at its top
+  level and nine subfolders; 74 renames, import paths and path strings only.
+  `browser-runtime-mode.ts` and `render-test-module.ts` are deleted. The
+  boundary checker now rejects a non-test `lib/foundation` module importing
+  `lib/features`.
+- **B2** `c1cff515`..`99a5d3f2`: 41 groups of source-text assertions in
+  `apps/web` and `packages/design-system`: 22 rewritten through load events,
+  SSR renders or Playwright, 8 deleted as already covered, 6 moved to the
+  boundary checker or a Biome restriction, 5 left with a reason
+  (`server-state-ownership.test.ts` call-shape scan and `QueryClient`
+  construction, phase keys in `sessions/detail/composition.test.ts`, token
+  variable names in `theme-token-references.test.ts`, the README check in
+  `first-run.test.ts`). Review: seven weakened guards, six fixed, one
+  accepted (below).
+- **C1** `5fab9d27`..`e0ff18a6`: nine in-scope assertions outside the web:
+  four moved to the boundary checker, one deleted as covered, four left
+  (they assert the shape of root build configuration in
+  `tools/check-typescript-coverage.test.ts` and
+  `tools/start-production.test.ts`). Review: four places where the
+  replacement rules were less strict than the tests, all fixed. The checker is
+  now three modules (`check-package-boundaries.ts`,
+  `package-boundary-reviewed-rules.ts`, `package-boundary-module-closures.ts`).
+- **D1** `1d906bec`..`bbd3ac44` and **E** `e6534f3f`, `cdf77671`: 36
+  definitions of `isRecord` became three (`report-core/src/datasets.ts`,
+  `skills/src/diagnostics.ts`, `mcp-adapter/src/registration.ts`: the last two
+  packages do not depend on report-core). Five copies of the same guard under
+  other names were replaced too. Three of the four array-accepting copies were
+  unified on a call-site proof; the fourth keeps its behaviour as
+  `isObjectLike` in `local-collectors/src/codex-review-worker.ts`, with a test.
+  No `package.json` change. Review: no regression.
+
+Debt counters after the plan: 256 complexity suppressions (264 before), 32
+file-length suppressions (33 before).
+
+### Findings for the operator (pre-existing, not fixed here)
+
+Both are in migration code, which this plan may not change. Each is pinned by
+a named test in `migration-outcomes.test.ts` that fails when a fix lands.
+
+1. **`work_fact_run_state.outcome_code` loses its CHECK on migrated stores.**
+   `migrateWorkFactSchema` adds the column with `ALTER TABLE … ADD COLUMN`,
+   which cannot carry the constraint a fresh store declares. A store created
+   between #67 (`4088634a`, 2026-10-25) and #74 (`fbb8c50b`, 2026-10-26) has
+   the column without it. Reproduced on disposable stores; inferred, not
+   observed, for real ones. Impact today is low: `recordWorkFactRun` validates
+   the value and `queryWorkFactRunStates` skips and counts an invalid row. It
+   is the only one of the 28 additively added columns that diverges from the
+   fresh DDL. A fix is a table rebuild migration.
+2. **The skill collection backfill reads a column a later step adds.**
+   `backfillSkillObservationCollectionState` (step 7) selects
+   `usage_rows.source_authority`, added by `addUsageRowColumns` (step 15). A
+   store last opened by a build older than `85b7c2a7` (2026-07-15) fails the
+   writer open with `migration-failure` ("no such column: source_authority");
+   the transaction rolls back and the store is untouched. Reproduced on a
+   disposable store. A store in continuous use is not affected; an old backup
+   would be. A fix moves the backfill after `addUsageRowColumns`.
+
+### Deviations and accepted gaps
+
+- Three rules moved from `bun run test` (inside `verify`) to
+  `test:web-bundle` / `test:web-client-manifest`, which run in CI but not in
+  local `verify`: the design-token check and the `report-client` /
+  `machine-freshness` import checks.
+- The design-system `test:browser` suite fails locally at
+  `overlays.browser.ts:214` (expected 390, received 375) and runs in no gate.
+  Pre-existing; B2 stopped relying on it and did not repair it.
+- The migration shapes are today's layout with pieces removed, not historical
+  DDL: a layout no shape reproduces is not covered.
+- An agent ran `git stash push`/`pop` once (the stash is shared with every
+  worktree); the stash list was checked intact and later briefs forbid it.
+  Two attempts to bypass a guard (`--no-verify`, a recursive delete) were
+  refused by the permission system and nothing was bypassed.
+- A machine restart killed the agent applying the A5 review fixes; a new
+  agent treated the uncommitted draft as unverified and reproduced every
+  mutation proof itself.
+
+### Final gate
+
+(recorded below once the full gate has run on the merged branch)
