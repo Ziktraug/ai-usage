@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { collectModuleClosureViolations } from './package-boundary-module-closures';
@@ -13,6 +13,7 @@ import {
   lineNumberFor,
   moduleImportPattern,
   type PackageBoundaryViolation,
+  readDirectoryInNameOrder,
 } from './package-boundary-reviewed-rules';
 
 export type { PackageBoundaryViolation } from './package-boundary-reviewed-rules';
@@ -367,7 +368,7 @@ async function discoverWorkspacePackages(root: string) {
   const packages = new Map<string, PackageInfo>();
   for (const parent of workspacePackageParents) {
     const parentPath = path.join(root, parent);
-    const entries = await readdir(parentPath, { withFileTypes: true });
+    const entries = await readDirectoryInNameOrder(parentPath);
     for (const entry of entries) {
       if (!entry.isDirectory()) {
         continue;

@@ -54,8 +54,21 @@ export const lineNumberFor = (text: string, index: number) => text.slice(0, inde
 
 const toRepositoryPath = (root: string, file: string): string => path.relative(root, file).split(path.sep).join('/');
 
+const compareCodeUnits = (left: string, right: string): number => {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
+
+/** A directory's entries in code-unit name order: `readdir` order is filesystem-dependent, reports must not be. */
+export const readDirectoryInNameOrder = async (directory: string) =>
+  (await readdir(directory, { withFileTypes: true })).toSorted((left, right) =>
+    compareCodeUnits(left.name, right.name),
+  );
+
 export async function collectSourceFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
+  const entries = await readDirectoryInNameOrder(directory);
   const files: string[] = [];
 
   for (const entry of entries) {
