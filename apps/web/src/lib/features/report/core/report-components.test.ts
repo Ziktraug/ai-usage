@@ -13,6 +13,7 @@ import { createWebRpcClient } from '../../../rpc/client';
 import { toWebReportPayload } from '../web-report-payload';
 import { acquireLiveReportQueryState } from './report-bootstrap';
 
+const CLASS_ATTRIBUTE_PATTERN = /class="([^"]*)"/g;
 const REPORT_FRESHNESS_PATTERN = /Data as of Jun 11, \d{2}:\d{2}/;
 
 const liveAcquisitionOptions = () => ({
@@ -272,5 +273,45 @@ describe('report Svelte SSR components', () => {
     expect(body).toContain('Report payload unavailable');
     expect(body).toContain('data-report-unavailable');
     expect(body).not.toContain('Report warnings');
+  });
+});
+
+describe('report alert tones', () => {
+  // Warnings and failures speak in the warning and danger roles, never in the interaction accent.
+  it('renders the refresh failure in the danger role and project warnings in the warning role', async () => {
+    const [statusModule, warningsModule] = await Promise.all([
+      viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-status.svelte'),
+      viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-warnings.svelte'),
+    ]);
+    const status = render(componentFrom(statusModule, 'Report status'), {
+      props: { pending: false, refreshError: 'The report refresh failed.' },
+    }).body;
+    const warnings = render(componentFrom(warningsModule, 'Report warnings'), {
+      props: {
+        warnings: [
+          {
+            groupId: 'g1',
+            groupName: 'coding-challenge',
+            message: 'Project group "coding-challenge" has unmatched selectors.',
+            reason: 'partial-group',
+            selectors: [{ project: 'loose' }],
+          },
+        ],
+      },
+    }).body;
+    const classOf = (html: string, marker: string): string[] =>
+      html.match(new RegExp(`<section[^>]*class="([^"]*)"[^>]*${marker}`))?.[1]?.split(' ') ?? [];
+
+    expect(classOf(status, 'data-report-refresh-error')).toEqual(
+      expect.arrayContaining(['bd-c_status.danger', 'bg_status.dangerSoft']),
+    );
+    const warningClasses = classOf(warnings, 'data-report-warnings');
+    expect(warningClasses).toContain('bd-s_2px_solid_token(colors.status.warn)');
+    expect(warnings).toContain('c_status.warn');
+    expect(
+      [...status.matchAll(CLASS_ATTRIBUTE_PATTERN), ...warnings.matchAll(CLASS_ATTRIBUTE_PATTERN)]
+        .flatMap(([, value]) => (value ?? '').split(' '))
+        .filter((name) => name.includes('accentTint')),
+    ).toEqual([]);
   });
 });

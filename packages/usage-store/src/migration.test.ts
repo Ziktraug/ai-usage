@@ -1,12 +1,13 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmod, mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { completeSkillObservationCollection } from '@ai-usage/report-core/skill-observation';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
+import { MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
 import {
   queryClaudeDesktopSessions,
   queryExecutorAccountChanges,
@@ -1433,7 +1434,7 @@ describe('usage schema 5 drops the replication outbox', () => {
     expect(writerRefusal).toMatchObject({
       _tag: 'UsageStoreError',
       operation: 'openUsageStoreWriter',
-      reason: 'storage-failure',
+      reason: 'schema-too-new',
     });
     expect(writerRefusal.message).toContain(
       `Usage store schema ${USAGE_STORE_SCHEMA_VERSION + 1} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
@@ -1485,5 +1486,122 @@ describe('usage schema 5 drops the replication outbox', () => {
 
     expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationBefore);
+  });
+});
+
+describe('a failed writer open carries a typed reason', () => {
+  const createFreshStore = async (prefix: string): Promise<string> => {
+    const root = await mkdtemp(path.join(tmpdir(), prefix));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    return dbPath;
+  };
+
+  test('a store newer than supported fails the writer open with schema-too-new and the quoted message', async () => {
+    const dbPath = await createFreshStore('usage-store-writer-schema-too-new-');
+    const newer = new Database(dbPath, { create: false, readwrite: true });
+    newer.exec(`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION + 1}`);
+    newer.close(true);
+
+    const refusal = await Effect.runPromise(Effect.flip(initializeUsageStore({ dbPath })));
+    expect(refusal).toMatchObject({
+      _tag: 'UsageStoreError',
+      operation: 'openUsageStoreWriter',
+      reason: 'schema-too-new',
+    });
+    expect(refusal.message).toBe(
+      `openUsageStoreWriter ${dbPath}: Usage store schema ${USAGE_STORE_SCHEMA_VERSION + 1} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
+    );
+  });
+
+  test('an incompatible local machine projection fails the writer open with migration-failure', async () => {
+    const dbPath = await createFreshStore('usage-store-writer-machine-projection-');
+    const conflict = new Database(dbPath, { create: false, readwrite: true });
+    conflict.exec(`
+      DROP TABLE usage_local_machine;
+      CREATE TABLE usage_local_machine (
+        singleton INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL,
+        machine_label TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    conflict.close(true);
+
+    const failed = await Effect.runPromise(Effect.flip(initializeUsageStore({ dbPath })));
+    expect(failed).toMatchObject({
+      _tag: 'UsageStoreError',
+      operation: 'openUsageStoreWriter',
+      reason: 'migration-failure',
+    });
+    expect(failed.message).toContain('The local machine projection schema is incompatible.');
+  });
+
+  test('provider quota history over its stream read budget fails the writer open with migration-failure', async () => {
+    const dbPath = await createFreshStore('usage-store-writer-quota-budget-');
+    const overBudget = new Database(dbPath, { create: false, readwrite: true });
+    // One observation per machine gives one stream each; dropping the read projections makes the
+    // migration backfill them and then enforce the budget.
+    overBudget.exec(`
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${MAX_PROVIDER_QUOTA_STREAMS + 1})
+      INSERT INTO provider_quota_observations (
+        provider_key, provider_label, account_scope, machine_id, machine_label, source_key, source_mode,
+        source_confidence, source_event_key, state, plan, provider_generated_at, first_observed_at,
+        last_observed_at, content_hash
+      )
+      SELECT
+        'codex', 'Codex', NULL, 'machine-' || i, NULL, 'poll', 'poll', 'authoritative', NULL, 'ok', NULL, NULL,
+        '2026-07-15T01:00:00.000Z', '2026-07-15T01:00:00.000Z', 'hash-' || i
+      FROM n;
+      DROP TABLE provider_quota_latest_heads;
+      DROP TABLE provider_quota_streams;
+    `);
+    overBudget.close(true);
+
+    const failed = await Effect.runPromise(Effect.flip(initializeUsageStore({ dbPath })));
+    expect(failed).toMatchObject({
+      _tag: 'UsageStoreError',
+      operation: 'openUsageStoreWriter',
+      reason: 'migration-failure',
+    });
+    expect(failed.message).toContain(`exceeds its ${MAX_PROVIDER_QUOTA_STREAMS}-stream read budget`);
+  });
+
+  test('an SQL error raised while migrating fails the writer open with migration-failure', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-writer-migration-sql-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      CREATE VIEW served_report_rows AS SELECT 1 AS incompatible;
+      PRAGMA user_version = 0;
+    `);
+    legacy.close(true);
+    await chmod(dbPath, 0o600);
+
+    const failed = await Effect.runPromise(Effect.flip(initializeUsageStore({ dbPath })));
+    expect(failed).toMatchObject({
+      _tag: 'UsageStoreError',
+      operation: 'openUsageStoreWriter',
+      reason: 'migration-failure',
+    });
+  });
+
+  test('an open failure outside the migration keeps storage-failure', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-writer-not-a-database-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    // SQLite rejects the file on its first statement, before the writer reaches the migration.
+    await writeFile(dbPath, 'this is not a SQLite database, only text long enough to fill a header.\n'.repeat(8), {
+      mode: 0o600,
+    });
+
+    const failed = await Effect.runPromise(Effect.flip(initializeUsageStore({ dbPath })));
+    expect(failed).toMatchObject({
+      _tag: 'UsageStoreError',
+      operation: 'openUsageStoreWriter',
+      reason: 'storage-failure',
+    });
   });
 });

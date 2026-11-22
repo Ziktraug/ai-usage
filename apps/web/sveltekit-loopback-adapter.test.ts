@@ -126,8 +126,51 @@ describe('loopback Bun adapter origin binding', () => {
 });
 
 const ENVIRONMENT_PREFIX_SHAPE = /^[A-Z][A-Z0-9_]*_$/;
-// The statement in `start.mjs` that writes each adapter value under the prefix, spelled as source.
-const PREFIXED_WRITE = ['process.env[`$', '{ADAPTER_ENVIRONMENT_PREFIX}$', '{key}`] = value;'].join('');
+const START_PORT = '48123';
+
+/**
+ * Runs `start.mjs` as production starts it, with the built server module it imports last replaced
+ * by one that prints the environment it would start under, so no build output is needed.
+ */
+const startEnvironment = async (inherited: Record<string, string>): Promise<Record<string, string>> => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-start-environment-'));
+  temporaryDirectories.push(directory);
+  const preload = path.join(directory, 'stub-server.ts');
+  await writeFile(
+    preload,
+    [
+      'Bun.plugin({',
+      "  name: 'stub built server',",
+      '  setup(build) {',
+      "    build.onResolve({ filter: /\\/\\.output-build\\/sveltekit\\/index\\.js$/ }, () => ({ namespace: 'stub-server', path: 'index' }));",
+      "    build.onLoad({ filter: /.*/, namespace: 'stub-server' }, () => ({",
+      "      contents: 'process.stdout.write(JSON.stringify(process.env));',",
+      "      loader: 'js',",
+      '    }));',
+      '  },',
+      '});',
+      '',
+    ].join('\n'),
+  );
+  const child = Bun.spawn([process.execPath, '--no-env-file', '--preload', preload, 'start.mjs'], {
+    cwd: import.meta.dir,
+    env: { PATH: process.env.PATH ?? '', ...inherited },
+    stderr: 'pipe',
+    stdout: 'pipe',
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (exitCode !== 0 || stderr !== '') {
+    throw new Error(`start.mjs exited ${exitCode}: ${stderr}`);
+  }
+  return JSON.parse(stdout) as Record<string, string>;
+};
+
+const prefixedEntries = (environment: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(environment).filter(([name]) => name.startsWith(ADAPTER_ENVIRONMENT_PREFIX)));
 
 describe('loopback Bun adapter environment', () => {
   // Every variable `@sveltejs/adapter-bun@1.0.0` reads, without its prefix. It refuses to start
@@ -156,16 +199,28 @@ describe('loopback Bun adapter environment', () => {
     expect(adapterVariables.some((name) => name.startsWith(ADAPTER_ENVIRONMENT_PREFIX))).toBe(false);
   });
 
-  test('start.mjs purges every inherited prefixed variable before writing its own under the same prefix', async () => {
-    const start = await readFile(path.join(import.meta.dir, 'start.mjs'), 'utf8');
+  test('start.mjs purges every inherited prefixed variable and writes only its own under the same prefix', async () => {
+    const environment = await startEnvironment({
+      [`${ADAPTER_ENVIRONMENT_PREFIX}HOST`]: '0.0.0.0',
+      [`${ADAPTER_ENVIRONMENT_PREFIX}SOCKET_PATH`]: '/tmp/inherited.sock',
+      [`${ADAPTER_ENVIRONMENT_PREFIX}UNREAD`]: 'inherited',
+      PORT: START_PORT,
+    });
 
-    expect(start).toContain(`const ADAPTER_ENVIRONMENT_PREFIX = '${ADAPTER_ENVIRONMENT_PREFIX}';`);
-    const purge = start.indexOf('key.startsWith(ADAPTER_ENVIRONMENT_PREFIX)');
-    const write = start.indexOf(PREFIXED_WRITE);
-    expect(purge).toBeGreaterThanOrEqual(0);
-    expect(write).toBeGreaterThan(purge);
-    // Unprefixed names never reach the adapter, so no deny-list of them is kept.
-    expect(start).not.toContain('untrustedAdapterEnvironmentKeys');
+    expect(Object.keys(prefixedEntries(environment)).sort()).toEqual(
+      ['BODY_SIZE_LIMIT', 'CONNECTION_IDLE_TIMEOUT', 'HOST', 'PORT', 'SHUTDOWN_TIMEOUT'].map(
+        (name) => `${ADAPTER_ENVIRONMENT_PREFIX}${name}`,
+      ),
+    );
+    expect(environment[`${ADAPTER_ENVIRONMENT_PREFIX}PORT`]).toBe(START_PORT);
+  });
+
+  test('start.mjs leaves unprefixed names alone: the adapter never reads them, so none is denied', async () => {
+    const environment = await startEnvironment({ HOST: '0.0.0.0', PORT: START_PORT, SOCKET_PATH: '/tmp/unread.sock' });
+
+    expect(environment.HOST).toBe('0.0.0.0');
+    expect(environment.SOCKET_PATH).toBe('/tmp/unread.sock');
+    expect(environment[`${ADAPTER_ENVIRONMENT_PREFIX}HOST`]).toBe(LOOPBACK_HOSTNAME);
   });
 });
 
@@ -181,10 +236,10 @@ describe('loopback Bun adapter listener default', () => {
     });
   });
 
-  test('start.mjs sets the same loopback address at runtime', async () => {
-    const start = await readFile(path.join(import.meta.dir, 'start.mjs'), 'utf8');
+  test('start.mjs sets the same loopback address and rebuilds the trusted origin from it at runtime', async () => {
+    const environment = await startEnvironment({ ORIGIN: 'http://attacker.invalid', PORT: START_PORT });
 
-    expect(start).toContain(`const LOOPBACK_HOST = '${LOOPBACK_HOSTNAME}';`);
-    expect(start).toContain('HOST: LOOPBACK_HOST,');
+    expect(environment[`${ADAPTER_ENVIRONMENT_PREFIX}HOST`]).toBe(LOOPBACK_HOSTNAME);
+    expect(environment[RUNTIME_ORIGIN_VARIABLE]).toBe(`http://${LOOPBACK_HOSTNAME}:${START_PORT}`);
   });
 });

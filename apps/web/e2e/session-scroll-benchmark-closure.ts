@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
+import { isRecord } from '@ai-usage/report-core/datasets';
 
 const LEADING_SLASH_PATTERN = /^\/+/;
 const ROUTE_GROUP_PATTERN = /\/\([^/]+\)/g;
@@ -12,9 +13,6 @@ interface ClientManifestEntry {
   readonly file: string;
   readonly imports?: readonly string[];
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** Route groups can move the report into a layout and renumber every generated node. */
 export const reportRouteClientEntryKeys = (appDir: string): readonly string[] => {

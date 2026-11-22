@@ -11,7 +11,7 @@ import {
   type LineMeasurementAccumulator,
   processedTokensForAnalytics,
 } from './analytics';
-import { parseReportDatasets, withoutRetiredCursorFacet } from './datasets';
+import { isRecord, parseReportDatasets, withoutRetiredCursorFacet } from './datasets';
 import { buildTokenFlow, parseTokenFlow, type TokenFlow } from './observatory';
 import { parseProjectGroupConfigs } from './project-group';
 import {
@@ -428,9 +428,6 @@ const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
  */
 const OTHER_MEMBER_SUMMARY_LIMIT = 10;
 const timelineGranularities = new Set<FocusedTimelineGranularity>(['day', 'month', 'week']);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const requireRecord = (value: unknown, label: string): Record<string, unknown> => {
   if (!isRecord(value)) {

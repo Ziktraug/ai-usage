@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import {
   parseSessionQueryRequest,
   type SessionQueryRequest,
@@ -15,9 +16,6 @@ import { webQueryClientDefaultOptions } from './policies';
 export interface WebQueryHydrationState {
   readonly dehydratedState: DehydratedState;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const SESSION_PAGES_SEED = 'session-pages' as const;
 

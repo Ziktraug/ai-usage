@@ -84,5 +84,5 @@ from a cached context, while the launch re-decided in the engine.
   `qualifyReviewRouting`, `buildRoutingQualification`) with `work-routing.test.ts`.
 - `packages/usage-engine-runtime/src/routing-qualification.ts`,
   `packages/usage-engine-control/src/contracts.ts` (`qualify-review-routing`),
-  `apps/web/src/lib/features/work/work-routing.svelte`.
+  `apps/web/src/lib/features/work/routing/work-routing.svelte`.
 - `plans/118-work-resume-cockpit.md`, lot M record.

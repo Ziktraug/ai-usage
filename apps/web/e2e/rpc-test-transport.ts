@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { StandardRPCJsonSerializer, StandardRPCSerializer } from '@orpc/client/standard';
 
 export const RPC_PATH_PREFIX = '/rpc/';
@@ -12,9 +13,6 @@ const EXPECTED_RPC_FAILURE_HEADER = 'x-ai-usage-e2e-expected-rpc-failure';
 const SKILLS_SAVE_FAILURE_MARKER = 'skills-save-interception';
 const CAMPAIGN_LABELS_FAILURE_MARKER = 'campaign-labels-interception';
 const rpcSerializer = new StandardRPCSerializer(new StandardRPCJsonSerializer());
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export const isRpcPathname = (pathname: string): boolean =>
   pathname === RPC_PATH_PREFIX.slice(0, -1) || pathname.startsWith(RPC_PATH_PREFIX);

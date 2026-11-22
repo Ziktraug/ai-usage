@@ -26,32 +26,36 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
+import { initializeUsageStore } from './connections';
+import { queryEnrichableUsageRows, upsertRtkSavingsContributions } from './enrichment';
+import { UsageStoreError } from './errors';
 import {
-  confirmPeerMergeBundle,
-  exportLocalMergeBundle,
   type ImportResult,
   importLocalRows,
+  retireLocalRows,
+  USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
+  updateUsageMachineLabel,
+} from './local-rows';
+import { queryUsageMachineFleet, usageStorePath } from './machine-fleet';
+import { USAGE_STORE_SCHEMA_VERSION } from './migration';
+import {
+  confirmPeerMergeBundle,
   importPeerMergeBundle,
-  importProviderQuotaBatch,
-  initializeUsageStore,
   type PreviewPeerMergeBundleResult,
   previewPeerMergeBundle,
-  queryEnrichableUsageRows,
+} from './peer-merge';
+import {
+  importProviderQuotaBatch,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
+} from './provider-quota-store';
+import {
+  exportLocalMergeBundle,
   queryReportRows,
-  queryUsageMachineFleet,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
-  retireLocalRows,
-  USAGE_ROW_FRESHNESS_HEARTBEAT_MS,
-  USAGE_STORE_SCHEMA_VERSION,
-  UsageStoreError,
-  updateUsageMachineLabel,
-  upsertRtkSavingsContributions,
-  usageStorePath,
-} from './index';
+} from './report-rows';
 
 const machineA: UsageMachine = { id: 'machine-a', label: 'Machine A' };
 const machineB: UsageMachine = { id: 'machine-b', label: 'Machine B' };
@@ -114,7 +118,9 @@ interface BarrierChild {
 
 type ConcurrentConfirmOutcome = { kind: 'preview-stale' } | { kind: 'success'; result: unknown };
 
-const USAGE_STORE_MODULE_URL = new URL('./index.ts', import.meta.url).href;
+const CONNECTIONS_MODULE_URL = new URL('./connections.ts', import.meta.url).href;
+const PEER_MERGE_MODULE_URL = new URL('./peer-merge.ts', import.meta.url).href;
+const REPORT_ROWS_MODULE_URL = new URL('./report-rows.ts', import.meta.url).href;
 const CONFIRM_SUCCESS_PREFIX = 'result:success:';
 
 const startBarrierChild = async (program: string): Promise<BarrierChild> => {
@@ -160,7 +166,7 @@ const startBarrierChild = async (program: string): Promise<BarrierChild> => {
 const startCompetingImport = async (dbPath: string, bundle: UsageMergeBundle): Promise<() => Promise<void>> => {
   const child = await startBarrierChild(`
     const { Effect } = await import('effect');
-    const { importPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+    const { importPeerMergeBundle } = await import(${JSON.stringify(PEER_MERGE_MODULE_URL)});
     process.stdout.write('ready\\n');
     await new Promise((resolve) => process.stdin.once('data', resolve));
     await Effect.runPromise(importPeerMergeBundle({
@@ -205,7 +211,7 @@ const runConcurrentConfirms = async (
       return originalExec.call(this, sql, ...params);
     };
     const { Effect } = await import('effect');
-    const { confirmPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+    const { confirmPeerMergeBundle } = await import(${JSON.stringify(PEER_MERGE_MODULE_URL)});
     const outcome = await Effect.runPromise(Effect.result(confirmPeerMergeBundle({
       bundle: ${JSON.stringify(bundle)},
       confirmationToken: ${JSON.stringify(confirmationToken)},
@@ -253,7 +259,7 @@ const previewAcrossNoGenerationMutation = async (
       };
     };
     const { Effect } = await import('effect');
-    const { previewPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+    const { previewPeerMergeBundle } = await import(${JSON.stringify(PEER_MERGE_MODULE_URL)});
     const preview = await Effect.runPromise(previewPeerMergeBundle({
       bundle: ${JSON.stringify(bundle)},
       dbPath: ${JSON.stringify(dbPath)},
@@ -1528,7 +1534,7 @@ describe('usage-store public boundary', () => {
         };
       };
       const { Effect } = await import('effect');
-      const { initializeUsageStore } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+      const { initializeUsageStore } = await import(${JSON.stringify(CONNECTIONS_MODULE_URL)});
       await Effect.runPromise(initializeUsageStore({ dbPath: ${JSON.stringify(dbPath)} }));
     `;
     const first = await startBarrierChild(program);
@@ -2019,7 +2025,7 @@ describe('usage-store public boundary', () => {
         };
       };
       const { Effect } = await import('effect');
-      const { queryStoredReportCapture } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+      const { queryStoredReportCapture } = await import(${JSON.stringify(REPORT_ROWS_MODULE_URL)});
       const capture = await Effect.runPromise(queryStoredReportCapture({
         dbPath: ${JSON.stringify(dbPath)},
         maximumMachines: 1,

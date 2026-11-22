@@ -4,6 +4,7 @@ import { lstat, open, rename, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { isRecord } from './diagnostics';
 
 const mutationLocks = new Map<string, Promise<void>>();
 const fileLockAcquireTimeoutMs = 10_000;
@@ -13,9 +14,6 @@ const fileLockLeaseMs = 2000;
 const fileLockRetryMs = 10;
 const maxFileLockMetadataBytes = 1024;
 const localHostname = hostname();
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isMissingPathError = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT';
 

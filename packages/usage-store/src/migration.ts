@@ -1,15 +1,15 @@
 import { isSerializedMergeRow, migrateLegacySerializedMergeRow } from '@ai-usage/report-core/merge-bundle';
-import { CLAUDE_DESKTOP_SESSION_TABLES, claudeDesktopSessionSchemaSql } from './claude-desktop-session-store';
-import { CODEX_WORK_TABLES, codexWorkSchemaSql } from './codex-work-store';
-import { DELEGATION_TABLES, migrateDelegationSchema } from './delegation-store';
-import { migrateExecutorAccountChangeSchema } from './executor-observation-store';
+import { CLAUDE_DESKTOP_SESSION_TABLES, claudeDesktopSessionSchemaSql } from './claude-desktop-session-schema';
+import { CODEX_WORK_TABLES, codexWorkSchemaSql } from './codex-work-schema';
+import { DELEGATION_TABLES, migrateDelegationSchema } from './delegation-schema';
+import { migrateExecutorAccountChangeSchema } from './executor-observation-schema';
 import {
   fleetMetadataForStoredRow,
   rebuildUsageMachineFleetOrder,
   type StoredMachineFleetRow,
 } from './machine-fleet-order';
-import { MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
-import { migrateReviewAttemptSchema, REVIEW_ATTEMPT_TABLES } from './review-attempt-store';
+import { MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-schema';
+import { migrateReviewAttemptSchema, REVIEW_ATTEMPT_TABLES } from './review-attempt-schema';
 import {
   enrichmentContentHash,
   RTK_SAVINGS_SCHEMA_VERSION,
@@ -19,10 +19,19 @@ import {
 import { servedReportSchemaSql } from './served-revision';
 import type { SqliteDatabase } from './sqlite-database';
 import type { StoredUsageRowStatus } from './stored-usage-row';
-import { migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-store';
-import { WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-store';
+import { migrateWorkFactSchema, WORK_FACT_TABLES, workFactSchemaSql } from './work-fact-schema';
+import { WORK_THREAD_TABLES, workThreadSchemaSql } from './work-thread-schema';
 
 export const USAGE_STORE_SCHEMA_VERSION = 5;
+
+/**
+ * Raised by `migrate()` when the store was written by a newer schema. The writer open maps it to the
+ * `schema-too-new` reason; lock contention (`SQLITE_BUSY`/`SQLITE_LOCKED`) keeps `storage-failure`, and every
+ * other failure raised inside `migrate()` is a `migration-failure`.
+ */
+export class UsageStoreSchemaTooNewError extends Error {
+  override readonly name = 'UsageStoreSchemaTooNewError';
+}
 
 export interface UsageStoreGenerationRecord {
   value: number;
@@ -49,22 +58,59 @@ export const hasExactUsageLocalMachineSchema = (db: SqliteDatabase): boolean => 
   );
 };
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-export const migrate = (db: SqliteDatabase): boolean => {
+// ---------------------------------------------------------------------------------------------------------
+// Probe: what the store lacks, read before the migration transaction opens.
+
+interface MigrationProbe {
+  readonly quotaReadProjectionMissing: boolean;
+  readonly schemaChanged: boolean;
+  readonly skillObservationCollectionStateMissing: boolean;
+  readonly userVersion: number;
+}
+
+const readSchemaVersion = (db: SqliteDatabase): number => {
   const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
   if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
-    throw new Error(
+    throw new UsageStoreSchemaTooNewError(
       `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
     );
   }
-  let schemaChanged =
-    schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION ||
+  return schemaVersion.user_version;
+};
+
+const familyTablesMissing = (db: SqliteDatabase, tables: readonly string[]): boolean =>
+  tables.some((table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null);
+
+// Every additive family is probed, in this order, each stopping at its first missing table; the result is
+// whether any family lacks a table.
+const additiveFamiliesMissing = (db: SqliteDatabase): boolean =>
+  [
+    // The external and local fact family (ADR 0051) is additive under the same user_version; the
+    // tables' absence is again the only signal.
+    WORK_FACT_TABLES,
+    // Same precedent for the Claude Desktop session family (ADR 0050): additive tables under the
+    // current user_version, so presence is the only signal.
+    CLAUDE_DESKTOP_SESSION_TABLES,
+    CODEX_WORK_TABLES,
+    // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
+    REVIEW_ATTEMPT_TABLES,
+    // Delegation jobs, evaluations and qualifications (design 2026-10-25) follow the same additive
+    // rule under user_version 4: presence of the three tables is the signal.
+    DELEGATION_TABLES,
+    WORK_THREAD_TABLES,
+  ]
+    .map((tables) => familyTablesMissing(db, tables))
+    .includes(true);
+
+const probeStore = (db: SqliteDatabase): MigrationProbe => {
+  const userVersion = readSchemaVersion(db);
+  const versionOrMetadataChanged =
+    userVersion < USAGE_STORE_SCHEMA_VERSION ||
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'usage_store_metadata'").get() === null;
   const quotaReadProjectionMissing =
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'provider_quota_streams'").get() === null ||
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'provider_quota_latest_heads'").get() ===
       null;
-  schemaChanged ||= quotaReadProjectionMissing;
   // A store written before the skill-observation family existed carries the
   // current user_version, so absence of the table is the only signal that this
   // migration has work to do.
@@ -74,49 +120,39 @@ export const migrate = (db: SqliteDatabase): boolean => {
     db
       .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'skill_observation_collection_state'")
       .get() === null;
-  schemaChanged ||= skillObservationsMissing || skillObservationCollectionStateMissing;
   // Executor observations (review routing) are additive under the same user_version; presence is
   // again the only signal.
   const executorObservationsMissing =
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'executor_observations'").get() === null;
-  schemaChanged ||= executorObservationsMissing;
-  // The external and local fact family (ADR 0051) is additive under the same user_version; the
-  // tables' absence is again the only signal.
-  const workFactTablesMissing = WORK_FACT_TABLES.some(
-    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-  );
-  schemaChanged ||= workFactTablesMissing;
-  // Same precedent for the Claude Desktop session family (ADR 0050): additive tables under the
-  // current user_version, so presence is the only signal.
-  const claudeDesktopSessionsMissing = CLAUDE_DESKTOP_SESSION_TABLES.some(
-    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-  );
-  schemaChanged ||= claudeDesktopSessionsMissing;
-  const codexWorkMissing = CODEX_WORK_TABLES.some(
-    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-  );
-  schemaChanged ||= codexWorkMissing;
-  // Review attempts (ADR 0053) follow the same additive rule: presence of the table is the signal.
-  const reviewAttemptsMissing = REVIEW_ATTEMPT_TABLES.some(
-    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-  );
-  schemaChanged ||= reviewAttemptsMissing;
-  // Delegation jobs, evaluations and qualifications (design 2026-10-25) follow the same additive
-  // rule under user_version 4: presence of the three tables is the signal.
-  const delegationTablesMissing = DELEGATION_TABLES.some(
-    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-  );
-  schemaChanged ||= delegationTablesMissing;
-  const workThreadsMissing = WORK_THREAD_TABLES.some(
-    (table) => db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table) === null,
-  );
-  schemaChanged ||= workThreadsMissing;
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    // Skill tier and observable-producer literals in this schema-v3 migration are historical
-    // snapshots. Changing them requires a new schema migration; do not derive them from runtime
-    // capability constants.
-    db.exec(`
+  const additiveFamilyMissing = additiveFamiliesMissing(db);
+  return {
+    quotaReadProjectionMissing,
+    schemaChanged:
+      versionOrMetadataChanged ||
+      quotaReadProjectionMissing ||
+      skillObservationsMissing ||
+      skillObservationCollectionStateMissing ||
+      executorObservationsMissing ||
+      additiveFamilyMissing,
+    skillObservationCollectionStateMissing,
+    userVersion,
+  };
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Steps: one per table family, run in order inside the migration transaction. Each reports whether it
+// changed the schema or data beyond what the probe already detected. The SQL templates keep the text, and
+// so the indentation, they had in the single `migrate()` body: a migration's statements must not change.
+
+type MigrationStep = (db: SqliteDatabase, probe: MigrationProbe) => boolean;
+
+// Core rows and metadata, machine fleet order, local machine projection, row enrichments, retired dataset
+// items, provider quota, skill observations and executor observations: one schema statement.
+const createBaseSchema: MigrationStep = (db) => {
+  // Skill tier and observable-producer literals in this schema-v3 migration are historical
+  // snapshots. Changing them requires a new schema migration; do not derive them from runtime
+  // capability constants.
+  db.exec(`
       CREATE TABLE IF NOT EXISTS usage_rows (
       origin_machine_id TEXT NOT NULL,
       harness_key TEXT NOT NULL,
@@ -406,43 +442,55 @@ export const migrate = (db: SqliteDatabase): boolean => {
     CREATE INDEX IF NOT EXISTS idx_executor_observations_latest
       ON executor_observations(machine_id, harness, observed_at DESC, id DESC);
     `);
-    db.exec(workFactSchemaSql);
-    if (migrateWorkFactSchema(db)) {
-      schemaChanged = true;
-    }
-    db.exec(workThreadSchemaSql);
-    // Additive under the same user_version: a store that created executor_observations before the
-    // sign-in method was recorded gains the nullable column; older rows read as "no method".
-    const executorColumns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
-    if (!executorColumns.some((column) => column.name === 'auth_method')) {
-      schemaChanged = true;
-      db.exec('ALTER TABLE executor_observations ADD COLUMN auth_method TEXT');
-    }
-    // Same rule for the account fingerprint (ADR 0057): older rows read as "no identity reported".
-    if (!executorColumns.some((column) => column.name === 'account_fingerprint')) {
-      schemaChanged = true;
-      db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
-    }
-    // The account-change barrier table is created when absent, under the same user_version, and
-    // backfilled from the retained history; it needs the fingerprint column above.
-    if (migrateExecutorAccountChangeSchema(db)) {
-      schemaChanged = true;
-    }
-    // Review attempts gain the reservation, scope and guarantee columns and the reserving unique
-    // index additively (ADR 0055); the helper reports whether it changed anything.
-    if (migrateReviewAttemptSchema(db)) {
-      schemaChanged = true;
-    }
-    // The delegation tables are created when absent, under the same user_version (ADR 0075).
-    if (migrateDelegationSchema(db)) {
-      schemaChanged = true;
-    }
-    if (skillObservationCollectionStateMissing) {
-      // Stores written by the first implementation have observation/session
-      // rows but no durable producer bound. The lost answer cannot be
-      // reconstructed, so migrate those observable machine/harness pairs as
-      // incomplete until their next successful sweep replaces the sentinel.
-      db.query(`
+  return false;
+};
+
+const migrateWorkFactFamily: MigrationStep = (db) => {
+  db.exec(workFactSchemaSql);
+  return migrateWorkFactSchema(db);
+};
+
+const createWorkThreadTables: MigrationStep = (db) => {
+  db.exec(workThreadSchemaSql);
+  return false;
+};
+
+const migrateExecutorObservations: MigrationStep = (db) => {
+  let changed = false;
+  // Additive under the same user_version: a store that created executor_observations before the
+  // sign-in method was recorded gains the nullable column; older rows read as "no method".
+  const executorColumns = db.query('PRAGMA table_info(executor_observations)').all() as Array<{ name?: unknown }>;
+  if (!executorColumns.some((column) => column.name === 'auth_method')) {
+    changed = true;
+    db.exec('ALTER TABLE executor_observations ADD COLUMN auth_method TEXT');
+  }
+  // Same rule for the account fingerprint (ADR 0057): older rows read as "no identity reported".
+  if (!executorColumns.some((column) => column.name === 'account_fingerprint')) {
+    changed = true;
+    db.exec('ALTER TABLE executor_observations ADD COLUMN account_fingerprint TEXT');
+  }
+  // The account-change barrier table is created when absent, under the same user_version, and
+  // backfilled from the retained history; it needs the fingerprint column above.
+  if (migrateExecutorAccountChangeSchema(db)) {
+    changed = true;
+  }
+  return changed;
+};
+
+// Review attempts gain the reservation, scope and guarantee columns and the reserving unique
+// index additively (ADR 0055); the helper reports whether it changed anything.
+const migrateReviewAttempts: MigrationStep = (db) => migrateReviewAttemptSchema(db);
+
+// The delegation tables are created when absent, under the same user_version (ADR 0075).
+const migrateDelegation: MigrationStep = (db) => migrateDelegationSchema(db);
+
+const backfillSkillObservationCollectionState: MigrationStep = (db, probe) => {
+  if (probe.skillObservationCollectionStateMissing) {
+    // Stores written by the first implementation have observation/session
+    // rows but no durable producer bound. The lost answer cannot be
+    // reconstructed, so migrate those observable machine/harness pairs as
+    // incomplete until their next successful sweep replaces the sentinel.
+    db.query(`
         INSERT INTO skill_observation_collection_state (
           machine_id, harness_key,
           invocation_truncated, invocation_rejected,
@@ -463,36 +511,64 @@ export const migrate = (db: SqliteDatabase): boolean => {
           GROUP BY machine_id, harness_key
         )
       `).run(new Date().toISOString());
-      const { changed } = db.query('SELECT changes() AS changed').get() as { changed: number };
-      if (changed > 0) {
-        db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
-      }
+    const { changed } = db.query('SELECT changes() AS changed').get() as { changed: number };
+    if (changed > 0) {
+      db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
     }
-    db.exec(claudeDesktopSessionSchemaSql);
-    db.exec(codexWorkSchemaSql);
-    // Additive under the same user_version (ADR 0056): a claude_desktop_sessions table created before
-    // the harness's message time was recorded gains the nullable column; older rows read as "none".
-    const desktopColumns = db.query('PRAGMA table_info(claude_desktop_sessions)').all() as Array<{ name?: unknown }>;
-    if (!desktopColumns.some((column) => column.name === 'latest_user_frame_at')) {
-      schemaChanged = true;
-      db.exec('ALTER TABLE claude_desktop_sessions ADD COLUMN latest_user_frame_at TEXT');
-    }
-    // Schema 5 drops the replication outbox that schema 4 added: the store is local-only and nothing
-    // reads or writes those objects any more. Schema-3 and fresh stores never had them, hence IF EXISTS.
-    if (schemaVersion.user_version < 5) {
-      db.exec(`
+  }
+  return false;
+};
+
+const createClaudeDesktopSessionTables: MigrationStep = (db) => {
+  db.exec(claudeDesktopSessionSchemaSql);
+  return false;
+};
+
+const createCodexWorkTables: MigrationStep = (db) => {
+  db.exec(codexWorkSchemaSql);
+  return false;
+};
+
+// Additive under the same user_version (ADR 0056): a claude_desktop_sessions table created before
+// the harness's message time was recorded gains the nullable column; older rows read as "none".
+const addClaudeDesktopMessageTime: MigrationStep = (db) => {
+  const desktopColumns = db.query('PRAGMA table_info(claude_desktop_sessions)').all() as Array<{ name?: unknown }>;
+  if (!desktopColumns.some((column) => column.name === 'latest_user_frame_at')) {
+    db.exec('ALTER TABLE claude_desktop_sessions ADD COLUMN latest_user_frame_at TEXT');
+    return true;
+  }
+  return false;
+};
+
+// Schema 5 drops the replication outbox that schema 4 added: the store is local-only and nothing
+// reads or writes those objects any more. Schema-3 and fresh stores never had them, hence IF EXISTS.
+const dropReplicationOutbox: MigrationStep = (db, probe) => {
+  if (probe.userVersion < 5) {
+    db.exec(`
         DROP INDEX IF EXISTS idx_replication_outbox_ready;
         DROP INDEX IF EXISTS idx_replication_outbox_fact_history;
         DROP TABLE IF EXISTS replication_outbox_events;
         DROP TABLE IF EXISTS replication_outbox_state;
       `);
-    }
-    db.exec(servedReportSchemaSql);
-    if (!hasExactUsageLocalMachineSchema(db)) {
-      throw new Error('The local machine projection schema is incompatible.');
-    }
-    if (quotaReadProjectionMissing) {
-      db.exec(`
+  }
+  return false;
+};
+
+const createServedReportTables: MigrationStep = (db) => {
+  db.exec(servedReportSchemaSql);
+  return false;
+};
+
+const assertLocalMachineProjection: MigrationStep = (db) => {
+  if (!hasExactUsageLocalMachineSchema(db)) {
+    throw new Error('The local machine projection schema is incompatible.');
+  }
+  return false;
+};
+
+const backfillProviderQuotaReadProjections: MigrationStep = (db, probe) => {
+  if (probe.quotaReadProjectionMissing) {
+    db.exec(`
         INSERT OR IGNORE INTO provider_quota_streams (
           provider_key, machine_id, account_scope_key, account_scope, source_key
         )
@@ -530,31 +606,40 @@ export const migrate = (db: SqliteDatabase): boolean => {
         FROM ranked
         WHERE latest_rank = 1;
       `);
-      const streamBudgetRows = db
-        .query('SELECT 1 FROM provider_quota_streams LIMIT ?')
-        .all(MAX_PROVIDER_QUOTA_STREAMS + 1);
-      if (streamBudgetRows.length > MAX_PROVIDER_QUOTA_STREAMS) {
-        throw new Error(`Provider quota history exceeds its ${MAX_PROVIDER_QUOTA_STREAMS}-stream read budget`);
-      }
+    const streamBudgetRows = db
+      .query('SELECT 1 FROM provider_quota_streams LIMIT ?')
+      .all(MAX_PROVIDER_QUOTA_STREAMS + 1);
+    if (streamBudgetRows.length > MAX_PROVIDER_QUOTA_STREAMS) {
+      throw new Error(`Provider quota history exceeds its ${MAX_PROVIDER_QUOTA_STREAMS}-stream read budget`);
     }
-    const columns = db.query('PRAGMA table_info(usage_rows)').all() as Array<{ name?: unknown }>;
-    if (!columns.some((column) => column.name === 'source_authority')) {
-      schemaChanged = true;
-      db.exec(
-        "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
-      );
-    }
-    if (!columns.some((column) => column.name === 'machine_label')) {
-      schemaChanged = true;
-      db.exec("ALTER TABLE usage_rows ADD COLUMN machine_label TEXT NOT NULL DEFAULT ''");
-    }
-    if (!columns.some((column) => column.name === 'fleet_metadata_valid')) {
-      schemaChanged = true;
-      db.exec(
-        'ALTER TABLE usage_rows ADD COLUMN fleet_metadata_valid INTEGER NOT NULL DEFAULT 0 CHECK (fleet_metadata_valid IN (0, 1))',
-      );
-    }
-    db.exec(`
+  }
+  return false;
+};
+
+const addUsageRowColumns: MigrationStep = (db) => {
+  let changed = false;
+  const columns = db.query('PRAGMA table_info(usage_rows)').all() as Array<{ name?: unknown }>;
+  if (!columns.some((column) => column.name === 'source_authority')) {
+    changed = true;
+    db.exec(
+      "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
+    );
+  }
+  if (!columns.some((column) => column.name === 'machine_label')) {
+    changed = true;
+    db.exec("ALTER TABLE usage_rows ADD COLUMN machine_label TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columns.some((column) => column.name === 'fleet_metadata_valid')) {
+    changed = true;
+    db.exec(
+      'ALTER TABLE usage_rows ADD COLUMN fleet_metadata_valid INTEGER NOT NULL DEFAULT 0 CHECK (fleet_metadata_valid IN (0, 1))',
+    );
+  }
+  return changed;
+};
+
+const createMachineFleetInvalidation: MigrationStep = (db) => {
+  db.exec(`
       CREATE INDEX IF NOT EXISTS idx_usage_rows_fleet
         ON usage_rows(fleet_metadata_valid, origin_machine_id, last_seen_at DESC, row_key ASC);
 
@@ -574,132 +659,188 @@ export const migrate = (db: SqliteDatabase): boolean => {
         WHERE row_key = NEW.row_key;
       END;
     `);
-    const mergeRowMigration = db
-      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.merge-row-v3-vcs'")
-      .get() as UsageStoreGenerationRecord | null;
-    if (mergeRowMigration?.value === 0) {
-      schemaChanged = true;
-      const migratedAt = new Date().toISOString();
-      const legacyRows = db
-        .query('SELECT row_key, source_fingerprint, content_hash, row_json, status FROM usage_rows')
-        .all() as Array<{
-        content_hash: string;
-        row_json: string;
-        row_key: string;
-        source_fingerprint: string;
-        status: StoredUsageRowStatus;
-      }>;
-      const updateLegacyRow = db.query(`
+  return false;
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// Legacy row migrations, each guarded by its `migration.*` marker in usage_store_metadata.
+
+const migrateMergeRowsToVcs: MigrationStep = (db) => {
+  const mergeRowMigration = db
+    .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.merge-row-v3-vcs'")
+    .get() as UsageStoreGenerationRecord | null;
+  if (mergeRowMigration?.value !== 0) {
+    return false;
+  }
+  const migratedAt = new Date().toISOString();
+  const legacyRows = db
+    .query('SELECT row_key, source_fingerprint, content_hash, row_json, status FROM usage_rows')
+    .all() as Array<{
+    content_hash: string;
+    row_json: string;
+    row_key: string;
+    source_fingerprint: string;
+    status: StoredUsageRowStatus;
+  }>;
+  const updateLegacyRow = db.query(`
         UPDATE usage_rows
         SET source_fingerprint = ?, content_hash = ?, row_json = ?, updated_at = ?
         WHERE row_key = ?
       `);
-      let activeProjectionChanged = false;
-      for (const legacy of legacyRows) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(legacy.row_json) as unknown;
-        } catch {
-          continue;
-        }
-        const migrationResult = migrateLegacySerializedMergeRow(parsed);
-        if (
-          !migrationResult ||
-          migrationResult.legacy.rowKey !== legacy.row_key ||
-          migrationResult.legacy.sourceFingerprint !== legacy.source_fingerprint ||
-          migrationResult.legacy.contentHash !== legacy.content_hash ||
-          migrationResult.legacy.status !== legacy.status
-        ) {
-          continue;
-        }
-        const migrated = migrationResult.row;
-        updateLegacyRow.run(
-          migrated.sourceFingerprint,
-          migrated.contentHash,
-          JSON.stringify(migrated),
-          migratedAt,
-          migrated.rowKey,
-        );
-        activeProjectionChanged ||= migrated.status === 'active';
-      }
-      if (activeProjectionChanged) {
-        db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
-      }
-      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.merge-row-v3-vcs'").run();
+  let activeProjectionChanged = false;
+  for (const legacy of legacyRows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(legacy.row_json) as unknown;
+    } catch {
+      continue;
     }
-    const migration = db
-      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.rtk-contributions-v1'")
-      .get() as UsageStoreGenerationRecord | null;
-    if (migration?.value === 0) {
-      schemaChanged = true;
-      const migratedAt = new Date().toISOString();
-      const legacyRows = db.query('SELECT row_key, row_json FROM usage_rows').all() as Array<{
-        row_json: string;
-        row_key: string;
-      }>;
-      const insert = db.query(`
+    const migrationResult = migrateLegacySerializedMergeRow(parsed);
+    if (
+      !migrationResult ||
+      migrationResult.legacy.rowKey !== legacy.row_key ||
+      migrationResult.legacy.sourceFingerprint !== legacy.source_fingerprint ||
+      migrationResult.legacy.contentHash !== legacy.content_hash ||
+      migrationResult.legacy.status !== legacy.status
+    ) {
+      continue;
+    }
+    const migrated = migrationResult.row;
+    updateLegacyRow.run(
+      migrated.sourceFingerprint,
+      migrated.contentHash,
+      JSON.stringify(migrated),
+      migratedAt,
+      migrated.rowKey,
+    );
+    activeProjectionChanged ||= migrated.status === 'active';
+  }
+  if (activeProjectionChanged) {
+    db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+  }
+  db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.merge-row-v3-vcs'").run();
+  return true;
+};
+
+const migrateRtkContributions: MigrationStep = (db) => {
+  const migration = db
+    .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.rtk-contributions-v1'")
+    .get() as UsageStoreGenerationRecord | null;
+  if (migration?.value !== 0) {
+    return false;
+  }
+  const migratedAt = new Date().toISOString();
+  const legacyRows = db.query('SELECT row_key, row_json FROM usage_rows').all() as Array<{
+    row_json: string;
+    row_key: string;
+  }>;
+  const insert = db.query(`
         INSERT OR IGNORE INTO usage_row_enrichments (
           row_key, source_id, schema_version, content_hash, payload_json,
           first_seen_at, last_seen_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      for (const legacy of legacyRows) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(legacy.row_json) as unknown;
-        } catch {
-          continue;
-        }
-        if (!isSerializedMergeRow(parsed)) {
-          continue;
-        }
-        const contribution = rtkSavingsFromRow(parsed);
-        if (!contribution) {
-          continue;
-        }
-        insert.run(
-          legacy.row_key,
-          RTK_SAVINGS_SOURCE_ID,
-          RTK_SAVINGS_SCHEMA_VERSION,
-          enrichmentContentHash(contribution),
-          JSON.stringify(contribution),
-          migratedAt,
-          migratedAt,
-          migratedAt,
-        );
-      }
-      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.rtk-contributions-v1'").run();
+  for (const legacy of legacyRows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(legacy.row_json) as unknown;
+    } catch {
+      continue;
     }
-    const fleetMetadataMigration = db
-      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.machine-fleet-metadata-v1'")
-      .get() as UsageStoreGenerationRecord | null;
-    if (fleetMetadataMigration?.value === 0) {
-      schemaChanged = true;
-      const legacyRows = db
-        .query(`
+    if (!isSerializedMergeRow(parsed)) {
+      continue;
+    }
+    const contribution = rtkSavingsFromRow(parsed);
+    if (!contribution) {
+      continue;
+    }
+    insert.run(
+      legacy.row_key,
+      RTK_SAVINGS_SOURCE_ID,
+      RTK_SAVINGS_SCHEMA_VERSION,
+      enrichmentContentHash(contribution),
+      JSON.stringify(contribution),
+      migratedAt,
+      migratedAt,
+      migratedAt,
+    );
+  }
+  db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.rtk-contributions-v1'").run();
+  return true;
+};
+
+const migrateMachineFleetMetadata: MigrationStep = (db) => {
+  const fleetMetadataMigration = db
+    .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.machine-fleet-metadata-v1'")
+    .get() as UsageStoreGenerationRecord | null;
+  if (fleetMetadataMigration?.value !== 0) {
+    return false;
+  }
+  const legacyRows = db
+    .query(`
           SELECT active_date, last_seen_at, origin_machine_id, row_json, row_key, source_authority, status
           FROM usage_rows
           ORDER BY origin_machine_id, row_key
         `)
-        .iterate() as IterableIterator<StoredMachineFleetRow>;
-      const updateFleetMetadata = db.query(`
+    .iterate() as IterableIterator<StoredMachineFleetRow>;
+  const updateFleetMetadata = db.query(`
         UPDATE usage_rows
         SET machine_label = ?, fleet_metadata_valid = ?
         WHERE row_key = ?
       `);
-      for (const row of legacyRows) {
-        const metadata = fleetMetadataForStoredRow(row);
-        updateFleetMetadata.run(metadata?.machineLabel ?? '', metadata ? 1 : 0, row.row_key);
+  for (const row of legacyRows) {
+    const metadata = fleetMetadataForStoredRow(row);
+    updateFleetMetadata.run(metadata?.machineLabel ?? '', metadata ? 1 : 0, row.row_key);
+  }
+  db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-metadata-v1'").run();
+  return true;
+};
+
+const migrateMachineFleetOrder: MigrationStep = (db) => {
+  const fleetOrderMigration = db
+    .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.machine-fleet-order-v1'")
+    .get() as UsageStoreGenerationRecord | null;
+  if (fleetOrderMigration?.value !== 0) {
+    return false;
+  }
+  rebuildUsageMachineFleetOrder(db);
+  db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-order-v1'").run();
+  return true;
+};
+
+// The order is the migration's order; every step runs on every open.
+const MIGRATION_STEPS: readonly MigrationStep[] = [
+  createBaseSchema,
+  migrateWorkFactFamily,
+  createWorkThreadTables,
+  migrateExecutorObservations,
+  migrateReviewAttempts,
+  migrateDelegation,
+  backfillSkillObservationCollectionState,
+  createClaudeDesktopSessionTables,
+  createCodexWorkTables,
+  addClaudeDesktopMessageTime,
+  dropReplicationOutbox,
+  createServedReportTables,
+  assertLocalMachineProjection,
+  backfillProviderQuotaReadProjections,
+  addUsageRowColumns,
+  createMachineFleetInvalidation,
+  migrateMergeRowsToVcs,
+  migrateRtkContributions,
+  migrateMachineFleetMetadata,
+  migrateMachineFleetOrder,
+];
+
+export const migrate = (db: SqliteDatabase): boolean => {
+  const probe = probeStore(db);
+  let schemaChanged = probe.schemaChanged;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const step of MIGRATION_STEPS) {
+      if (step(db, probe)) {
+        schemaChanged = true;
       }
-      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-metadata-v1'").run();
-    }
-    const fleetOrderMigration = db
-      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.machine-fleet-order-v1'")
-      .get() as UsageStoreGenerationRecord | null;
-    if (fleetOrderMigration?.value === 0) {
-      schemaChanged = true;
-      rebuildUsageMachineFleetOrder(db);
-      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-order-v1'").run();
     }
     db.exec(`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION}`);
     db.exec('COMMIT');

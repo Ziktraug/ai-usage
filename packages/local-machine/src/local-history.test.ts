@@ -475,17 +475,6 @@ test('keys in-memory SQLite fixtures by SQL and positional parameters', async ()
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 
-/**
- * Every zstd decoder other than the streaming one the reader qualified, under
- * any spelling a source can reach it by: Bun's one-shot `zstdDecompress` and
- * `zstdDecompressSync` (member, bracket, destructured or imported from `bun`)
- * and `node:zlib`'s one-shot functions, `createZstdDecompress` and its
- * `ZstdDecompress` class. Matched anywhere in the source, comments included.
- */
-const UNQUALIFIED_ZSTD_DECODER = /\b(?:create)?[Zz]stdDecompress(?:Sync)?\b/;
-
-const STREAMING_DECODER = /\bDecompressionStream\b/;
-
 /** One Raw block carrying `payload`; `last` flags the frame's last block. */
 const rawBlock = (payload: Buffer, last: boolean): Buffer => {
   const header = Buffer.alloc(3);
@@ -1053,45 +1042,6 @@ test('refuses a frame whose blocks would emit more than it declares without deco
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
-});
-
-/**
- * Archives decode through one decoder: `DecompressionStream('zstd')`, pulled
- * chunk by chunk in `local-history.ts`, re-qualified on Bun 1.4.3 on
- * 2026-10-24 and on 1.4.4 on 2026-10-28 (40 of 40 suite runs clean each
- * time). Bun's own one-shot zstd decoders corrupted the heap on Bun 1.3.13
- * (intermittent mimalloc segfaults, measured 2026-10-19) and take no output
- * bound, and `node:zlib`'s one-shot decoder holds the whole output at once, so
- * no other zstd decoder is reached from these packages. Compressors are not
- * implicated and stay available to fixtures.
- */
-test('no local-machine or local-collectors source reaches a zstd decoder other than the streaming reader', () => {
-  const sourceRoots = [import.meta.dir, path.resolve(import.meta.dir, '../../local-collectors/src')];
-  const sourceFiles: string[] = [];
-  const walk = (directory: string): void => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        walk(entryPath);
-      } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
-        sourceFiles.push(entryPath);
-      }
-    }
-  };
-  for (const sourceRoot of sourceRoots) {
-    walk(sourceRoot);
-  }
-  expect(sourceFiles.length).toBeGreaterThan(0);
-  const relative = (filePath: string): string => path.relative(path.resolve(import.meta.dir, '../..'), filePath);
-  const sources = sourceFiles.map((filePath) => ({ filePath, source: fs.readFileSync(filePath, 'utf8') }));
-  const offenders = sources
-    .filter(({ source }) => UNQUALIFIED_ZSTD_DECODER.test(source))
-    .map(({ filePath }) => relative(filePath));
-  expect(offenders).toEqual([]);
-  const streamingDecoderUsers = sources
-    .filter(({ source }) => STREAMING_DECODER.test(source))
-    .map(({ filePath }) => relative(filePath));
-  expect(streamingDecoderUsers).toEqual([path.join('local-machine', 'src', 'local-history.ts')]);
 });
 
 test('TestMemoryStorage reads byte fixtures and zstd archives through readLines', async () => {

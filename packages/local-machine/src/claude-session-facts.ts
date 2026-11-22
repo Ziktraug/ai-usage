@@ -1,4 +1,5 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import {
   completeCoverage,
@@ -276,9 +277,6 @@ interface ClaudeMetadataFacts extends ClaudeSourceFacts {
   sidechain: boolean;
   title: string | null;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const eventDate = (value: unknown): Date | null => {
   if (typeof value !== 'string' && typeof value !== 'number') {

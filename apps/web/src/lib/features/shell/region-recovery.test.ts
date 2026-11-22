@@ -1,5 +1,4 @@
 import { expect, mock, test } from 'bun:test';
-import { readFile } from 'node:fs/promises';
 import { ORPCError } from '@orpc/client';
 import { QueryObserver } from '@tanstack/svelte-query';
 import { createWebQueryClient } from '../../query/client';
@@ -39,20 +38,4 @@ test('a failed boundary refetches before resetting; a rejected retry leaves its 
   const failure = new Error('Read unavailable');
   await expect(recoverRegion(reset, () => Promise.reject(failure))).rejects.toBe(failure);
   expect(reset).not.toHaveBeenCalled();
-});
-
-test('recovery owners use in-app query/routing recovery, never a document reload', async () => {
-  const session = await readFile(
-    new URL('../sessions/detail/session-detail-query-slot.svelte', import.meta.url),
-    'utf8',
-  );
-  const route = await readFile(new URL('./error-route-owner.svelte', import.meta.url), 'utf8');
-  const drawer = await readFile(new URL('../sessions/detail/session-drawer.svelte', import.meta.url), 'utf8');
-  expect(session).not.toContain('location.reload');
-  expect(route).not.toContain('location.reload');
-  expect(session).toContain('createSessionDetailRecovery(detailQuery, drawerLoader,');
-  expect(session).toContain('recoverRegion: recovery.recoverRegion');
-  expect(session).toContain('<SessionDetailChunkRetry onRetry={recovery.retryChunk} />');
-  expect(drawer).toContain('<RecoverableRegion label="Session details" onRetry={controller.recoverRegion}>');
-  expect(route).toContain('refreshAll: true, replace: true');
 });

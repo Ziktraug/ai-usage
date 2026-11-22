@@ -28,6 +28,6 @@ Enlarging every heatmap cell to 24 pixels was rejected because it destroyed the 
 
 - [Heatmap implementation](../../apps/web/src/lib/features/report/overview/activity-heatmap.svelte)
 - [Punchcard implementation](../../apps/web/src/lib/features/report/overview/punchcard.svelte)
-- [Time-range interaction state](../../apps/web/src/time-range-control-state.ts)
+- [Time-range interaction state](../../apps/web/src/lib/foundation/time-range-control-state.ts)
 - [Accessibility browser coverage](../../apps/web/e2e/accessibility.spec.ts)
 - [Interaction coverage](../../apps/web/e2e/time-range.spec.ts)

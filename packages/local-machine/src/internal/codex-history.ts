@@ -1,6 +1,7 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import path from 'node:path';
 import type { CodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type {
   LocalSessionAnalysis,
@@ -2240,9 +2241,6 @@ export const isCodexUsageOwnershipUndecided = (
   }
   return false;
 };
-
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const codexSourceRecord = (source: unknown): Record<string, unknown> | null => {
   if (typeof source === 'string') {

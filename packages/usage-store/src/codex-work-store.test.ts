@@ -1,10 +1,23 @@
 import { Database } from 'bun:sqlite';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { canonicalInstantFromDate } from '@ai-usage/report-core/canonical-instant';
 import { type CodexWorkObservation, parseCodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
 import { Effect } from 'effect';
-import { codexWorkSchemaSql, createCodexWorkStore, MAX_CODEX_WORK_SESSION_FILTER } from './codex-work-store';
-import { UsageStoreError } from './errors';
+import { codexWorkSchemaSql } from './codex-work-schema';
+import {
+  importCodexWorkObservations,
+  MAX_CODEX_WORK_SESSION_FILTER,
+  queryCodexWorkObservations,
+} from './codex-work-store';
+import { setUsageStoreConnectionsForTesting } from './connections';
+
+const connectionDisposers: Array<() => void> = [];
+
+afterEach(() => {
+  for (const dispose of connectionDisposers.splice(0)) {
+    dispose();
+  }
+});
 
 const at = (minute: number) =>
   canonicalInstantFromDate(new Date(`2026-10-22T10:${String(minute).padStart(2, '0')}:00.000Z`));
@@ -34,21 +47,19 @@ const observation = (): CodexWorkObservation => ({
 const fixture = () => {
   const db = new Database(':memory:');
   db.exec(codexWorkSchemaSql);
-  const store = createCodexWorkStore({
-    usageStoreError: (operation, _dbPath, cause, reason) =>
-      new UsageStoreError({ operation, message: String(cause), cause, reason }),
-    usageStoreReadError: (operation, _dbPath, cause) =>
-      new UsageStoreError({ operation, message: String(cause), cause, reason: 'storage-failure' }),
-    withUsageStoreWriter: (_path, use) => {
-      db.exec('PRAGMA query_only = OFF');
-      return use(db as unknown as Parameters<typeof use>[0]);
-    },
-    withUsageStoreReader: (_path, use) => {
-      db.exec('PRAGMA query_only = ON');
-      return use(db as unknown as Parameters<typeof use>[0]);
-    },
-  });
-  return { db, ...store };
+  connectionDisposers.push(
+    setUsageStoreConnectionsForTesting(':memory:', {
+      withUsageStoreWriter: (_path, use) => {
+        db.exec('PRAGMA query_only = OFF');
+        return use(db as unknown as Parameters<typeof use>[0]);
+      },
+      withUsageStoreReader: (_path, use) => {
+        db.exec('PRAGMA query_only = ON');
+        return use(db as unknown as Parameters<typeof use>[0]);
+      },
+    }),
+  );
+  return { db, importCodexWorkObservations, queryCodexWorkObservations };
 };
 
 describe('local Codex request evidence', () => {

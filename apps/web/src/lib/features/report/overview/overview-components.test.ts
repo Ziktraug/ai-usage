@@ -14,6 +14,8 @@ interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
+const TAG_PATTERN = /<[^>]*>/g;
+const MONEY_CLAIM_PATTERN = /\b(?:actual spend|bill|billed|billing|invoice|invoiced|saving|savings|ROI)\b/i;
 const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;
 const ACTIVITY_METRIC_FIELDSET_PATTERN = /<fieldset aria-label="Activity metric"[\s\S]*?<\/fieldset>/;
 const ARIA_PRESSED_PATTERN = /aria-pressed="(?:true|false)"/g;
@@ -209,6 +211,8 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(body).not.toContain('Reported actual spend');
     expect(body).not.toContain('Actual recorded cost');
     expect(body).not.toContain('Subscription value');
+    // API value is a legibility proxy for work volume, never a money claim (docs/product thesis).
+    expect(body.replaceAll(TAG_PATTERN, ' ')).not.toMatch(MONEY_CLAIM_PATTERN);
     expect(body).toContain('Token anatomy');
     expect(body).not.toContain('Provider status');
     expect(body).toContain('Rhythm');

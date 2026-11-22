@@ -18,7 +18,8 @@ import {
   queryWorkFactRunStates,
   type UsageStoreError,
 } from './reader';
-import { MAX_WORK_THREAD_CHECKOUT_KEYS, MAX_WORK_THREAD_FACT_KEYS, migrateWorkFactSchema } from './work-fact-store';
+import { migrateWorkFactSchema } from './work-fact-schema';
+import { MAX_WORK_THREAD_CHECKOUT_KEYS, MAX_WORK_THREAD_FACT_KEYS } from './work-fact-store';
 import {
   importCheckoutStatusObservations,
   importJiraIssueObservations,

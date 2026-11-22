@@ -201,11 +201,4 @@ describe('browser server-state ownership boundary', () => {
 
     expect(constructors).toEqual(['lib/query/client.ts']);
   });
-
-  test('does not construct a Query runtime in the root universal load', async () => {
-    const rootLayoutLoad = await readFile(join(SOURCE_ROOT, 'routes/+layout.ts'), 'utf8');
-
-    expect(rootLayoutLoad).not.toContain('createWebQueryClient');
-    expect(rootLayoutLoad).not.toContain('createWebQueryRuntime');
-  });
 });

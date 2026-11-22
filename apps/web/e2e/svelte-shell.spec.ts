@@ -567,6 +567,26 @@ test('reuses one browser cache across Skills children and Report Skills Sync nav
   trace.dispose();
 });
 
+test('hydrates the Skills route from its document load without acquiring it again', async ({ page }) => {
+  // The document carries the root quota state and the Skills route delta together; the Skills
+  // observers start only once that merged state covers the route's own delta, and then find it fresh.
+  await page.route('**/api/source-control', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({ body: '', contentType: 'text/event-stream', status: 200 });
+  });
+  const trace = createServerStateNetworkTrace(page);
+  trace.checkpoint('skills-document');
+  await page.goto('/skills');
+  await waitForHydratedSkills(page);
+  await expect(page.locator('a[href="/skills/global/alpha-skill"]').first()).toBeVisible();
+
+  expect(trace.counts('skills-document')).toEqual({ operations: {}, owners: {}, routeData: 0, totalRpc: 0 });
+  trace.dispose();
+});
+
 test('renders retryable route errors and the default accessible Not Found shell', async ({ context, page }) => {
   await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-error': 'once' });
   const failed = await page.goto('/?foreign=kept');
@@ -574,8 +594,11 @@ test('renders retryable route errors and the default accessible Not Found shell'
   await expect(page.locator('[data-error-route][data-hydrated="true"]')).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
   await expect(page.getByText('Report data could not be loaded.')).toBeVisible();
+  const historyLength = await page.evaluate(() => history.length);
   await page.getByRole('button', { name: 'Retry' }).click();
   await expect(page.locator('[data-route-shell="report"]')).toBeAttached();
+  // The hydrated retry reruns the loads in place: it replaces the failed entry instead of adding one.
+  expect(await page.evaluate(() => history.length)).toBe(historyLength);
   expect(new URL(page.url()).searchParams.get('foreign')).toBe('kept');
 
   await context.setExtraHTTPHeaders({});
@@ -583,6 +606,32 @@ test('renders retryable route errors and the default accessible Not Found shell'
   expect(missing?.status()).toBe(404);
   await expect(page.getByRole('heading', { level: 1, name: 'Not Found' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Return to report' })).toHaveAttribute('href', '/');
+});
+
+test('retries a failed route through the same URL before JavaScript runs', async ({ baseURL, browser }) => {
+  const context = await browser.newContext({
+    ...(baseURL === undefined ? {} : { baseURL }),
+    extraHTTPHeaders: { 'x-ai-usage-sveltekit-error': 'once' },
+    javaScriptEnabled: false,
+  });
+  try {
+    const page = await context.newPage();
+    const failed = await page.goto('/?foreign=kept&q=codex');
+    expect(failed?.status()).toBe(503);
+    await expect(page.locator('[data-error-route][data-hydrated="false"]')).toBeVisible();
+
+    // The progressive form resubmits the failed URL: its path as the action, its search as fields.
+    const retried = page.waitForResponse((response) => new URL(response.url()).pathname === '/');
+    await page.getByRole('button', { exact: true, name: 'Retry' }).click();
+    expect((await retried).status()).toBe(200);
+    await expect(page.locator('[data-route-shell="report"]')).toBeAttached();
+    const url = new URL(page.url());
+    expect(url.pathname).toBe('/');
+    expect(url.searchParams.get('foreign')).toBe('kept');
+    expect(url.searchParams.get('q')).toBe('codex');
+  } finally {
+    await context.close();
+  }
 });
 
 test('redirects Svelte demo routes before protected acquisition', async ({ context, page, request }) => {

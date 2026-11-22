@@ -218,7 +218,11 @@ export const codexFailureReason = (eventType: string, message: unknown): string 
   return detail.length === 0 ? `codex ${eventType}` : `codex ${eventType}: ${detail}`;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+/**
+ * Any non-null object, arrays included, unlike `isRecord`: an array-valued `turn.failed` error keeps
+ * the error's (absent) message as the detail instead of falling back to the event's message.
+ */
+const isObjectLike = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 export type CodexExecEvent =
   | { readonly kind: 'agent-message'; readonly text: string }
@@ -241,7 +245,7 @@ export const parseCodexExecLine = (line: string): CodexExecEvent | null => {
   } catch {
     return null;
   }
-  if (!isRecord(value) || typeof value.type !== 'string') {
+  if (!isObjectLike(value) || typeof value.type !== 'string') {
     return null;
   }
   switch (value.type) {
@@ -255,7 +259,7 @@ export const parseCodexExecLine = (line: string): CodexExecEvent | null => {
       return { kind: 'turn-completed', usage: harnessUsage(value.usage, CODEX_USAGE_FIELDS) };
     case 'turn.failed':
       return {
-        detail: isRecord(value.error) ? value.error.message : value.message,
+        detail: isObjectLike(value.error) ? value.error.message : value.message,
         eventType: 'turn.failed',
         kind: 'failure',
       };
@@ -263,7 +267,7 @@ export const parseCodexExecLine = (line: string): CodexExecEvent | null => {
       return { detail: value.message, eventType: 'error', kind: 'failure' };
     case 'item.completed': {
       const item = value.item;
-      if (isRecord(item) && item.type === 'agent_message' && typeof item.text === 'string') {
+      if (isObjectLike(item) && item.type === 'agent_message' && typeof item.text === 'string') {
         return { kind: 'agent-message', text: item.text };
       }
       return null;
@@ -293,7 +297,7 @@ const readBoundedText = async (filePath: string, maxBytes: number): Promise<stri
 };
 
 const errorCode = (error: unknown): string =>
-  isRecord(error) && typeof error.code === 'string' ? error.code : 'unknown error';
+  isObjectLike(error) && typeof error.code === 'string' ? error.code : 'unknown error';
 
 interface CodexWorkerState {
   failure: string | null;

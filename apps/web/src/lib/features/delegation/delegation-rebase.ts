@@ -18,6 +18,8 @@
  * merge, based on it, matches the operator's entries by key again.
  */
 
+import { isRecord } from '@ai-usage/report-core/datasets';
+
 export interface DraftConflict {
   /** The operator's value, worded for the notice. */
   readonly mine: string;
@@ -70,9 +72,6 @@ export const stableJson = (value: unknown): string => {
 
 /** Structural equality of two drafts (or parts of them); key order and `undefined` fields do not count. */
 export const sameDraft = (left: unknown, right: unknown): boolean => stableJson(left) === stableJson(right);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 type Entry = Record<string, unknown> & DraftEntry;
 

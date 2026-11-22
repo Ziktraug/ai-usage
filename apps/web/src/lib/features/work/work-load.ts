@@ -10,7 +10,7 @@ import {
   type WorkPrefetchSources,
 } from '../../query/work-prefetch';
 import { createAwaitedRouteQueryState, type RouteQueryLoadOptions } from '../shell/query-load';
-import { createSyntheticWorkAttentionClient } from './work-attention-synthetic';
+import { createSyntheticWorkAttentionClient } from './attention/work-attention-synthetic';
 import { createSyntheticWorkClient, WORK_DEMO_REVISION } from './work-synthetic';
 
 export interface WorkPageData {

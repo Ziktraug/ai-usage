@@ -19,7 +19,7 @@ early exit added for publication in PR #42 never applied in steady state.
 
 The derived per-machine `lastSeenAt` feeds one consumer: the web's machine
 freshness presentation, which marks a machine stale after 30 days
-(`apps/web/src/machine-freshness-presentation.ts`). Collection liveness itself
+(`apps/web/src/lib/foundation/machine-freshness-presentation.ts`). Collection liveness itself
 is already visible per source in the engine's source-control status.
 
 ## Decision
@@ -35,7 +35,7 @@ not count as a fleet projection change. Content changes, machine label changes,
 active-date changes and fleet-metadata repair still propagate immediately. On
 the unchanged (heartbeat) path freshness never moves backwards: an observation
 in an earlier bucket than the stored value records nothing. The constant lives
-in `packages/usage-store/src/index.ts` beside the import path that enforces it.
+in `packages/usage-store/src/local-rows.ts` beside the import path that enforces it.
 
 ## Consequences
 
@@ -55,7 +55,7 @@ and still touches every row each minute.
 
 ## Evidence
 
-`packages/usage-store/src/index.ts` (`classifyMergeRows`,
+`packages/usage-store/src/local-rows.ts` (`classifyMergeRows`,
 `writeClassifiedMergeRows`, `USAGE_ROW_FRESHNESS_HEARTBEAT_MS`) and its
 tests in `packages/usage-store/src/index.test.ts`;
 `packages/usage-engine-runtime/src/source-adapters.test.ts` (second immediate
