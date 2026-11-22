@@ -310,12 +310,15 @@ export interface UsageStoreConnectionsForTesting {
   readonly withUsageStoreWriter?: UsageStoreConnection;
 }
 
-const connectionsForTesting = new Map<string, UsageStoreConnectionsForTesting>();
+// One entry object per registration, so a disposer recognises its own registration even when the same
+// connections object is registered again later.
+const connectionsForTesting = new Map<string, { readonly connections: UsageStoreConnectionsForTesting }>();
 
 /**
  * Test seam: route the reader and writer of one store path through a fixture. Package internal. It covers
  * `withUsageStoreReader` and `withUsageStoreWriter` only, not the preview or confirmation opens. One
- * registration per path: a second one throws. The returned disposer removes exactly this registration.
+ * registration per path: a second one throws. The returned disposer removes exactly this registration and
+ * nothing registered after it.
  */
 export const setUsageStoreConnectionsForTesting = (
   dbPath: string,
@@ -324,9 +327,10 @@ export const setUsageStoreConnectionsForTesting = (
   if (connectionsForTesting.has(dbPath)) {
     throw new Error(`Usage store test connections are already registered for ${dbPath}`);
   }
-  connectionsForTesting.set(dbPath, connections);
+  const registration = { connections };
+  connectionsForTesting.set(dbPath, registration);
   return () => {
-    if (connectionsForTesting.get(dbPath) === connections) {
+    if (connectionsForTesting.get(dbPath) === registration) {
       connectionsForTesting.delete(dbPath);
     }
   };
@@ -336,7 +340,7 @@ export const withUsageStoreWriter = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> => {
-  const fixture = connectionsForTesting.get(dbPath)?.withUsageStoreWriter;
+  const fixture = connectionsForTesting.get(dbPath)?.connections.withUsageStoreWriter;
   if (fixture) {
     return fixture(dbPath, use);
   }
@@ -349,7 +353,7 @@ export const withUsageStoreReader = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> => {
-  const fixture = connectionsForTesting.get(dbPath)?.withUsageStoreReader;
+  const fixture = connectionsForTesting.get(dbPath)?.connections.withUsageStoreReader;
   if (fixture) {
     return fixture(dbPath, use);
   }

@@ -130,4 +130,23 @@ describe('the connection test seam', () => {
       disposeSecond();
     }
   });
+
+  test('a stale disposer does not remove a later registration of the same connections object', async () => {
+    const connections = { withUsageStoreReader: fixtureConnection('shared') };
+    const disposeStale = setUsageStoreConnectionsForTesting('/fixture/seam-shared.sqlite', connections);
+    disposeStale();
+    const disposeCurrent = setUsageStoreConnectionsForTesting('/fixture/seam-shared.sqlite', connections);
+    try {
+      disposeStale();
+      expect(
+        await Effect.runPromise(withUsageStoreReader('/fixture/seam-shared.sqlite', () => Effect.succeed('real'))),
+      ).toBe('shared');
+    } finally {
+      disposeCurrent();
+    }
+    const reopened = await Effect.runPromise(
+      Effect.result(withUsageStoreReader('/fixture/seam-shared.sqlite', () => Effect.succeed('fixture'))),
+    );
+    expect(reopened._tag === 'Failure' ? reopened.failure.reason : reopened).toBe('store-missing');
+  });
 });
