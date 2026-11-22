@@ -1,4 +1,5 @@
 import { isCanonicalInstant } from './canonical-instant';
+import { isRecord } from './datasets';
 import type { ExecutorHarness } from './work-executors';
 
 /**
@@ -144,8 +145,6 @@ const isQualificationList = (value: unknown): value is string[] =>
   value.length <= ROUTING_QUALIFICATION_BOUNDS.maxEntries &&
   value.every(isBoundedQualificationText);
 const isQualificationId = (value: unknown): value is string => typeof value === 'string' && isRoutingId(value);
-const isRecordValue = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 const hasExactly = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const isFingerprintOrNull = (value: unknown): value is string | null =>
@@ -160,7 +159,7 @@ const parseQualificationIdentity = (value: unknown): RoutingQualificationCandida
   if (value === null) {
     return null;
   }
-  if (!(isRecordValue(value) && hasExactly(value, ['declared', 'observed', 'observedAt', 'state']))) {
+  if (!(isRecord(value) && hasExactly(value, ['declared', 'observed', 'observedAt', 'state']))) {
     return;
   }
   const { declared, observed, observedAt, state } = value;
@@ -180,7 +179,7 @@ const parseQualificationIdentity = (value: unknown): RoutingQualificationCandida
 const parseQualificationCandidate = (value: unknown): RoutingQualificationCandidate | null => {
   if (
     !(
-      isRecordValue(value) &&
+      isRecord(value) &&
       hasExactly(value, [
         'accountScope',
         'actions',
@@ -223,7 +222,7 @@ const parseQualificationCandidate = (value: unknown): RoutingQualificationCandid
 
 /** Strict re-validation of a qualification crossing a process boundary; `null` when it does not conform. */
 const parseQualificationExecutors = (value: unknown): RoutingQualificationExecutors | null => {
-  if (!(isRecordValue(value) && hasExactly(value, ['outcome', 'refreshed']))) {
+  if (!(isRecord(value) && hasExactly(value, ['outcome', 'refreshed']))) {
     return null;
   }
   const { outcome, refreshed } = value;
@@ -233,7 +232,7 @@ const parseQualificationExecutors = (value: unknown): RoutingQualificationExecut
 };
 
 const parseQualificationRecommendation = (value: unknown): ReviewRecommendation | null => {
-  if (!(isRecordValue(value) && hasExactly(value, ['candidateId', 'kind', 'missing']))) {
+  if (!(isRecord(value) && hasExactly(value, ['candidateId', 'kind', 'missing']))) {
     return null;
   }
   const { candidateId, kind, missing } = value;
@@ -248,7 +247,7 @@ const parseQualificationRecommendation = (value: unknown): ReviewRecommendation 
 export const parseRoutingQualification = (value: unknown): RoutingQualification | null => {
   if (
     !(
-      isRecordValue(value) &&
+      isRecord(value) &&
       hasExactly(value, [
         'candidates',
         'chosenCandidateId',

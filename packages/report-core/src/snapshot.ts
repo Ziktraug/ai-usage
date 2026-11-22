@@ -1,12 +1,11 @@
 import os from 'node:os';
-import { parseReportDatasets, type ReportDatasets, withoutRetiredCursorFacet } from './datasets';
+import { isRecord, parseReportDatasets, type ReportDatasets, withoutRetiredCursorFacet } from './datasets';
 import { assertPortableUsageByteLength, assertPortableUsageRowCount, MAX_PORTABLE_USAGE_BYTES } from './portable-usage';
 import { mergeProviderStatusDatasets, type ProviderStatusDataset, parseProviderStatusDataset } from './provider-status';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import {
   hasOnlyKeys,
   isJsonSafeObject,
-  isRecord,
   isSerializedUsageRowWithSource,
   isStrictIsoTimestamp,
   isUsageMachine,

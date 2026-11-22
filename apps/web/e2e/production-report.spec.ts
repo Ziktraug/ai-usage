@@ -5,6 +5,7 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
 import { collectionSourceDefinitions } from '@ai-usage/report-core';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import { parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Page, Request } from '@playwright/test';
@@ -108,9 +109,6 @@ const openSettledProductionReport = async (page: Page, url = '/'): Promise<void>
   }
 };
 
-const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 const rewriteDateDomainFirst = (value: unknown, first: string): number => {
   if (Array.isArray(value)) {
     let rewritten = 0;
@@ -119,12 +117,12 @@ const rewriteDateDomainFirst = (value: unknown, first: string): number => {
     }
     return rewritten;
   }
-  if (!isUnknownRecord(value)) {
+  if (!isRecord(value)) {
     return 0;
   }
   let rewritten = 0;
   const dateDomain = value.dateDomain;
-  if (isUnknownRecord(dateDomain) && typeof dateDomain.first === 'string') {
+  if (isRecord(dateDomain) && typeof dateDomain.first === 'string') {
     dateDomain.first = first;
     rewritten += 1;
   }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isRecord } from './datasets';
 import {
   assertPortableUsageByteLength,
   assertPortableUsageRowCount,
@@ -8,7 +9,6 @@ import {
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import {
   hasOnlyKeys,
-  isRecord,
   isSerializedUsageRowWithSource,
   isStrictIsoTimestamp,
   isUsageMachine,

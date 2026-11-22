@@ -55,7 +55,6 @@ const EMPTY_SKILLS_CLIENT: SkillsQueryClient = {
   getSkillObservations: unusedSkillsCall,
   getSkillProjectInventories: unusedSkillsCall,
 };
-const HYDRATION_IMPORT_PATTERN = /import\s+\{([^}]*)\}\s+from\s+'[^']*hydration-context\.svelte'/u;
 
 const dehydrated = (
   ...entries: readonly (readonly [key: WebQueryKey, updatedAt: number])[]
@@ -122,26 +121,6 @@ describe('web query hydration coverage', () => {
     expect(webQueryHydrationCovers(skillsRouteState(QUOTA_UPDATED_AT), expected)).toBe(false);
     expect(webQueryHydrationCovers(skillsRouteState(SKILLS_UPDATED_AT), expected)).toBe(true);
     expect(webQueryHydrationCovers(skillsRouteState(NEWER_UPDATED_AT), expected)).toBe(true);
-  });
-
-  test('pins the two-sided composition that makes coverage, not equality, the correct gate', async () => {
-    const rootLayout = await Bun.file(new URL('../../routes/+layout.svelte', import.meta.url)).text();
-    const skillsLayout = await Bun.file(new URL('../../routes/skills/+layout.svelte', import.meta.url)).text();
-    const skillsShell = await Bun.file(new URL('../features/skills/shell/skills-shell.svelte', import.meta.url)).text();
-
-    expect(rootLayout).toContain('mergeWebQueryHydrationStates(data.quotaQueryState, page.data.queryState)');
-    expect(skillsLayout).toContain('hydrationState={data.queryState}');
-    expect(skillsShell).toContain('hydrationContext.covers(hydrationState)');
-
-    // The shell binds the context hook and nothing else from the hydration module, so no
-    // signature-style helper can creep back in beside it.
-    const [, bindings] = HYDRATION_IMPORT_PATTERN.exec(skillsShell) ?? [];
-    expect(
-      (bindings ?? '')
-        .split(',')
-        .map((binding) => binding.trim())
-        .filter(Boolean),
-    ).toEqual(['useWebQueryHydrationContext']);
   });
 });
 

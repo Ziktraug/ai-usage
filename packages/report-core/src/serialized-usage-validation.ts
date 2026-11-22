@@ -1,3 +1,4 @@
+import { isRecord } from './datasets';
 import type { SerializedUsageRow, UsageReportWarning } from './report-data';
 import { isSessionVcsContext } from './session-vcs';
 import { isOriginProvenanceKind, isSessionOrigin, type UsageRowSource } from './types';
@@ -94,9 +95,6 @@ const PROJECT_GROUPING_WARNING_REASONS = new Set([
 ]);
 const MODEL_SEGMENT_KEYS = new Set(['costApprox', 'costKnown', 'model', 'tokCr', 'tokCw', 'tokIn', 'tokOut']);
 const DELEGATED_SESSION_KEYS = new Set(['harness', 'sourceSessionId']);
-
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export const hasOnlyKeys = (value: Record<string, unknown>, keys: ReadonlySet<string>): boolean =>
   Object.keys(value).every((key) => keys.has(key));

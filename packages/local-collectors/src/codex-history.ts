@@ -20,7 +20,6 @@ import {
   isCodexExternalImport,
   isCodexUsageOwnedByRoot,
   isCodexUsageOwnershipUndecided,
-  isRecord,
   listCodexRolloutFiles,
   codexSessionsDir as localCodexSessionsDir,
   mergeMetadata,
@@ -35,6 +34,7 @@ import {
 import { firstExisting } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON } from '@ai-usage/local-machine/text';
 import { type CodexWorkObservation, parseCodexWorkObservation } from '@ai-usage/report-core/codex-work-observation';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import {

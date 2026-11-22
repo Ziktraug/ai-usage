@@ -66,7 +66,7 @@ distinguish "reclassified" from "forgotten".
 
 ## Evidence
 
-- [Store write and reactivation](../../packages/usage-store/src/index.ts) (`retireLocalRows`, `classifyMergeRows`)
+- [Store write and reactivation](../../packages/usage-store/src/local-rows.ts) (`retireLocalRows`, `classifyMergeRows`)
 - [Engine session source](../../packages/usage-engine-runtime/src/source-adapters.ts) (`createSessionSource`)
 - [Collector contract](../../packages/local-collectors/src/collectors/index.ts) (`HarnessAdapterCollection.retiredSourceSessionIds`)
 - [Store regression](../../packages/usage-store/src/index.test.ts) ("targeted row retirement")

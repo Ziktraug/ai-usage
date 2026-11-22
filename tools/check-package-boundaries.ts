@@ -1,5 +1,22 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isRecord } from '@ai-usage/report-core/datasets';
+import { collectModuleClosureViolations } from './package-boundary-module-closures';
+import {
+  collectPackageExportsViolations,
+  collectSourceFiles,
+  collectWebContractClosureViolations,
+  collectZstdDecoderViolations,
+  type GuardedPackagePresence,
+  isPackageOrSubpath,
+  isTestOnlySource,
+  lineNumberFor,
+  moduleImportPattern,
+  type PackageBoundaryViolation,
+  readDirectoryInNameOrder,
+} from './package-boundary-reviewed-rules';
+
+export type { PackageBoundaryViolation } from './package-boundary-reviewed-rules';
 
 const workspacePackageParents = ['apps', 'packages'];
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const;
@@ -8,22 +25,8 @@ const productionDependencyFields = new Set<DependencyField>([
   'peerDependencies',
   'optionalDependencies',
 ]);
-const ignoredDirectories = new Set([
-  '.direnv',
-  '.git',
-  '.output-build',
-  '.svelte-kit',
-  '.turbo',
-  '.worktrees',
-  'dist',
-  'node_modules',
-  'styled-system',
-]);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
-const moduleImportPattern =
-  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 type DependencyField = (typeof dependencyFields)[number];
 
@@ -37,15 +40,8 @@ interface BoundaryPolicy {
 interface PackageInfo {
   dependencies: Map<string, DependencyField>;
   directory: string;
+  exports: unknown;
   packageName: string;
-}
-
-export interface PackageBoundaryViolation {
-  file: string;
-  line?: number;
-  message: string;
-  packageName: string;
-  specifier: string;
 }
 
 const workspacePackageScope = '@ai-usage/';
@@ -173,15 +169,7 @@ const engineRuntimeAllowedWorkspaceDependencies = new Set([
   usageMergePackage,
   usageStorePackage,
 ]);
-const testOnlySourcePattern =
-  /(?:^|\/)(?:__tests__|e2e|fixture|fixtures|test|tests)(?:\/|$)|(?:^|[.-])(?:e2e|spec|test)\.[^/]+$/u;
-
 const isWorkspaceSpecifier = (specifier: string): boolean => specifier.startsWith(workspacePackageScope);
-
-const isTestOnlySource = (relativeFile: string): boolean => testOnlySourcePattern.test(relativeFile);
-
-const isPackageOrSubpath = (specifier: string, packageName: string): boolean =>
-  specifier === packageName || specifier.startsWith(`${packageName}/`);
 
 const workspacePackageNameFor = (specifier: string): string => specifier.split('/').slice(0, 2).join('/');
 
@@ -334,9 +322,6 @@ const targetImportReason = (
   }
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 const matchesPattern = (specifier: string, pattern: string) => {
   if (pattern.endsWith('/*')) {
     return specifier.startsWith(pattern.slice(0, -1));
@@ -374,6 +359,7 @@ async function readPackageInfo(packageJsonPath: string): Promise<PackageInfo | n
   return {
     dependencies,
     directory: path.dirname(packageJsonPath),
+    exports: json.exports,
     packageName: json.name,
   };
 }
@@ -382,7 +368,7 @@ async function discoverWorkspacePackages(root: string) {
   const packages = new Map<string, PackageInfo>();
   for (const parent of workspacePackageParents) {
     const parentPath = path.join(root, parent);
-    const entries = await readdir(parentPath, { withFileTypes: true });
+    const entries = await readDirectoryInNameOrder(parentPath);
     for (const entry of entries) {
       if (!entry.isDirectory()) {
         continue;
@@ -395,28 +381,6 @@ async function discoverWorkspacePackages(root: string) {
   }
   return packages;
 }
-
-async function collectSourceFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) {
-        files.push(...(await collectSourceFiles(path.join(directory, entry.name))));
-      }
-      continue;
-    }
-
-    if (entry.isFile() && checkedExtensions.has(path.extname(entry.name))) {
-      files.push(path.join(directory, entry.name));
-    }
-  }
-
-  return files;
-}
-
-const lineNumberFor = (text: string, index: number) => text.slice(0, index).split('\n').length;
 
 function collectDependencyViolations(
   root: string,
@@ -495,6 +459,33 @@ const collectTargetDependencyViolations = (
   return violations;
 };
 
+const webFoundationDirectory = 'apps/web/src/lib/foundation/';
+const webFeaturesDirectory = 'apps/web/src/lib/features/';
+const webLibAliasPattern = /^[#$]lib\//u;
+
+// Web foundation is the shared base that features build on: a production foundation module importing a
+// feature would invert that layering. Tests may still compose features.
+const webFoundationImportReason = (
+  packageName: string,
+  relativeFile: string,
+  specifier: string,
+): string | undefined => {
+  if (
+    packageName !== '@ai-usage/web' ||
+    !relativeFile.startsWith(webFoundationDirectory) ||
+    isTestOnlySource(relativeFile)
+  ) {
+    return;
+  }
+  const aliasTarget = webLibAliasPattern.test(specifier)
+    ? `apps/web/src/lib/${specifier.slice('#lib/'.length)}`
+    : undefined;
+  const target = specifier.startsWith('.') ? path.posix.join(path.posix.dirname(relativeFile), specifier) : aliasTarget;
+  if (target?.startsWith(webFeaturesDirectory)) {
+    return 'Web foundation modules must not import feature modules.';
+  }
+};
+
 const collectTargetImportViolations = async (
   root: string,
   packageInfo: PackageInfo,
@@ -510,7 +501,9 @@ const collectTargetImportViolations = async (
       if (specifier === undefined) {
         continue;
       }
-      const reason = targetImportReason(packageInfo.packageName, relativeFile, specifier, applicationPackages);
+      const reason =
+        webFoundationImportReason(packageInfo.packageName, relativeFile, specifier) ??
+        targetImportReason(packageInfo.packageName, relativeFile, specifier, applicationPackages);
       if (reason === undefined) {
         continue;
       }
@@ -521,104 +514,6 @@ const collectTargetImportViolations = async (
         packageName: packageInfo.packageName,
         specifier,
       });
-    }
-  }
-  return violations;
-};
-
-const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.svelte'] as const;
-const emittedExtensionSources = new Map<string, readonly string[]>([
-  ['.js', ['.ts', '.tsx']],
-  ['.jsx', ['.tsx']],
-  ['.mjs', ['.mts']],
-  ['.cjs', ['.cts']],
-]);
-
-const resolveRelativeModule = async (packageDirectory: string, importer: string, specifier: string) => {
-  const base = path.resolve(path.dirname(importer), specifier);
-  const relativeBase = path.relative(packageDirectory, base);
-  if (relativeBase.startsWith('..') || path.isAbsolute(relativeBase)) {
-    return { status: 'outside-package' as const };
-  }
-  const extension = path.extname(base);
-  const substitutedExtensions = emittedExtensionSources.get(extension) ?? [];
-  const candidates = extension
-    ? [base, ...substitutedExtensions.map((sourceExtension) => `${base.slice(0, -extension.length)}${sourceExtension}`)]
-    : [
-        ...sourceModuleExtensions.map((sourceExtension) => `${base}${sourceExtension}`),
-        ...sourceModuleExtensions.map((sourceExtension) => path.join(base, `index${sourceExtension}`)),
-      ];
-  for (const candidate of candidates) {
-    const exists = await readFile(candidate, 'utf8').then(
-      () => true,
-      () => false,
-    );
-    if (exists) {
-      return { file: candidate, status: 'resolved' as const };
-    }
-  }
-  return { status: 'unresolved' as const };
-};
-
-const collectPortableReportClosureViolations = async (
-  root: string,
-  packages: Map<string, PackageInfo>,
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-): Promise<PackageBoundaryViolation[]> => {
-  const packageInfo = packages.get(reportDataPackage);
-  if (!packageInfo) {
-    return [];
-  }
-  const entrypoint = path.join(packageInfo.directory, 'src', 'portable-report.ts');
-  const entrypointExists = await readFile(entrypoint, 'utf8').then(
-    () => true,
-    () => false,
-  );
-  if (!entrypointExists) {
-    return [];
-  }
-
-  const violations: PackageBoundaryViolation[] = [];
-  const pending = [entrypoint];
-  const visited = new Set<string>();
-  while (pending.length > 0) {
-    const file = pending.pop();
-    if (!(file && !visited.has(file))) {
-      continue;
-    }
-    visited.add(file);
-    const text = await readFile(file, 'utf8');
-    for (const match of text.matchAll(moduleImportPattern)) {
-      const specifier = match[1] ?? match[2] ?? match[3];
-      if (!specifier) {
-        continue;
-      }
-      if (isWorkspaceSpecifier(specifier)) {
-        if (!isPackageOrSubpath(specifier, '@ai-usage/report-core')) {
-          violations.push({
-            file: path.relative(root, file).split(path.sep).join('/'),
-            line: lineNumberFor(text, match.index),
-            message: 'The portable-report import closure may depend only on report-core workspace modules.',
-            packageName: reportDataPackage,
-            specifier,
-          });
-        }
-        continue;
-      }
-      if (specifier.startsWith('.')) {
-        const resolved = await resolveRelativeModule(packageInfo.directory, file, specifier);
-        if (resolved.status === 'resolved') {
-          pending.push(resolved.file);
-        } else {
-          violations.push({
-            file: path.relative(root, file).split(path.sep).join('/'),
-            line: lineNumberFor(text, match.index),
-            message: 'The portable-report import closure must resolve relative modules inside report-data.',
-            packageName: reportDataPackage,
-            specifier,
-          });
-        }
-      }
     }
   }
   return violations;
@@ -723,7 +618,10 @@ const collectApplicationProductionClosureViolations = async (
   return violations;
 };
 
-export async function collectViolations(root: string): Promise<PackageBoundaryViolation[]> {
+export async function collectViolations(
+  root: string,
+  { guardedPackages = 'required' }: { guardedPackages?: GuardedPackagePresence } = {},
+): Promise<PackageBoundaryViolation[]> {
   const packages = await discoverWorkspacePackages(root);
   const violations: PackageBoundaryViolation[] = [];
   const applicationPackages = new Set(
@@ -731,8 +629,11 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
       .filter((packageInfo) => path.relative(root, packageInfo.directory).split(path.sep)[0] === 'apps')
       .map(({ packageName }) => packageName),
   );
-  violations.push(...(await collectPortableReportClosureViolations(root, packages)));
+  violations.push(...(await collectModuleClosureViolations(root, packages)));
   violations.push(...(await collectApplicationProductionClosureViolations(root, packages)));
+  violations.push(...(await collectWebContractClosureViolations(root, packages, guardedPackages)));
+  violations.push(...(await collectZstdDecoderViolations(root, packages, guardedPackages)));
+  violations.push(...collectPackageExportsViolations(root, packages, guardedPackages));
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);

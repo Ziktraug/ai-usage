@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { QueryObserver } from '@tanstack/svelte-query';
-import { syntheticWorkAttentionDataset } from '../../features/work/work-attention-synthetic';
+import { syntheticWorkAttentionDataset } from '../../features/work/attention/work-attention-synthetic';
 import type { WorkAttentionClient } from '../../rpc/work-attention-client';
 import { createHydratedWebQueryClient } from '../client';
 import { COLLECTION_FACTS_STALE_TIME_MS, webQueryPolicies } from '../policies';

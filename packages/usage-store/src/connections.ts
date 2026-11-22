@@ -3,13 +3,20 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Effect } from 'effect';
 import {
+  isBusyStoreCause,
   previewStaleError,
   UsageStoreError,
+  type UsageStoreErrorReason,
   usageStoreError,
   usageStorePreviewReadError,
   usageStoreReadError,
 } from './errors';
-import { hasExactUsageLocalMachineSchema, migrate, USAGE_STORE_SCHEMA_VERSION } from './migration';
+import {
+  hasExactUsageLocalMachineSchema,
+  migrate,
+  USAGE_STORE_SCHEMA_VERSION,
+  UsageStoreSchemaTooNewError,
+} from './migration';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
@@ -57,6 +64,26 @@ const ensureWalJournalMode = (db: SqliteDatabase): void => {
   }
 };
 
+const migrationFailureReason = (cause: unknown): UsageStoreErrorReason => {
+  if (cause instanceof UsageStoreSchemaTooNewError) {
+    return 'schema-too-new';
+  }
+  // Lock contention (another writer holding the store when `BEGIN IMMEDIATE` runs) is not a fault of the
+  // migration: it keeps the `storage-failure` every other open failure carries.
+  return isBusyStoreCause(cause) ? 'storage-failure' : 'migration-failure';
+};
+
+// `migrate()` knows neither the path nor the operation, so its failures are typed here: a newer store is
+// `schema-too-new`, lock contention is `storage-failure`, any other failure raised while migrating is
+// `migration-failure`. Exported for its test only; not part of the package interface.
+export const migrateWriterDatabase = (db: SqliteDatabase, dbPath: string): boolean => {
+  try {
+    return migrate(db);
+  } catch (cause) {
+    throw usageStoreError('openUsageStoreWriter', dbPath, cause, migrationFailureReason(cause));
+  }
+};
+
 const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -71,7 +98,7 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
         db.exec('PRAGMA synchronous = NORMAL');
         applySortCapacityPragmas(db);
         db.exec('PRAGMA foreign_keys = ON');
-        const schemaChanged = migrate(db);
+        const schemaChanged = migrateWriterDatabase(db, dbPath);
         if (schemaChanged) {
           db.exec('PRAGMA wal_checkpoint(PASSIVE)');
         }
@@ -87,7 +114,10 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
         throw cause;
       }
     },
-    catch: (cause) => usageStoreError('openUsageStoreWriter', dbPath, cause, 'storage-failure'),
+    catch: (cause) =>
+      cause instanceof UsageStoreError
+        ? cause
+        : usageStoreError('openUsageStoreWriter', dbPath, cause, 'storage-failure'),
   });
 
 const assertUsageLocalMachineSchema = (db: SqliteDatabase, dbPath: string, operation: string): void => {
@@ -269,19 +299,68 @@ const closeUsageStoreWriterDatabase = (dbPath: string, db: SqliteDatabase): Effe
     catch: (cause) => usageStoreError('closeUsageStoreWriter', dbPath, cause, 'storage-failure'),
   }).pipe(Effect.ignore);
 
+type UsageStoreConnection = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+) => Effect.Effect<A, UsageStoreError>;
+
+/** A fixture's own connections for one store path: an in-memory or reduced-schema database, counted opens. */
+export interface UsageStoreConnectionsForTesting {
+  readonly withUsageStoreReader?: UsageStoreConnection;
+  readonly withUsageStoreWriter?: UsageStoreConnection;
+}
+
+// One entry object per registration, so a disposer recognises its own registration even when the same
+// connections object is registered again later.
+const connectionsForTesting = new Map<string, { readonly connections: UsageStoreConnectionsForTesting }>();
+
+/**
+ * Test seam: route the reader and writer of one store path through a fixture. Package internal. It covers
+ * `withUsageStoreReader` and `withUsageStoreWriter` only, not the preview or confirmation opens. One
+ * registration per path: a second one throws. The returned disposer removes exactly this registration and
+ * nothing registered after it.
+ */
+export const setUsageStoreConnectionsForTesting = (
+  dbPath: string,
+  connections: UsageStoreConnectionsForTesting,
+): (() => void) => {
+  if (connectionsForTesting.has(dbPath)) {
+    throw new Error(`Usage store test connections are already registered for ${dbPath}`);
+  }
+  const registration = { connections };
+  connectionsForTesting.set(dbPath, registration);
+  return () => {
+    if (connectionsForTesting.get(dbPath) === registration) {
+      connectionsForTesting.delete(dbPath);
+    }
+  };
+};
+
 export const withUsageStoreWriter = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
-): Effect.Effect<A, UsageStoreError> =>
-  Effect.acquireUseRelease(openUsageStoreWriterDatabase(dbPath), use, (db) =>
+): Effect.Effect<A, UsageStoreError> => {
+  const fixture = connectionsForTesting.get(dbPath)?.connections.withUsageStoreWriter;
+  if (fixture) {
+    return fixture(dbPath, use);
+  }
+  return Effect.acquireUseRelease(openUsageStoreWriterDatabase(dbPath), use, (db) =>
     closeUsageStoreWriterDatabase(dbPath, db),
   );
+};
 
 export const withUsageStoreReader = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
-): Effect.Effect<A, UsageStoreError> =>
-  Effect.acquireUseRelease(openUsageStoreReaderDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+): Effect.Effect<A, UsageStoreError> => {
+  const fixture = connectionsForTesting.get(dbPath)?.connections.withUsageStoreReader;
+  if (fixture) {
+    return fixture(dbPath, use);
+  }
+  return Effect.acquireUseRelease(openUsageStoreReaderDatabase(dbPath), use, (db) =>
+    closeUsageStoreDatabase(dbPath, db),
+  );
+};
 
 const withUsageStorePreviewReader = <A>(
   dbPath: string,

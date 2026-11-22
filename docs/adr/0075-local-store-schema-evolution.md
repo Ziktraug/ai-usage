@@ -111,7 +111,7 @@ inventing data loss.
 
 ## Evidence
 
-- [Usage store migration](../../packages/usage-store/src/index.ts) (`migrate`,
+- [Usage store migration](../../packages/usage-store/src/migration.ts) (`migrate`,
   `USAGE_STORE_SCHEMA_VERSION`) and its
   [tests](../../packages/usage-store/src/migration.test.ts)
 - Memory store migration: `packages/memory-sqlite/src/identity.ts`, removed by ADR 0084 (git history keeps it)

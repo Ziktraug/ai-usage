@@ -38,7 +38,11 @@ Schema versions are the SQLite `user_version` pragma:
 Migrations are forward-only and run inside one transaction, so an interrupted
 upgrade leaves the previous version in place. The engine refuses a store newer
 than it supports with `Usage store schema <n> is newer than supported schema
-<m>` (`packages/usage-store/src/migration.ts`). Read-only readers (Web, CLI, MCP)
+<m>` (`packages/usage-store/src/migration.ts`); its writer open fails with the
+reason `schema-too-new`, and any other failure raised while migrating (an
+incompatible projection, the quota stream budget, an SQL error) with
+`migration-failure`, except lock contention (`SQLITE_BUSY`/`SQLITE_LOCKED`),
+which keeps `storage-failure`. Read-only readers (Web, CLI, MCP)
 refuse every version but their own (ADR 0075 rule 1): an older store answers
 `schema-too-old` until the engine has migrated it, a newer one
 `schema-too-new`. An older binary therefore cannot reopen a migrated store;
@@ -265,7 +269,8 @@ storage failure.
 
 ### Additive tables under usage version 4 (2026-10-25, delegation)
 
-Delegation (`packages/usage-store/src/delegation-store.ts`) adds three tables
+Delegation (`packages/usage-store/src/delegation-store.ts`, tables defined in
+`packages/usage-store/src/delegation-schema.ts`) adds three tables
 without changing `user_version`: `delegation_jobs` (one row per job a caller
 handed to AI Usage: request, frozen scope SHAs, chosen route, state, result,
 usage, harness guarantee, reservation release), `delegation_evaluations`

@@ -6,15 +6,9 @@ import path from 'node:path';
 import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
-import {
-  importLocalRows,
-  queryEnrichableUsageRowChanges,
-  queryEnrichableUsageRows,
-  queryLocalRowsWatermark,
-  retireLocalRows,
-  updateUsageMachineLabel,
-  usageStorePath,
-} from './index';
+import { queryEnrichableUsageRowChanges, queryEnrichableUsageRows, queryLocalRowsWatermark } from './enrichment';
+import { importLocalRows, retireLocalRows, updateUsageMachineLabel } from './local-rows';
+import { usageStorePath } from './machine-fleet';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
 

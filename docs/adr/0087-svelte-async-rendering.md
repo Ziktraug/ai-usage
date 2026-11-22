@@ -160,7 +160,7 @@ Deferral avoids enabling a global experimental mode on incomplete evidence.
 - [Sources Query options](../../apps/web/src/lib/query/options/source-control.ts)
 - [Sources lifecycle](../../apps/web/src/lib/features/sources/INTEGRATION.md)
 - [Delegation page](../../apps/web/src/lib/features/delegation/delegation-page.svelte)
-- [Work delegation jobs](../../apps/web/src/lib/features/work/work-delegations.svelte)
+- [Work delegation jobs](../../apps/web/src/lib/features/work/delegations/work-delegations.svelte)
 - [Sync query](../../apps/web/src/lib/features/sync/sync-query.svelte.ts)
 - [Sync SSR parity](../../apps/web/src/lib/features/sync/sync-render.test.ts)
 - [Intent prefetch budget](../../apps/web/src/lib/features/shell/intent-prefetch.ts)

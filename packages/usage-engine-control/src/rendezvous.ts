@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import {
   parseUsageEngineInstanceId,
   parseUsageEngineProtocolVersion,
@@ -59,9 +60,6 @@ export class UsageEngineRendezvousError extends Error {
     this.reason = reason;
   }
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const hasExactKeys = (record: Record<string, unknown>, expected: readonly string[]): boolean => {
   const actual = Object.keys(record).sort();

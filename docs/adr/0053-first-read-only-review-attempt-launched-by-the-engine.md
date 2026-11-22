@@ -162,8 +162,8 @@ available in the demo."
   `review-attempt` output).
 - `packages/web-contract/src/work-attempts.ts`,
   `apps/web/src/server/work-attempts.server.ts`,
-  `apps/web/src/lib/features/work/work-attempts.svelte`,
-  `work-routing.svelte`, and `apps/web/e2e/work-attempt-production.spec.ts`
+  `apps/web/src/lib/features/work/attempts/work-attempts.svelte`,
+  `apps/web/src/lib/features/work/routing/work-routing.svelte`, and `apps/web/e2e/work-attempt-production.spec.ts`
   (production path with a fake `claude`, opt-in `AI_USAGE_WORK_ATTEMPT_E2E=1`).
 - `README.md` "Declare which checkouts a launched review may run in" and
   `docs/local-store-upgrade.md` "review attempts".

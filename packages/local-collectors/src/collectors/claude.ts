@@ -12,6 +12,7 @@ import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage, readRegularFileText, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import type { SessionVcsRepository } from '@ai-usage/report-core/session-vcs';
 import {
   MAX_SKILL_OBSERVATIONS_PER_SESSION,
@@ -120,9 +121,6 @@ interface ClaudeCache {
 const CLAUDE_CACHE_VERSION = 25;
 const MAX_DECLARED_CLAUDE_CHILDREN = 512;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
   try {

@@ -1,3 +1,4 @@
+import { isRecord } from './datasets';
 import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 
 export const MAX_CAMPAIGN_LABEL_OVERRIDES = 5000;
@@ -16,9 +17,6 @@ export interface CampaignLabelOverrideMutation {
 }
 
 const textEncoder = new TextEncoder();
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const hasExactKeys = (record: Record<string, unknown>, keys: readonly string[]): boolean => {
   const actualKeys = Object.keys(record);

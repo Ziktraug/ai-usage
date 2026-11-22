@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { isContractProcedure } from '@orpc/contract';
 import { isPublicErrorFamily, type PublicErrorFamily } from './errors';
 import type { RpcContractRouter, RpcRequestSize, RpcResponseSize, RpcTransport } from './rpc-procedure';
@@ -27,9 +28,6 @@ export class RpcProcedureDeclarationError extends Error {
     this.path = path.join('.');
   }
 }
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null;
 
 const isRequestSize = (value: unknown): value is RpcRequestSize =>
   value === 'bounded-rpc-json' || value === 'bounded-url' || value === 'none';

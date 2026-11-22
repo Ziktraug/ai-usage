@@ -6,11 +6,8 @@ import path from 'node:path';
 import { EXECUTOR_BOUNDS, type ExecutorObservation } from '@ai-usage/report-core/work-executors';
 import { Effect } from 'effect';
 import type { UsageStoreError } from './errors';
-import {
-  advanceExecutorAccountBarrier,
-  EXECUTOR_ACCOUNT_CHANGES_TABLE,
-  MAX_EXECUTOR_OBSERVATION_HISTORY,
-} from './executor-observation-store';
+import { advanceExecutorAccountBarrier, EXECUTOR_ACCOUNT_CHANGES_TABLE } from './executor-observation-schema';
+import { MAX_EXECUTOR_OBSERVATION_HISTORY } from './executor-observation-store';
 import {
   importExecutorObservations,
   initializeUsageStore,

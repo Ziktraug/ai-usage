@@ -1,6 +1,7 @@
 // biome-ignore-all lint/style/noExcessiveLinesPerFile: legacy, plan 127
 import { buildCampaignChronology, type CampaignChronology } from './campaign-chronology';
 import { rtkSavingsPct } from './csv';
+import { isRecord } from './datasets';
 import { modelGroupKey } from './model-identity';
 import { normalizeProjectIdentity } from './project-group';
 import { type ApiPriceMeasurement, combineApiPriceMeasurements, parseApiPriceMeasurement } from './provenance';
@@ -8,7 +9,6 @@ import { MAX_SESSION_QUERY_PAGE_SIZE, MAX_SESSION_QUERY_RESULT_BYTES } from './r
 import type { SerializedRow } from './report-data';
 import {
   hasValidSerializedUsageDerivedFields,
-  isRecord,
   isSerializedUsageRowShape,
   isStrictIsoTimestamp,
   SERIALIZED_USAGE_ROW_KEYS,

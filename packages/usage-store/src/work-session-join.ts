@@ -1,6 +1,7 @@
 import { isRecord } from '@ai-usage/report-core/datasets';
 import { Effect } from 'effect';
-import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import { withUsageStoreReader } from './connections';
+import { type UsageStoreError, usageStoreError, usageStoreReadError } from './errors';
 import { validWorkSessionReadScope, type WorkSessionReadScope, workSessionScopeSql } from './work-session-scope';
 
 /**
@@ -71,30 +72,6 @@ export const readWorkSessionDelegations = (
   }
   return { delegatedSessions, delegatedSessionsTruncated };
 };
-
-interface SqliteStatement {
-  all: (...params: unknown[]) => unknown[];
-  get: (...params: unknown[]) => unknown;
-}
-
-interface SqliteDatabase {
-  exec: (sql: string) => unknown;
-  query: (sql: string) => SqliteStatement;
-}
-
-interface WorkSessionJoinDependencies {
-  readonly usageStoreError: (
-    operation: string,
-    dbPath: string,
-    cause: unknown,
-    reason: UsageStoreErrorReason,
-  ) => UsageStoreError;
-  readonly usageStoreReadError: (operation: string, dbPath: string, cause: unknown) => UsageStoreError;
-  readonly withUsageStoreReader: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
-}
 
 export interface QuerySessionRowsBySourceSessionIdsInput {
   readonly dbPath: string;
@@ -345,46 +322,43 @@ const familiesOf = (
   return { families, refusedRows };
 };
 
-export const createWorkSessionJoinStore = (dependencies: WorkSessionJoinDependencies) => {
-  const { usageStoreError, usageStoreReadError, withUsageStoreReader } = dependencies;
-
-  const querySessionRowsBySourceSessionIds = (
-    input: QuerySessionRowsBySourceSessionIdsInput,
-  ): Effect.Effect<QuerySessionRowsBySourceSessionIdsResult, UsageStoreError> => {
-    const ids = [...new Set(input.sourceSessionIds)];
-    if (
-      ids.length > MAX_WORK_SESSION_JOIN_IDS ||
-      !(validIdentifier(input.machineId) && validIdentifier(input.harnessKey)) ||
-      !ids.every(validIdentifier)
-    ) {
-      return Effect.fail(
-        usageStoreError(
-          'querySessionRowsBySourceSessionIds',
-          input.dbPath,
-          'Session join identities are invalid or exceed their budget',
-          'invalid-input',
-        ),
-      );
-    }
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const current = db
-            .query(`
+export const querySessionRowsBySourceSessionIds = (
+  input: QuerySessionRowsBySourceSessionIdsInput,
+): Effect.Effect<QuerySessionRowsBySourceSessionIdsResult, UsageStoreError> => {
+  const ids = [...new Set(input.sourceSessionIds)];
+  if (
+    ids.length > MAX_WORK_SESSION_JOIN_IDS ||
+    !(validIdentifier(input.machineId) && validIdentifier(input.harnessKey)) ||
+    !ids.every(validIdentifier)
+  ) {
+    return Effect.fail(
+      usageStoreError(
+        'querySessionRowsBySourceSessionIds',
+        input.dbPath,
+        'Session join identities are invalid or exceed their budget',
+        'invalid-input',
+      ),
+    );
+  }
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const current = db
+          .query(`
               SELECT revisions.revision AS revision
               FROM served_report_current AS current
               INNER JOIN served_report_revisions AS revisions USING (revision)
               WHERE current.singleton = 1 AND revisions.complete = 1
             `)
-            .get() as { revision: string } | null;
-          if (current === null) {
-            return { revision: null, rows: [] };
-          }
-          if (ids.length === 0) {
-            return { revision: current.revision, rows: [] };
-          }
-          const rows = db
-            .query(`
+          .get() as { revision: string } | null;
+        if (current === null) {
+          return { revision: null, rows: [] };
+        }
+        if (ids.length === 0) {
+          return { revision: current.revision, rows: [] };
+        }
+        const rows = db
+          .query(`
               SELECT
                 row_id,
                 campaign_key,
@@ -397,144 +371,140 @@ export const createWorkSessionJoinStore = (dependencies: WorkSessionJoinDependen
                 AND json_extract(source_row_json, '$.source.sourceSessionId') IN (${ids.map(() => '?').join(', ')})
               ORDER BY ordinal
             `)
-            .all(current.revision, input.machineId, input.harnessKey, ...ids) as JoinRecord[];
-          return {
-            revision: current.revision,
-            rows: rows
-              .filter((record) => typeof record.source_session_id === 'string' && typeof record.row_id === 'string')
-              .map((record) => ({
-                campaignKey: record.campaign_key,
-                projectLabel: record.project_label,
-                rowId: record.row_id,
-                sourceSessionId: record.source_session_id,
-              })),
-          };
-        },
-        catch: (cause) => usageStoreReadError('querySessionRowsBySourceSessionIds', input.dbPath, cause),
-      }),
-    );
-  };
+          .all(current.revision, input.machineId, input.harnessKey, ...ids) as JoinRecord[];
+        return {
+          revision: current.revision,
+          rows: rows
+            .filter((record) => typeof record.source_session_id === 'string' && typeof record.row_id === 'string')
+            .map((record) => ({
+              campaignKey: record.campaign_key,
+              projectLabel: record.project_label,
+              rowId: record.row_id,
+              sourceSessionId: record.source_session_id,
+            })),
+        };
+      },
+      catch: (cause) => usageStoreReadError('querySessionRowsBySourceSessionIds', input.dbPath, cause),
+    }),
+  );
+};
 
-  /**
-   * The recent session families of one harness in the current served revision (ADR 0059): the
-   * campaigns with a member of `harnessKey` active since `activeSince`, most recently active
-   * first, each with its root and its latest few members, and how many such families exist. A
-   * campaign is the lineage the report already folds from declared parents; nothing here links a
-   * session by checkout, branch or time. One read transaction, bounded by the family limit and
-   * the per-family member bound.
-   */
-  const queryRecentServedHarnessSessions = (
-    input: QueryRecentServedHarnessSessionsInput,
-  ): Effect.Effect<QueryRecentServedHarnessSessionsResult, UsageStoreError> => {
-    const limit = input.limit ?? MAX_WORK_HARNESS_SESSION_FAMILIES;
-    if (
-      !(
-        validIdentifier(input.harnessKey) &&
-        (input.machineId === undefined || validIdentifier(input.machineId)) &&
-        Number.isSafeInteger(limit) &&
-        limit > 0 &&
-        limit <= MAX_WORK_HARNESS_SESSION_FAMILIES &&
-        Number.isSafeInteger(input.activeSince) &&
-        (input.scope === undefined || validWorkSessionReadScope(input.scope))
-      )
-    ) {
-      return Effect.fail(
-        usageStoreError(
-          'queryRecentServedHarnessSessions',
-          input.dbPath,
-          'Harness session family query is invalid or exceeds its budget',
-          'invalid-input',
-        ),
-      );
-    }
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-        try: (): QueryRecentServedHarnessSessionsResult => {
-          db.exec('BEGIN');
-          try {
-            const current = db
-              .query(`
+/**
+ * The recent session families of one harness in the current served revision (ADR 0059): the
+ * campaigns with a member of `harnessKey` active since `activeSince`, most recently active
+ * first, each with its root and its latest few members, and how many such families exist. A
+ * campaign is the lineage the report already folds from declared parents; nothing here links a
+ * session by checkout, branch or time. One read transaction, bounded by the family limit and
+ * the per-family member bound.
+ */
+export const queryRecentServedHarnessSessions = (
+  input: QueryRecentServedHarnessSessionsInput,
+): Effect.Effect<QueryRecentServedHarnessSessionsResult, UsageStoreError> => {
+  const limit = input.limit ?? MAX_WORK_HARNESS_SESSION_FAMILIES;
+  if (
+    !(
+      validIdentifier(input.harnessKey) &&
+      (input.machineId === undefined || validIdentifier(input.machineId)) &&
+      Number.isSafeInteger(limit) &&
+      limit > 0 &&
+      limit <= MAX_WORK_HARNESS_SESSION_FAMILIES &&
+      Number.isSafeInteger(input.activeSince) &&
+      (input.scope === undefined || validWorkSessionReadScope(input.scope))
+    )
+  ) {
+    return Effect.fail(
+      usageStoreError(
+        'queryRecentServedHarnessSessions',
+        input.dbPath,
+        'Harness session family query is invalid or exceeds its budget',
+        'invalid-input',
+      ),
+    );
+  }
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: (): QueryRecentServedHarnessSessionsResult => {
+        db.exec('BEGIN');
+        try {
+          const current = db
+            .query(`
                 SELECT revisions.revision AS revision, revisions.generated_at AS generated_at
                 FROM served_report_current AS current
                 INNER JOIN served_report_revisions AS revisions USING (revision)
                 WHERE current.singleton = 1 AND revisions.complete = 1
               `)
-              .get() as { generated_at: string; revision: string } | null;
-            if (current === null) {
-              return { families: [], familiesInWindow: 0, generatedAt: null, refusedRows: 0, revision: null };
-            }
-            const scoped =
-              input.scope === undefined
-                ? null
-                : workSessionScopeSql(input.scope, {
-                    checkout: "json_extract(source_row_json, '$.source.sourcePath')",
-                    project: "json_extract(source_row_json, '$.source.sourcePath')",
-                    fallbackLabel: 'project_label',
-                  });
-            const where =
-              FAMILY_WINDOW_WHERE(input.machineId !== undefined) +
-              (scoped === null
-                ? ''
-                : `
+            .get() as { generated_at: string; revision: string } | null;
+          if (current === null) {
+            return { families: [], familiesInWindow: 0, generatedAt: null, refusedRows: 0, revision: null };
+          }
+          const scoped =
+            input.scope === undefined
+              ? null
+              : workSessionScopeSql(input.scope, {
+                  checkout: "json_extract(source_row_json, '$.source.sourcePath')",
+                  project: "json_extract(source_row_json, '$.source.sourcePath')",
+                  fallbackLabel: 'project_label',
+                });
+          const where =
+            FAMILY_WINDOW_WHERE(input.machineId !== undefined) +
+            (scoped === null
+              ? ''
+              : `
               AND campaign_key IN (SELECT campaign_key FROM served_report_rows WHERE revision = ? AND ${scoped.sql})
             `);
-            const params = [
-              current.revision,
-              input.activeSince,
-              ...(input.machineId === undefined ? [] : [input.machineId]),
-              input.harnessKey,
-              ...(scoped === null ? [] : [current.revision, ...scoped.params]),
-            ];
-            const counted = db
-              .query(`SELECT COUNT(DISTINCT campaign_key) AS families FROM served_report_rows ${where}`)
-              .get(...params) as { families: number } | null;
-            const keys = (
-              db
-                .query(`
+          const params = [
+            current.revision,
+            input.activeSince,
+            ...(input.machineId === undefined ? [] : [input.machineId]),
+            input.harnessKey,
+            ...(scoped === null ? [] : [current.revision, ...scoped.params]),
+          ];
+          const counted = db
+            .query(`SELECT COUNT(DISTINCT campaign_key) AS families FROM served_report_rows ${where}`)
+            .get(...params) as { families: number } | null;
+          const keys = (
+            db
+              .query(`
                   SELECT campaign_key, MAX(active_time) AS last_active
                   FROM served_report_rows ${where}
                   GROUP BY campaign_key
                   ORDER BY last_active DESC, campaign_key
                   LIMIT ?
                 `)
-                .all(...params, limit) as FamilyRecord[]
-            ).flatMap((record) =>
-              typeof record.campaign_key === 'string' && typeof record.last_active === 'number'
-                ? [{ campaignKey: record.campaign_key, lastActiveAt: record.last_active }]
-                : [],
-            );
-            const records = keys.flatMap(
-              (key) =>
-                db
-                  .query(MEMBERS_SQL)
-                  .all(
-                    current.revision,
-                    key.campaignKey,
-                    current.revision,
-                    key.campaignKey,
-                    current.revision,
-                    key.campaignKey,
-                    MAX_WORK_HARNESS_SESSION_MEMBERS,
-                    current.revision,
-                  ) as MemberRecord[],
-            );
-            const { families, refusedRows } = familiesOf(keys, records);
-            return {
-              families,
-              familiesInWindow: Math.max(counted?.families ?? 0, keys.length),
-              generatedAt: current.generated_at,
-              refusedRows,
-              revision: current.revision,
-            };
-          } finally {
-            db.exec('COMMIT');
-          }
-        },
-        catch: (cause) => usageStoreReadError('queryRecentServedHarnessSessions', input.dbPath, cause),
-      }),
-    );
-  };
-
-  return { queryRecentServedHarnessSessions, querySessionRowsBySourceSessionIds };
+              .all(...params, limit) as FamilyRecord[]
+          ).flatMap((record) =>
+            typeof record.campaign_key === 'string' && typeof record.last_active === 'number'
+              ? [{ campaignKey: record.campaign_key, lastActiveAt: record.last_active }]
+              : [],
+          );
+          const records = keys.flatMap(
+            (key) =>
+              db
+                .query(MEMBERS_SQL)
+                .all(
+                  current.revision,
+                  key.campaignKey,
+                  current.revision,
+                  key.campaignKey,
+                  current.revision,
+                  key.campaignKey,
+                  MAX_WORK_HARNESS_SESSION_MEMBERS,
+                  current.revision,
+                ) as MemberRecord[],
+          );
+          const { families, refusedRows } = familiesOf(keys, records);
+          return {
+            families,
+            familiesInWindow: Math.max(counted?.families ?? 0, keys.length),
+            generatedAt: current.generated_at,
+            refusedRows,
+            revision: current.revision,
+          };
+        } finally {
+          db.exec('COMMIT');
+        }
+      },
+      catch: (cause) => usageStoreReadError('queryRecentServedHarnessSessions', input.dbPath, cause),
+    }),
+  );
 };

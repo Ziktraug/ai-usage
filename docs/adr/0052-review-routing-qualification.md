@@ -102,6 +102,6 @@ per card.
   (`executors.capabilities`).
 - `packages/web-contract/src/work-routing.ts`,
   `apps/web/src/server/work-routing-context.server.ts`,
-  `apps/web/src/lib/features/work/work-routing.svelte`.
+  `apps/web/src/lib/features/work/routing/work-routing.svelte`.
 - `README.md` "Declare which local harness may run a read-only review" and
   `docs/local-store-upgrade.md` "Additive tables under usage version 4".

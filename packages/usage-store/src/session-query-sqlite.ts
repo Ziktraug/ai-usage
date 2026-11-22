@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { type ApiPriceMeasurement, combineApiPriceMeasurements } from '@ai-usage/report-core/provenance';
 import {
   parseSessionDetailRequest,
@@ -67,8 +68,6 @@ const EMPTY_API_PRICE_MEASUREMENT = {
   state: 'zero',
   unpricedFreshTokens: 0,
 } as const satisfies ApiPriceMeasurement;
-const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 const withoutSource = (row: Record<string, unknown>): Record<string, unknown> => {
   const { source: _source, ...projectionRow } = row;
   return projectionRow;
@@ -984,10 +983,10 @@ const runSessionDetailAnchor = (
   } catch (error) {
     throw new Error('Report revision session detail source row is invalid JSON', { cause: error });
   }
-  const source = isUnknownRecord(serializedRow) ? serializedRow.source : null;
-  const projectionSource = isUnknownRecord(serializedRow) ? withoutSource(serializedRow) : serializedRow;
+  const source = isRecord(serializedRow) ? serializedRow.source : null;
+  const projectionSource = isRecord(serializedRow) ? withoutSource(serializedRow) : serializedRow;
   const projection = sessionProjectionFactsForSerializedRow(projectionSource);
-  const provenance = isUnknownRecord(source) ? source : null;
+  const provenance = isRecord(source) ? source : null;
   let vcs: SessionVcsContext | null = null;
   if (provenance?.vcs !== undefined) {
     vcs = parseSessionVcsContext(provenance.vcs);

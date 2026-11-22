@@ -2,14 +2,20 @@ export type {
   ClaudeDesktopSessionImportResult,
   ImportClaudeDesktopSessionsInput,
 } from './claude-desktop-session-store';
-export { MAX_CLAUDE_DESKTOP_SESSION_BATCH, MAX_CLAUDE_DESKTOP_SESSION_READ } from './claude-desktop-session-store';
+export {
+  importClaudeDesktopSessions,
+  MAX_CLAUDE_DESKTOP_SESSION_BATCH,
+  MAX_CLAUDE_DESKTOP_SESSION_READ,
+  queryClaudeDesktopSessions,
+  queryClaudeDesktopTurnDeclarations,
+} from './claude-desktop-session-store';
 export type {
   CodexWorkImportResult,
   CodexWorkQueryResult,
   ImportCodexWorkObservationsInput,
   QueryCodexWorkObservationsInput,
 } from './codex-work-store';
-export { MAX_CODEX_WORK_BATCH } from './codex-work-store';
+export { importCodexWorkObservations, MAX_CODEX_WORK_BATCH, queryCodexWorkObservations } from './codex-work-store';
 export type {
   CheckpointUsageStoreInput,
   CheckpointUsageStoreResult,
@@ -46,7 +52,22 @@ export type {
   TransitionDelegationJobInput,
   TransitionDelegationJobResult,
 } from './delegation-store';
-export { DELEGATION_STORE_BOUNDS } from './delegation-store';
+export {
+  countDelegationRetryChain,
+  DELEGATION_STORE_BOUNDS,
+  markDelegationJobsLost,
+  queryDelegationEvaluations,
+  queryDelegationJobs,
+  readDelegationJob,
+  readDelegationJobs,
+  readDelegationQualification,
+  recordDelegationEvaluation,
+  recordDelegationQualification,
+  releaseDelegationJobReservation,
+  requestDelegationCancel,
+  requestDelegationJob,
+  transitionDelegationJob,
+} from './delegation-store';
 export type {
   EnrichableUsageRow,
   EnrichableUsageRowChange,
@@ -67,78 +88,19 @@ export {
 } from './enrichment';
 export type { UsageStoreErrorReason } from './errors';
 export { UsageStoreError } from './errors';
+export type { ExecutorAccountBarrier } from './executor-observation-schema';
 export type {
-  ExecutorAccountBarrier,
   ExecutorObservationImportResult,
   ImportExecutorObservationsInput,
   QueryExecutorAccountChangesInput,
   QueryExecutorAccountChangesResult,
 } from './executor-observation-store';
 export {
-  applyWorkThreadCommand,
-  applyWorkThreadWaitObservations,
-  attachDeclaredWorkThreadSessions,
-  countDelegationRetryChain,
-  importCheckoutStatusObservations,
-  importClaudeDesktopSessions,
-  importCodexWorkObservations,
   importExecutorObservations,
-  importJiraIssueObservations,
-  importProviderQuotaBatch,
-  importPullRequestObservations,
-  importSkillObservations,
-  markDelegationJobsLost,
-  markReviewAttemptsLost,
-  publishServedReportRevision,
-  queryActiveWorkThreadLinks,
-  queryClaudeDesktopSessions,
-  queryClaudeDesktopTurnDeclarations,
-  queryCodexWorkObservations,
-  queryCurrentServedLocalProjectSources,
-  queryDelegationEvaluations,
-  queryDelegationJobs,
   queryExecutorAccountChanges,
   queryExecutorObservationHistory,
-  queryJiraIntake,
-  queryJiraSyncState,
-  queryLatestCheckoutStatusObservations,
   queryLatestExecutorObservations,
-  queryLatestJiraIssueObservations,
-  queryLatestProviderQuotaObservations,
-  queryLatestPullRequestObservations,
-  queryProviderQuotaObservations,
-  queryProviderQuotaSourceState,
-  queryProviderQuotaSourceStates,
-  queryReviewAttempts,
-  queryReviewReservations,
-  queryReviewTargetResolution,
-  queryServedReportRevisionSupport,
-  queryServedSessionPullRequestLinks,
-  queryWorkFactRunStates,
-  queryWorkThreadsPage,
-  queryWorkThreadWaitCandidates,
-  readDelegationJob,
-  readDelegationJobs,
-  readDelegationQualification,
-  reconcileWorkBranches,
-  recordDelegationEvaluation,
-  recordDelegationQualification,
-  recordJiraIntake,
-  recordJiraSyncState,
-  recordProviderQuotaSourceAttempt,
-  recordWorkFactRun,
-  releaseDelegationJobReservation,
-  releaseReviewAttemptReservation,
-  requestDelegationCancel,
-  requestDelegationJob,
-  requestReviewAttempt,
-  retainProviderQuotaObservations,
-  retainServedReportRevisions,
-  retainSkillObservations,
-  seedWorkThreads,
-  transitionDelegationJob,
-  transitionReviewAttempt,
-} from './index';
+} from './executor-observation-store';
 export type {
   ImportLocalRowsInput,
   ImportResult,
@@ -176,6 +138,15 @@ export type {
   RetainProviderQuotaObservationsInput,
   RetainProviderQuotaObservationsResult,
 } from './provider-quota-store';
+export {
+  importProviderQuotaBatch,
+  queryLatestProviderQuotaObservations,
+  queryProviderQuotaObservations,
+  queryProviderQuotaSourceState,
+  queryProviderQuotaSourceStates,
+  recordProviderQuotaSourceAttempt,
+  retainProviderQuotaObservations,
+} from './provider-quota-store';
 export type { ExportLocalMergeBundleInput, QueryUsageStoreGenerationInput, UsageStoreGenerations } from './report-rows';
 export { exportLocalMergeBundle, queryUsageStoreGeneration, queryUsageStoreGenerations } from './report-rows';
 export type {
@@ -195,6 +166,15 @@ export type {
   ReviewTargetResolutionFacts,
   TransitionReviewAttemptInput,
   TransitionReviewAttemptResult,
+} from './review-attempt-store';
+export {
+  markReviewAttemptsLost,
+  queryReviewAttempts,
+  queryReviewReservations,
+  queryReviewTargetResolution,
+  releaseReviewAttemptReservation,
+  requestReviewAttempt,
+  transitionReviewAttempt,
 } from './review-attempt-store';
 export type {
   ReviewReservationCheck,
@@ -227,12 +207,20 @@ export type {
   ServedReportRevisionSupport,
   ServedSessionPullRequestLinks,
 } from './served-report-store';
+export {
+  publishServedReportRevision,
+  queryCurrentServedLocalProjectSources,
+  queryServedReportRevisionSupport,
+  queryServedSessionPullRequestLinks,
+  retainServedReportRevisions,
+} from './served-report-store';
 export type {
   ImportSkillObservationsInput,
   RetainSkillObservationsInput,
   RetainSkillObservationsResult,
   SkillObservationImportResult,
 } from './skill-observation-store';
+export { importSkillObservations, retainSkillObservations } from './skill-observation-store';
 export type { StoredSourceAuthority, StoredUsageRowStatus } from './stored-usage-row';
 export type {
   ImportCheckoutStatusObservationsInput,
@@ -242,19 +230,37 @@ export type {
   WorkFactImportResult,
   WorkFactSourceId,
 } from './work-fact-store';
-export { MAX_WORK_FACT_QUERY_LIMIT } from './work-fact-store';
+export {
+  importCheckoutStatusObservations,
+  importJiraIssueObservations,
+  importPullRequestObservations,
+  MAX_WORK_FACT_QUERY_LIMIT,
+  queryJiraSyncState,
+  queryLatestCheckoutStatusObservations,
+  queryLatestJiraIssueObservations,
+  queryLatestPullRequestObservations,
+  queryWorkFactRunStates,
+  recordJiraSyncState,
+  recordWorkFactRun,
+} from './work-fact-store';
+export type { ReconcileWorkBranchesInput, ReconcileWorkBranchesResult } from './work-thread-branches';
+export { reconcileWorkBranches } from './work-thread-branches';
+export { applyWorkThreadCommand } from './work-thread-commands';
+export { queryJiraIntake, recordJiraIntake } from './work-thread-jira-intake';
+export type { QueryActiveWorkThreadLinksInput, QueryActiveWorkThreadLinksResult } from './work-thread-reads';
+export { queryActiveWorkThreadLinks, queryWorkThreadsPage } from './work-thread-reads';
 export type {
-  ApplyWorkThreadWaitObservationsInput,
-  ApplyWorkThreadWaitObservationsResult,
   AttachDeclaredWorkThreadSessionsInput,
   AttachDeclaredWorkThreadSessionsResult,
   DeclaredWorkThreadSession,
-  QueryActiveWorkThreadLinksInput,
-  QueryActiveWorkThreadLinksResult,
+  WorkThreadSeed,
+} from './work-thread-seeding';
+export { attachDeclaredWorkThreadSessions, seedWorkThreads } from './work-thread-seeding';
+export type {
+  ApplyWorkThreadWaitObservationsInput,
+  ApplyWorkThreadWaitObservationsResult,
   QueryWorkThreadWaitCandidatesInput,
   QueryWorkThreadWaitCandidatesResult,
-  ReconcileWorkBranchesInput,
-  ReconcileWorkBranchesResult,
-  WorkThreadSeed,
   WorkThreadWaitCandidate,
-} from './work-thread-store';
+} from './work-thread-waits';
+export { applyWorkThreadWaitObservations, queryWorkThreadWaitCandidates } from './work-thread-waits';

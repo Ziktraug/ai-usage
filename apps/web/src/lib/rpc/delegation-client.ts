@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import {
   type DelegationCancelInput,
   type DelegationCancelOutput,
@@ -93,9 +94,6 @@ export interface DelegationClient {
 
 const isDelegationErrorTag = (value: unknown): value is DelegationErrorTag =>
   typeof value === 'string' && (delegationErrorTags as readonly string[]).includes(value);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** What a defined error attached, read defensively: only the shapes the contract declares survive. */
 const errorDetail = (data: unknown): Pick<DelegationClientError, 'issues' | 'reason' | 'revision'> => {

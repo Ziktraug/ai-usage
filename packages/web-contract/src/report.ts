@@ -4,6 +4,7 @@ import {
   parseCampaignLabelOverrides,
 } from '@ai-usage/report-core/campaign-label';
 import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
+import { isRecord } from '@ai-usage/report-core/datasets';
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
@@ -45,9 +46,6 @@ const MAX_PROJECT_GROUP_TEXT_CHARACTERS = 240;
 const MAX_PROJECT_GROUP_COMMAND_BYTES = 68 * 1024;
 const MAX_PUBLIC_ERROR_MESSAGE_CHARACTERS = 512;
 const textEncoder = new TextEncoder();
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const assertExactKeys = (record: Record<string, unknown>, keys: readonly string[], label: string): void => {
   const expected = new Set(keys);

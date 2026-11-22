@@ -32,19 +32,19 @@
   import { resolveWorkAttentionClient, type WorkAttentionClient } from '../../rpc/work-attention-client';
   import { useShellNavigationOwner } from '../shell/navigation-owner-context';
   import WorkspaceHeader from '../shell/workspace-header.svelte';
-  import WorkAttentionBoard from './work-attention-board.svelte';
-  import WorkAttentionDetail from './work-attention-detail.svelte';
+  import WorkAttentionBoard from './attention/work-attention-board.svelte';
+  import WorkAttentionDetail from './attention/work-attention-detail.svelte';
+  import { createSyntheticWorkAttentionClient } from './attention/work-attention-synthetic';
+  import WorkCoverageLine from './attention/work-coverage-line.svelte';
+  import WorkDelegations from './delegations/work-delegations.svelte';
+  import WorkSession from './session/work-session.svelte';
   import {
     parseWorkAttentionSearch,
     type WorkAttentionSearch,
     workRootId,
     writeWorkAttentionSearch,
   } from './work-attention-model';
-  import { createSyntheticWorkAttentionClient } from './work-attention-synthetic';
-  import WorkCoverageLine from './work-coverage-line.svelte';
-  import WorkDelegations from './work-delegations.svelte';
   import type { WorkPageData } from './work-load';
-  import WorkSession from './work-session.svelte';
   import WorkSources from './work-sources.svelte';
   import {
     workAside,

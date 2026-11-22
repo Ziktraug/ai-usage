@@ -1,108 +1,70 @@
-import { describe, expect, test } from 'bun:test';
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import type { Component } from 'svelte';
+import { createServer } from 'vite';
 
-const overlayDirectory = dirname(fileURLToPath(import.meta.url));
+/**
+ * What a server render of the real overlays can show is pinned here: the closed overlays leave
+ * nothing but caller-owned, named triggers in the document. The props Tooltip and Popover hand to
+ * Ark (open delay, lazy mount, unmount on exit, portal) are pinned in overlay-primitive-props.test.ts;
+ * the Drawer's open, focus and dismissal behaviour runs in the app's Session drawer Playwright tests.
+ */
+const repositoryDirectory = fileURLToPath(new URL('../../../../../', import.meta.url));
+const viteServer = await createServer({
+  appType: 'custom',
+  configFile: false,
+  optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
+  plugins: [svelte()],
+  resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
+  root: repositoryDirectory,
+  server: { hmr: false, middlewareMode: true, ws: false },
+  ssr: { noExternal: true },
+});
+afterAll(() => viteServer.close());
 
-const readOverlay = async (name: string): Promise<string> => readFile(resolve(overlayDirectory, name), 'utf8');
+const [fixtureModule, rendererModule] = await Promise.all([
+  viteServer.ssrLoadModule('/packages/design-system/src/svelte/overlays/overlay-fixture.svelte'),
+  viteServer.ssrLoadModule('svelte/server'),
+]);
+const fixture = Reflect.get(fixtureModule, 'default') as Component;
+const render = Reflect.get(rendererModule, 'render') as (component: Component) => { body: string };
+const html = render(fixture).body.replaceAll(/<!--[^>]*-->/g, '');
+const TOOLTIP_TARGET_PATTERN =
+  /<button data-scope="tooltip" data-part="trigger"[^>]*type="button">Tooltip target<\/button>/;
 
-describe('Svelte overlay components', () => {
-  test('Drawer delegates the complete controlled focus and dismissal contract to Ark', async () => {
-    const source = await readOverlay('drawer.svelte');
-    for (const contract of [
-      '{closeOnInteractOutside}',
-      '{finalFocusEl}',
-      '{initialFocusEl}',
-      '{modal}',
-      'bind:open={machineOpen}',
-      '{preventScroll}',
-      '{trapFocus}',
-      'onExitComplete={handleExitComplete}',
-      'pendingExternalClose',
-      'onOpenChange(false)',
-      'const reenterMachine',
-      '$state(untrack(() => open))',
-      'await tick()',
-      'machineOpen = false',
-      'machineOpen = true',
-      '<Portal>',
-      'modal !== false',
-      '<Drawer.Backdrop',
-      'pointer-events: auto',
-      '<Drawer.Positioner>',
-    ]) {
-      expect(source).toContain(contract);
-    }
-    expect(source).not.toContain('onDestroy(() =>');
-    expect(source).not.toContain('{#key');
-    expect(source).toContain('prefers-reduced-motion: reduce');
+const elementsWithScope = (scope: string): string[] =>
+  [...html.matchAll(new RegExp(`<[a-z]+ [^>]*data-scope="${scope}"[^>]*>`, 'g'))].map(([element]) => element);
+
+describe('Svelte overlay components during SSR', () => {
+  test('a closed Drawer renders nothing: its content mounts only in the client portal', () => {
+    expect(elementsWithScope('drawer')).toEqual([]);
+    expect(html).not.toContain('Drawer fixture');
+    expect(html).not.toContain('Persistent drawer fixture');
+    expect(html).toContain('data-drawer-open="false"');
   });
 
-  test('Popover remains lazy, portalled, dismissible, and exposes its exit lifecycle', async () => {
-    const source = await readOverlay('popover.svelte');
-    for (const contract of [
-      'lazyMount',
-      '{onExitComplete}',
-      'onOpenChange={handleOpenChange}',
-      '{open}',
-      'positioning = { gutter: 4 }',
-      '{positioning}',
-      'disabled={triggerDisabled}',
-      'unmountOnExit',
-    ]) {
-      expect(source).toContain(contract);
-    }
-    expect(source).toContain('<Portal>');
-    expect(source).toContain('type="button"');
-    expect(source).toContain('contentAriaLabel: string');
-    expect(source).toContain('aria-label={contentAriaLabel}');
-    expect(source).toContain('triggerAriaLabel');
-    expect(source).toContain('triggerTitle');
+  test('Popover renders only its named button trigger until it opens', () => {
+    const [trigger, ...others] = elementsWithScope('popover');
+
+    expect(others).toEqual([]);
+    expect(trigger).toContain('data-part="trigger"');
+    expect(trigger).toContain('type="button"');
+    expect(trigger).toContain('aria-label="Open fixture popover"');
+    expect(trigger).toContain('aria-haspopup="dialog"');
+    expect(trigger).toContain('aria-expanded="false"');
+    expect(html).not.toContain('Popover fixture content');
   });
 
-  test('Tooltip keeps the 300ms default, arbitrary content, caller-owned trigger, lazy portal, and cleanup owner', async () => {
-    const source = await readOverlay('tooltip.svelte');
-    expect(source).toContain('openDelay = 300');
-    expect(source).toContain('content: Snippet | string');
-    expect(source).toContain('{@render trigger(_getTriggerProps())}');
-    expect(source).not.toContain('<span');
-    expect(source).toContain('lazyMount {openDelay} unmountOnExit');
-    expect(source).toContain('<Portal>');
+  test('Tooltip spreads its trigger props on the caller-owned element and renders no content until shown', () => {
+    expect(elementsWithScope('tooltip')).toHaveLength(2);
+    expect(html).toMatch(TOOLTIP_TARGET_PATTERN);
+    expect(html).not.toContain('Tooltip fixture content');
+    expect(html).not.toContain('data-part="content"');
   });
 
-  test('the fixture directly consumes every overlay without a feature barrel', async () => {
-    const source = await readOverlay('overlay-fixture.svelte');
-    expect(source).toContain("import Drawer from './drawer.svelte'");
-    expect(source).toContain("import Popover from './popover.svelte'");
-    expect(source).toContain("import Tooltip from './tooltip.svelte'");
-    expect(source).toContain("new MediaQuery('(min-width: 48rem)', false)");
-    expect(source).toContain('closeOnInteractOutside={mobileDrawer}');
-    expect(source).toContain('closeOnInteractOutside={false}');
-    expect(source).toContain('modal={mobileDrawer}');
-    expect(source).toContain('modal={false}');
-    expect(source).toContain('preventScroll={mobileDrawer}');
-    expect(source).toContain('trapFocus={mobileDrawer}');
-    expect(source).toContain('trapFocus={false}');
-    expect(source).toContain('Outside overlay target');
-    expect(source).toContain('Popover fixture action');
-    expect(source).toContain('contentAriaLabel="Fixture popover actions"');
-    expect(source).toContain('<CellWithProvenance {facts}>');
-  });
-
-  test('the bounded system-Chrome proof owns error assertions and all-settled cleanup', async () => {
-    const source = await readOverlay('overlays.browser.ts');
-    for (const contract of [
-      "Bun.which('google-chrome')",
-      'CHROME_LAUNCH_TIMEOUT_MS',
-      'setDefaultNavigationTimeout(ACTION_TIMEOUT_MS)',
-      'setDefaultTimeout(ACTION_TIMEOUT_MS)',
-      'browserErrors.length',
-      'derived_inert',
-      'Promise.allSettled',
-      'Drawer/Popover/Tooltip focus, Tab, Shift+Tab, Escape, outside, lazy, portal, reduced-motion, provenance, and cleanup parity',
-    ]) {
-      expect(source).toContain(contract);
-    }
+  test('a provenance cell names its fact on the marker trigger', () => {
+    expect(html).toContain('<span>42 minutes</span>');
+    expect(html).toContain('aria-label="Partial data: The provider omitted part of this interval."');
   });
 });

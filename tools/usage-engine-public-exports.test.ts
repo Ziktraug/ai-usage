@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import {
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
@@ -23,45 +21,8 @@ import { defineUsageEngineRuntimeFactory } from '@ai-usage/usage-engine-runtime'
 import { queryReportRows } from '@ai-usage/usage-store/reader';
 import { importLocalRows } from '@ai-usage/usage-store/testing';
 
-const repositoryRoot = path.resolve(import.meta.dir, '..');
-
-const readPackageJson = async (relativePath: string): Promise<Record<string, unknown>> =>
-  JSON.parse(await readFile(path.join(repositoryRoot, relativePath), 'utf8')) as Record<string, unknown>;
-
+// The exact exports maps are enforced by tools/check-package-boundaries.ts (reviewedPackageExports).
 describe('usage engine public package exports', () => {
-  test('exposes only the explicit control, runtime, and store seams', async () => {
-    const [controlPackage, runtimePackage, storePackage, appPackage] = await Promise.all([
-      readPackageJson('packages/usage-engine-control/package.json'),
-      readPackageJson('packages/usage-engine-runtime/package.json'),
-      readPackageJson('packages/usage-store/package.json'),
-      readPackageJson('apps/usage-engine/package.json'),
-    ]);
-
-    expect(controlPackage.exports).toEqual({
-      '.': './src/contracts.ts',
-      './client': './src/client.ts',
-      './completion': './src/completion.ts',
-      './delegation-operations': './src/delegation-operations.ts',
-      './handoff': './src/handoff.ts',
-      './node': './src/rendezvous.ts',
-      './testing': './src/testing.ts',
-    });
-    expect(runtimePackage.exports).toEqual({
-      '.': './src/runtime.ts',
-      './live': './src/live.ts',
-      './recovery': './src/recovery.ts',
-      './source-adapters': './src/source-adapters.ts',
-      './source-control': './src/source-control.ts',
-    });
-    expect(storePackage.exports).toEqual({
-      './performance-testing': './src/performance-testing.ts',
-      './reader': './src/reader.ts',
-      './testing': './src/testing.ts',
-      './writer': './src/writer.ts',
-    });
-    expect(appPackage.exports).toEqual({ './main': './src/main.ts' });
-  });
-
   test('resolves every declared TypeScript seam through its package specifier', () => {
     expect(Number(USAGE_ENGINE_PROTOCOL_VERSION)).toBe(4);
     expect(parseUsageEngineCommand).toBeFunction();

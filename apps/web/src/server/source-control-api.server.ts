@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import {
   chooseNewestSourceControlSnapshot,
   parseSourceControlCommand,
@@ -61,9 +62,6 @@ export interface SourceControlEventStreamOptions {
   readonly scheduleHealthCheck?: ScheduleRepeatingOperation;
   readonly scheduleHeartbeat?: ScheduleRepeatingOperation;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const disableRequestIdleTimeout = (request: Request): void => {
   const runtime = 'runtime' in request && isRecord(request.runtime) ? request.runtime : undefined;

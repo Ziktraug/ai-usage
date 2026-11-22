@@ -15,7 +15,9 @@ import {
 import { WORK_THREAD_BOUNDS } from '@ai-usage/report-core/work-thread';
 import { WORK_THREAD_VIEW_BOUNDS } from '@ai-usage/report-core/work-thread-view';
 import { Effect } from 'effect';
-import type { UsageStoreError, UsageStoreErrorReason } from './errors';
+import { withUsageStoreReader, withUsageStoreWriter } from './connections';
+import { type UsageStoreError, usageStoreError, usageStoreReadError } from './errors';
+import { migrateWorkFactSchema } from './work-fact-schema';
 
 export interface ImportPullRequestObservationsInput {
   readonly dbPath: string;
@@ -208,107 +210,6 @@ const validJiraSyncState = (state: unknown): state is JiraSyncState =>
   ) &&
   new Set(state.knownKeys).size === state.knownKeys.length;
 
-export const workFactSchemaSql = `
-  CREATE TABLE IF NOT EXISTS pull_request_observations (
-    id INTEGER PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    host TEXT NOT NULL,
-    repository TEXT NOT NULL,
-    number INTEGER NOT NULL CHECK (number > 0),
-    observed_at TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    outcome_message TEXT,
-    account_label TEXT,
-    state TEXT,
-    draft INTEGER CHECK (draft IN (0, 1)),
-    review_decision TEXT,
-    merged_at TEXT,
-    updated_at TEXT,
-    title TEXT,
-    url TEXT,
-    head_ref TEXT,
-    base_ref TEXT,
-    checks_rollup TEXT,
-    discovery_role TEXT,
-    mergeable TEXT,
-    merge_state_status TEXT,
-    created_at TEXT,
-    closed_at TEXT,
-    unresolved_review_threads INTEGER,
-    cross_repository INTEGER,
-    history TEXT
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_pull_request_observations_identity
-    ON pull_request_observations(machine_id, host, repository, number, observed_at DESC);
-
-  CREATE TABLE IF NOT EXISTS checkout_status_observations (
-    id INTEGER PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    checkout_path TEXT NOT NULL,
-    observed_at TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    branch TEXT,
-    head_sha TEXT,
-    upstream TEXT,
-    ahead INTEGER CHECK (ahead IS NULL OR ahead >= 0),
-    behind INTEGER CHECK (behind IS NULL OR behind >= 0),
-    staged_count INTEGER CHECK (staged_count IS NULL OR staged_count >= 0),
-    modified_count INTEGER CHECK (modified_count IS NULL OR modified_count >= 0),
-    untracked_count INTEGER CHECK (untracked_count IS NULL OR untracked_count >= 0),
-    last_commit_at TEXT,
-    counts_changed_at TEXT,
-    dirty INTEGER CHECK (dirty IN (0, 1))
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_checkout_status_observations_identity
-    ON checkout_status_observations(machine_id, checkout_path, observed_at DESC);
-
-  CREATE TABLE IF NOT EXISTS jira_issue_observations (
-    id INTEGER PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    issue_key TEXT NOT NULL,
-    observed_at TEXT NOT NULL,
-    outcome TEXT NOT NULL,
-    outcome_message TEXT,
-    status TEXT,
-    status_category TEXT,
-    summary TEXT,
-    updated_at TEXT,
-    assignee_label TEXT,
-    sprint TEXT,
-    parent_key TEXT,
-    comment_count INTEGER CHECK (comment_count IS NULL OR comment_count >= 0),
-    comments_json TEXT NOT NULL,
-    url TEXT,
-    handed_off INTEGER
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_jira_issue_observations_identity
-    ON jira_issue_observations(machine_id, issue_key, observed_at DESC);
-
-  CREATE TABLE IF NOT EXISTS jira_sync_state (
-    machine_id TEXT PRIMARY KEY,
-    state_json TEXT NOT NULL
-  ) WITHOUT ROWID;
-
-  CREATE TABLE IF NOT EXISTS work_fact_run_state (
-    source_id TEXT PRIMARY KEY,
-    machine_id TEXT NOT NULL,
-    ran_at TEXT NOT NULL,
-    observed INTEGER NOT NULL CHECK (observed >= 0),
-    failed INTEGER NOT NULL CHECK (failed >= 0),
-    disabled INTEGER NOT NULL CHECK (disabled IN (0, 1)),
-    message TEXT,
-    outcome_code TEXT CHECK (outcome_code IS NULL OR outcome_code = 'unauthenticated')
-  ) WITHOUT ROWID;
-`;
-
-export const WORK_FACT_TABLES = [
-  'pull_request_observations',
-  'checkout_status_observations',
-  'jira_issue_observations',
-  'work_fact_run_state',
-  'jira_sync_state',
-] as const;
-
 interface SqliteStatement {
   all: (...params: unknown[]) => unknown[];
   finalize: () => void;
@@ -323,59 +224,6 @@ interface SqliteDatabase {
   exec: (sql: string) => unknown;
   readonly inTransaction: boolean;
   query: (sql: string) => SqliteStatement;
-}
-
-/** Presence-based, additive migration; only called by the usage-store writer. */
-export const migrateWorkFactSchema = (db: Pick<SqliteDatabase, 'exec' | 'query'>): boolean => {
-  let changed = false;
-  for (const [table, additions] of [
-    [
-      'pull_request_observations',
-      [
-        'discovery_role',
-        'mergeable',
-        'merge_state_status',
-        'created_at',
-        'closed_at',
-        'unresolved_review_threads',
-        'cross_repository',
-        'history',
-      ],
-    ],
-    ['checkout_status_observations', ['counts_changed_at']],
-    ['jira_issue_observations', ['url', 'handed_off']],
-    ['work_fact_run_state', ['outcome_code']],
-  ] as const) {
-    const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
-    for (const name of additions) {
-      if (!columns.some((column) => column.name === name)) {
-        const type = ['unresolved_review_threads', 'handed_off', 'cross_repository'].includes(name)
-          ? 'INTEGER'
-          : 'TEXT';
-        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
-        changed = true;
-      }
-    }
-  }
-  return changed;
-};
-
-interface WorkFactStoreDependencies {
-  readonly usageStoreError: (
-    operation: string,
-    dbPath: string,
-    cause: unknown,
-    reason: UsageStoreErrorReason,
-  ) => UsageStoreError;
-  readonly usageStoreReadError: (operation: string, dbPath: string, cause: unknown) => UsageStoreError;
-  readonly withUsageStoreReader: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
-  readonly withUsageStoreWriter: <Value>(
-    dbPath: string,
-    use: (database: SqliteDatabase) => Effect.Effect<Value, UsageStoreError>,
-  ) => Effect.Effect<Value, UsageStoreError>;
 }
 
 interface PullRequestRecord {
@@ -663,64 +511,56 @@ const groupLatest = <Record extends { rank_all: number }, Observation extends { 
   return { items, skipped, truncated };
 };
 
-export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => {
-  const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
+export const queryJiraSyncState = (input: {
+  readonly dbPath: string;
+  readonly machineId: string;
+}): Effect.Effect<JiraSyncState | null, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const row = db.query('SELECT state_json FROM jira_sync_state WHERE machine_id = ?').get(input.machineId) as {
+          state_json: string;
+        } | null;
+        if (row === null) {
+          return null;
+        }
+        const state: unknown = JSON.parse(row.state_json);
+        if (!validJiraSyncState(state)) {
+          throw new Error('Invalid Jira synchronization checkpoint');
+        }
+        return state;
+      },
+      catch: (cause) => usageStoreReadError('queryJiraSyncState', input.dbPath, cause),
+    }),
+  );
 
-  const queryJiraSyncState = (input: {
-    readonly dbPath: string;
-    readonly machineId: string;
-  }): Effect.Effect<JiraSyncState | null, UsageStoreError> =>
-    withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const row = db.query('SELECT state_json FROM jira_sync_state WHERE machine_id = ?').get(input.machineId) as {
-            state_json: string;
-          } | null;
-          if (row === null) {
-            return null;
-          }
-          const state: unknown = JSON.parse(row.state_json);
-          if (!validJiraSyncState(state)) {
-            throw new Error('Invalid Jira synchronization checkpoint');
-          }
-          return state;
-        },
-        catch: (cause) => usageStoreReadError('queryJiraSyncState', input.dbPath, cause),
-      }),
+export const recordJiraSyncState = (input: {
+  readonly dbPath: string;
+  readonly machineId: string;
+  readonly state: JiraSyncState;
+}): Effect.Effect<void, UsageStoreError> => {
+  if (!(typeof input.machineId === 'string' && validMachineId(input.machineId) && validJiraSyncState(input.state))) {
+    return Effect.fail(
+      usageStoreError('recordJiraSyncState', input.dbPath, 'Invalid Jira synchronization checkpoint', 'invalid-input'),
     );
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        db.query(
+          'INSERT INTO jira_sync_state (machine_id, state_json) VALUES (?, ?) ON CONFLICT(machine_id) DO UPDATE SET state_json = excluded.state_json',
+        ).run(input.machineId, JSON.stringify(input.state));
+      },
+      catch: (cause) => usageStoreError('recordJiraSyncState', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
-  const recordJiraSyncState = (input: {
-    readonly dbPath: string;
-    readonly machineId: string;
-    readonly state: JiraSyncState;
-  }): Effect.Effect<void, UsageStoreError> => {
-    if (!(typeof input.machineId === 'string' && validMachineId(input.machineId) && validJiraSyncState(input.state))) {
-      return Effect.fail(
-        usageStoreError(
-          'recordJiraSyncState',
-          input.dbPath,
-          'Invalid Jira synchronization checkpoint',
-          'invalid-input',
-        ),
-      );
-    }
-    return withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          db.query(
-            'INSERT INTO jira_sync_state (machine_id, state_json) VALUES (?, ?) ON CONFLICT(machine_id) DO UPDATE SET state_json = excluded.state_json',
-          ).run(input.machineId, JSON.stringify(input.state));
-        },
-        catch: (cause) => usageStoreError('recordJiraSyncState', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
-  };
-
-  const retainPullRequest = (
-    db: SqliteDatabase,
-    key: Pick<PullRequestObservation, 'host' | 'machineId' | 'number' | 'repository'>,
-  ): number => {
-    db.query(`
+const retainPullRequest = (
+  db: SqliteDatabase,
+  key: Pick<PullRequestObservation, 'host' | 'machineId' | 'number' | 'repository'>,
+): number => {
+  db.query(`
       DELETE FROM pull_request_observations
       WHERE machine_id = ? AND host = ? AND repository = ? AND number = ?
         AND id NOT IN (
@@ -736,27 +576,27 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           LIMIT 1
         )
     `).run(
-      key.machineId,
-      key.host,
-      key.repository,
-      key.number,
-      key.machineId,
-      key.host,
-      key.repository,
-      key.number,
-      key.machineId,
-      key.host,
-      key.repository,
-      key.number,
-    );
-    return changes(db);
-  };
+    key.machineId,
+    key.host,
+    key.repository,
+    key.number,
+    key.machineId,
+    key.host,
+    key.repository,
+    key.number,
+    key.machineId,
+    key.host,
+    key.repository,
+    key.number,
+  );
+  return changes(db);
+};
 
-  const retainCheckout = (
-    db: SqliteDatabase,
-    key: Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'>,
-  ): number => {
-    db.query(`
+const retainCheckout = (
+  db: SqliteDatabase,
+  key: Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'>,
+): number => {
+  db.query(`
       DELETE FROM checkout_status_observations
       WHERE machine_id = ? AND checkout_path = ?
         AND id NOT IN (
@@ -772,11 +612,11 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           LIMIT 1
         )
     `).run(key.machineId, key.checkoutPath, key.machineId, key.checkoutPath, key.machineId, key.checkoutPath);
-    return changes(db);
-  };
+  return changes(db);
+};
 
-  const retainJiraIssue = (db: SqliteDatabase, key: Pick<JiraIssueObservation, 'key' | 'machineId'>): number => {
-    db.query(`
+const retainJiraIssue = (db: SqliteDatabase, key: Pick<JiraIssueObservation, 'key' | 'machineId'>): number => {
+  db.query(`
       DELETE FROM jira_issue_observations
       WHERE machine_id = ? AND issue_key = ?
         AND id NOT IN (
@@ -792,35 +632,32 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
           LIMIT 1
         )
     `).run(key.machineId, key.key, key.machineId, key.key, key.machineId, key.key);
-    return changes(db);
-  };
+  return changes(db);
+};
 
-  const importPullRequestObservations = (
-    input: ImportPullRequestObservationsInput,
-  ): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
-    if (input.observations.length > MAX_WORK_FACT_BATCH) {
-      return Effect.fail(
-        usageStoreError(
-          'importPullRequestObservations',
-          input.dbPath,
-          `Pull request observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
-          'invalid-input',
-        ),
-      );
-    }
-    return withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-        try: () => {
-          const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
-          const touched = new Map<
-            string,
-            Pick<PullRequestObservation, 'host' | 'machineId' | 'number' | 'repository'>
-          >();
-          db.exec('BEGIN IMMEDIATE');
-          try {
-            migrateWorkFactSchema(db);
-            const insert = db.query(`
+export const importPullRequestObservations = (
+  input: ImportPullRequestObservationsInput,
+): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
+  if (input.observations.length > MAX_WORK_FACT_BATCH) {
+    return Effect.fail(
+      usageStoreError(
+        'importPullRequestObservations',
+        input.dbPath,
+        `Pull request observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
+        'invalid-input',
+      ),
+    );
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+      try: () => {
+        const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
+        const touched = new Map<string, Pick<PullRequestObservation, 'host' | 'machineId' | 'number' | 'repository'>>();
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          migrateWorkFactSchema(db);
+          const insert = db.query(`
               INSERT OR IGNORE INTO pull_request_observations (
                 machine_id, host, repository, number, observed_at, outcome, outcome_message, account_label,
                 state, draft, review_decision, merged_at, updated_at, title, url, head_ref, base_ref, checks_rollup,
@@ -828,248 +665,250 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
                 cross_repository, history
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
-            for (const candidate of input.observations) {
-              const observation = parsePullRequestObservation(candidate);
-              if (observation === null) {
-                result.rejected += 1;
-                continue;
-              }
-              insert.run(
-                observation.machineId,
-                observation.host,
-                observation.repository,
-                observation.number,
-                observation.observedAt,
-                observation.outcome,
-                observation.outcomeMessage,
-                observation.accountLabel,
-                observation.state,
-                booleanColumn(observation.draft),
-                observation.reviewDecision,
-                observation.mergedAt,
-                observation.updatedAt,
-                observation.title,
-                observation.url,
-                observation.headRef,
-                observation.baseRef,
-                observation.checksRollup,
-                observation.discoveryRole ?? null,
-                observation.mergeable ?? null,
-                observation.mergeStateStatus ?? null,
-                observation.createdAt ?? null,
-                observation.closedAt ?? null,
-                observation.unresolvedReviewThreads ?? null,
-                observation.crossRepository === undefined ? null : Number(observation.crossRepository),
-                observation.history == null ? null : JSON.stringify(observation.history),
-              );
-              if (changes(db) === 1) {
-                result.inserted += 1;
-              } else {
-                result.unchanged += 1;
-              }
-              touched.set(
-                JSON.stringify([observation.machineId, observation.host, observation.repository, observation.number]),
-                observation,
-              );
+          for (const candidate of input.observations) {
+            const observation = parsePullRequestObservation(candidate);
+            if (observation === null) {
+              result.rejected += 1;
+              continue;
             }
-            for (const key of touched.values()) {
-              result.pruned += retainPullRequest(db, key);
+            insert.run(
+              observation.machineId,
+              observation.host,
+              observation.repository,
+              observation.number,
+              observation.observedAt,
+              observation.outcome,
+              observation.outcomeMessage,
+              observation.accountLabel,
+              observation.state,
+              booleanColumn(observation.draft),
+              observation.reviewDecision,
+              observation.mergedAt,
+              observation.updatedAt,
+              observation.title,
+              observation.url,
+              observation.headRef,
+              observation.baseRef,
+              observation.checksRollup,
+              observation.discoveryRole ?? null,
+              observation.mergeable ?? null,
+              observation.mergeStateStatus ?? null,
+              observation.createdAt ?? null,
+              observation.closedAt ?? null,
+              observation.unresolvedReviewThreads ?? null,
+              observation.crossRepository === undefined ? null : Number(observation.crossRepository),
+              observation.history == null ? null : JSON.stringify(observation.history),
+            );
+            if (changes(db) === 1) {
+              result.inserted += 1;
+            } else {
+              result.unchanged += 1;
             }
-            db.exec('COMMIT');
-          } catch (cause) {
-            db.exec('ROLLBACK');
-            throw cause;
+            touched.set(
+              JSON.stringify([observation.machineId, observation.host, observation.repository, observation.number]),
+              observation,
+            );
           }
-          return result;
-        },
-        catch: (cause) => usageStoreError('importPullRequestObservations', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
-  };
+          for (const key of touched.values()) {
+            result.pruned += retainPullRequest(db, key);
+          }
+          db.exec('COMMIT');
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+        return result;
+      },
+      catch: (cause) => usageStoreError('importPullRequestObservations', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
-  const importCheckoutStatusObservations = (
-    input: ImportCheckoutStatusObservationsInput,
-  ): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
-    if (input.observations.length > MAX_WORK_FACT_BATCH) {
-      return Effect.fail(
-        usageStoreError(
-          'importCheckoutStatusObservations',
-          input.dbPath,
-          `Checkout status observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
-          'invalid-input',
-        ),
-      );
-    }
-    return withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-        try: () => {
-          const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
-          const touched = new Map<
-            string,
-            Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'> & { baselineId: number | null }
-          >();
-          db.exec('BEGIN IMMEDIATE');
-          try {
-            migrateWorkFactSchema(db);
-            const insert = db.query(`
+export const importCheckoutStatusObservations = (
+  input: ImportCheckoutStatusObservationsInput,
+): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
+  if (input.observations.length > MAX_WORK_FACT_BATCH) {
+    return Effect.fail(
+      usageStoreError(
+        'importCheckoutStatusObservations',
+        input.dbPath,
+        `Checkout status observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
+        'invalid-input',
+      ),
+    );
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+      try: () => {
+        const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
+        const touched = new Map<
+          string,
+          Pick<CheckoutStatusObservation, 'checkoutPath' | 'machineId'> & { baselineId: number | null }
+        >();
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          migrateWorkFactSchema(db);
+          const insert = db.query(`
               INSERT OR IGNORE INTO checkout_status_observations (
                 machine_id, checkout_path, observed_at, outcome, branch, head_sha, upstream, ahead, behind,
                 staged_count, modified_count, untracked_count, last_commit_at, dirty
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
-            for (const candidate of input.observations) {
-              const observation = parseCheckoutStatusObservation(candidate);
-              if (observation === null) {
-                result.rejected += 1;
-                continue;
-              }
-              const identity = JSON.stringify([observation.machineId, observation.checkoutPath]);
-              if (!touched.has(identity)) {
-                const baseline = db
-                  .query(`SELECT id FROM checkout_status_observations
+          for (const candidate of input.observations) {
+            const observation = parseCheckoutStatusObservation(candidate);
+            if (observation === null) {
+              result.rejected += 1;
+              continue;
+            }
+            const identity = JSON.stringify([observation.machineId, observation.checkoutPath]);
+            if (!touched.has(identity)) {
+              const baseline = db
+                .query(`SELECT id FROM checkout_status_observations
                   WHERE machine_id = ? AND checkout_path = ? AND outcome = 'observed'
                   ORDER BY observed_at, id LIMIT 1`)
-                  .get(observation.machineId, observation.checkoutPath) as { id: number } | null;
-                touched.set(identity, { ...observation, baselineId: baseline?.id ?? null });
-              }
-              insert.run(
-                observation.machineId,
-                observation.checkoutPath,
-                observation.observedAt,
-                observation.outcome,
-                observation.branch,
-                observation.headSha,
-                observation.upstream,
-                observation.ahead,
-                observation.behind,
-                observation.stagedCount,
-                observation.modifiedCount,
-                observation.untrackedCount,
-                observation.lastCommitAt,
-                booleanColumn(observation.dirty),
-              );
-              if (changes(db) === 1) {
-                result.inserted += 1;
-              } else {
-                result.unchanged += 1;
-              }
+                .get(observation.machineId, observation.checkoutPath) as { id: number } | null;
+              touched.set(identity, { ...observation, baselineId: baseline?.id ?? null });
             }
-            for (const key of touched.values()) {
-              updateCheckoutCountChanges(db, key, key.baselineId);
-              result.pruned += retainCheckout(db, key);
+            insert.run(
+              observation.machineId,
+              observation.checkoutPath,
+              observation.observedAt,
+              observation.outcome,
+              observation.branch,
+              observation.headSha,
+              observation.upstream,
+              observation.ahead,
+              observation.behind,
+              observation.stagedCount,
+              observation.modifiedCount,
+              observation.untrackedCount,
+              observation.lastCommitAt,
+              booleanColumn(observation.dirty),
+            );
+            if (changes(db) === 1) {
+              result.inserted += 1;
+            } else {
+              result.unchanged += 1;
             }
-            db.exec('COMMIT');
-          } catch (cause) {
-            db.exec('ROLLBACK');
-            throw cause;
           }
-          return result;
-        },
-        catch: (cause) => usageStoreError('importCheckoutStatusObservations', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
-  };
+          for (const key of touched.values()) {
+            updateCheckoutCountChanges(db, key, key.baselineId);
+            result.pruned += retainCheckout(db, key);
+          }
+          db.exec('COMMIT');
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+        return result;
+      },
+      catch: (cause) => usageStoreError('importCheckoutStatusObservations', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
-  const importJiraIssueObservations = (
-    input: ImportJiraIssueObservationsInput,
-  ): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
-    if (input.observations.length > MAX_WORK_FACT_BATCH) {
-      return Effect.fail(
-        usageStoreError(
-          'importJiraIssueObservations',
-          input.dbPath,
-          `Jira issue observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
-          'invalid-input',
-        ),
-      );
-    }
-    return withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
-        try: () => {
-          const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
-          const touched = new Map<string, Pick<JiraIssueObservation, 'key' | 'machineId'>>();
-          db.exec('BEGIN IMMEDIATE');
-          try {
-            const insert = db.query(`
+export const importJiraIssueObservations = (
+  input: ImportJiraIssueObservationsInput,
+): Effect.Effect<WorkFactImportResult, UsageStoreError> => {
+  if (input.observations.length > MAX_WORK_FACT_BATCH) {
+    return Effect.fail(
+      usageStoreError(
+        'importJiraIssueObservations',
+        input.dbPath,
+        `Jira issue observation batch exceeds ${MAX_WORK_FACT_BATCH} rows`,
+        'invalid-input',
+      ),
+    );
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: legacy, plan 127
+      try: () => {
+        const result = { inserted: 0, pruned: 0, rejected: 0, unchanged: 0 };
+        const touched = new Map<string, Pick<JiraIssueObservation, 'key' | 'machineId'>>();
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const insert = db.query(`
               INSERT OR IGNORE INTO jira_issue_observations (
                 machine_id, issue_key, observed_at, outcome, outcome_message, status, status_category, summary,
                 updated_at, assignee_label, sprint, parent_key, comment_count, comments_json, url, handed_off
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
-            for (const candidate of input.observations) {
-              const observation = parseJiraIssueObservation(candidate);
-              if (observation === null) {
-                result.rejected += 1;
-                continue;
-              }
-              insert.run(
-                observation.machineId,
-                observation.key,
-                observation.observedAt,
-                observation.outcome,
-                observation.outcomeMessage,
-                observation.status,
-                observation.statusCategory,
-                observation.summary,
-                observation.updatedAt,
-                observation.assigneeLabel,
-                observation.sprint,
-                observation.parentKey,
-                observation.commentCount,
-                JSON.stringify(observation.comments),
-                observation.url ?? null,
-                observation.handedOff === true ? 1 : null,
-              );
-              if (changes(db) === 1) {
-                result.inserted += 1;
-              } else {
-                result.unchanged += 1;
-              }
-              touched.set(JSON.stringify([observation.machineId, observation.key]), observation);
+          for (const candidate of input.observations) {
+            const observation = parseJiraIssueObservation(candidate);
+            if (observation === null) {
+              result.rejected += 1;
+              continue;
             }
-            for (const key of touched.values()) {
-              result.pruned += retainJiraIssue(db, key);
+            insert.run(
+              observation.machineId,
+              observation.key,
+              observation.observedAt,
+              observation.outcome,
+              observation.outcomeMessage,
+              observation.status,
+              observation.statusCategory,
+              observation.summary,
+              observation.updatedAt,
+              observation.assigneeLabel,
+              observation.sprint,
+              observation.parentKey,
+              observation.commentCount,
+              JSON.stringify(observation.comments),
+              observation.url ?? null,
+              observation.handedOff === true ? 1 : null,
+            );
+            if (changes(db) === 1) {
+              result.inserted += 1;
+            } else {
+              result.unchanged += 1;
             }
-            db.exec('COMMIT');
-          } catch (cause) {
-            db.exec('ROLLBACK');
-            throw cause;
+            touched.set(JSON.stringify([observation.machineId, observation.key]), observation);
           }
-          return result;
-        },
-        catch: (cause) => usageStoreError('importJiraIssueObservations', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
-  };
+          for (const key of touched.values()) {
+            result.pruned += retainJiraIssue(db, key);
+          }
+          db.exec('COMMIT');
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+        return result;
+      },
+      catch: (cause) => usageStoreError('importJiraIssueObservations', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
-  const recordWorkFactRun = (input: RecordWorkFactRunInput): Effect.Effect<{ changed: boolean }, UsageStoreError> => {
-    const ranAt = normalizeIsoTimestamp(input.ranAt);
-    const outcomeCode = input.outcomeCode ?? null;
-    if (
-      !isWorkFactSourceId(input.sourceId) ||
-      ranAt === null ||
-      !validMachineId(input.machineId) ||
-      input.machineId === undefined ||
-      !(Number.isSafeInteger(input.observed) && input.observed >= 0) ||
-      !(Number.isSafeInteger(input.failed) && input.failed >= 0) ||
-      !(input.message === null || typeof input.message === 'string') ||
-      !(outcomeCode === null || outcomeCode === 'unauthenticated')
-    ) {
-      return Effect.fail(
-        usageStoreError('recordWorkFactRun', input.dbPath, 'Work fact run state is invalid', 'invalid-input'),
-      );
-    }
-    const message = input.message === null ? null : input.message.slice(0, WORK_ATTENTION_BOUNDS.maxDetailText);
-    return withUsageStoreWriter(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          migrateWorkFactSchema(db);
-          const existing = db
-            .query('SELECT * FROM work_fact_run_state WHERE source_id = ?')
-            .get(input.sourceId) as RunStateRecord | null;
-          db.query(`
+export const recordWorkFactRun = (
+  input: RecordWorkFactRunInput,
+): Effect.Effect<{ changed: boolean }, UsageStoreError> => {
+  const ranAt = normalizeIsoTimestamp(input.ranAt);
+  const outcomeCode = input.outcomeCode ?? null;
+  if (
+    !isWorkFactSourceId(input.sourceId) ||
+    ranAt === null ||
+    !validMachineId(input.machineId) ||
+    input.machineId === undefined ||
+    !(Number.isSafeInteger(input.observed) && input.observed >= 0) ||
+    !(Number.isSafeInteger(input.failed) && input.failed >= 0) ||
+    !(input.message === null || typeof input.message === 'string') ||
+    !(outcomeCode === null || outcomeCode === 'unauthenticated')
+  ) {
+    return Effect.fail(
+      usageStoreError('recordWorkFactRun', input.dbPath, 'Work fact run state is invalid', 'invalid-input'),
+    );
+  }
+  const message = input.message === null ? null : input.message.slice(0, WORK_ATTENTION_BOUNDS.maxDetailText);
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        migrateWorkFactSchema(db);
+        const existing = db
+          .query('SELECT * FROM work_fact_run_state WHERE source_id = ?')
+          .get(input.sourceId) as RunStateRecord | null;
+        db.query(`
             INSERT INTO work_fact_run_state (source_id, machine_id, ran_at, observed, failed, disabled, message, outcome_code)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_id) DO UPDATE SET
@@ -1081,99 +920,97 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               message = excluded.message,
               outcome_code = excluded.outcome_code
           `).run(
-            input.sourceId,
-            input.machineId,
-            ranAt,
-            input.observed,
-            input.failed,
-            input.disabled ? 1 : 0,
-            message,
-            outcomeCode,
-          );
-          const changed =
-            existing === null ||
-            existing.machine_id !== input.machineId ||
-            existing.ran_at !== ranAt ||
-            existing.observed !== input.observed ||
-            existing.failed !== input.failed ||
-            existing.disabled !== (input.disabled ? 1 : 0) ||
-            existing.message !== message ||
-            (existing.outcome_code ?? null) !== outcomeCode;
-          return { changed };
-        },
-        catch: (cause) => usageStoreError('recordWorkFactRun', input.dbPath, cause, 'storage-failure'),
-      }),
-    );
-  };
+          input.sourceId,
+          input.machineId,
+          ranAt,
+          input.observed,
+          input.failed,
+          input.disabled ? 1 : 0,
+          message,
+          outcomeCode,
+        );
+        const changed =
+          existing === null ||
+          existing.machine_id !== input.machineId ||
+          existing.ran_at !== ranAt ||
+          existing.observed !== input.observed ||
+          existing.failed !== input.failed ||
+          existing.disabled !== (input.disabled ? 1 : 0) ||
+          existing.message !== message ||
+          (existing.outcome_code ?? null) !== outcomeCode;
+        return { changed };
+      },
+      catch: (cause) => usageStoreError('recordWorkFactRun', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
-  const queryLatestPullRequestObservations = (
-    query: QueryLatestPullRequestObservationsInput | QueryPullRequestObservationBatchInput,
-  ): Effect.Effect<LatestPullRequestObservations, UsageStoreError> => {
-    const batch = 'batch' in query ? query.batch : undefined;
-    const input: QueryLatestPullRequestObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
-    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
-    const links = input.links ?? [];
-    if (
-      limit === null ||
-      (batch !== undefined &&
-        (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
-          batch.some(
-            (key) =>
-              typeof key.machineId !== 'string' ||
-              !validMachineId(key.machineId) ||
-              typeof key.host !== 'string' ||
-              key.host.length === 0 ||
-              key.host.length > WORK_ATTENTION_BOUNDS.maxId ||
-              typeof key.repository !== 'string' ||
-              key.repository.length === 0 ||
-              key.repository.length > WORK_ATTENTION_BOUNDS.maxId ||
-              !Number.isSafeInteger(key.number) ||
-              key.number <= 0,
-          ))) ||
-      !validMachineId(input.machineId) ||
-      links.length > MAX_WORK_FACT_QUERY_LIMIT ||
-      links.some(
-        (link) =>
-          typeof link.host !== 'string' ||
-          typeof link.repository !== 'string' ||
-          !Number.isSafeInteger(link.number) ||
-          link.number <= 0,
-      )
-    ) {
-      return Effect.fail(
-        usageStoreError(
-          'queryLatestPullRequestObservations',
-          input.dbPath,
-          'Pull request observation query is out of bounds',
-          'invalid-input',
-        ),
-      );
-    }
-    if (batch?.length === 0) {
-      return Effect.succeed({ items: [], skipped: 0, truncated: false });
-    }
-    const legacyLinkFilter =
-      links.length === 0 ? '' : `AND (${links.map(() => '(host = ? AND repository = ? AND number = ?)').join(' OR ')})`;
-    const linkFilter =
-      batch === undefined
-        ? legacyLinkFilter
-        : `AND (machine_id, LOWER(host), LOWER(repository), number) IN (
+export const queryLatestPullRequestObservations = (
+  query: QueryLatestPullRequestObservationsInput | QueryPullRequestObservationBatchInput,
+): Effect.Effect<LatestPullRequestObservations, UsageStoreError> => {
+  const batch = 'batch' in query ? query.batch : undefined;
+  const input: QueryLatestPullRequestObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+  const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
+  const links = input.links ?? [];
+  if (
+    limit === null ||
+    (batch !== undefined &&
+      (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
+        batch.some(
+          (key) =>
+            typeof key.machineId !== 'string' ||
+            !validMachineId(key.machineId) ||
+            typeof key.host !== 'string' ||
+            key.host.length === 0 ||
+            key.host.length > WORK_ATTENTION_BOUNDS.maxId ||
+            typeof key.repository !== 'string' ||
+            key.repository.length === 0 ||
+            key.repository.length > WORK_ATTENTION_BOUNDS.maxId ||
+            !Number.isSafeInteger(key.number) ||
+            key.number <= 0,
+        ))) ||
+    !validMachineId(input.machineId) ||
+    links.length > MAX_WORK_FACT_QUERY_LIMIT ||
+    links.some(
+      (link) =>
+        typeof link.host !== 'string' ||
+        typeof link.repository !== 'string' ||
+        !Number.isSafeInteger(link.number) ||
+        link.number <= 0,
+    )
+  ) {
+    return Effect.fail(
+      usageStoreError(
+        'queryLatestPullRequestObservations',
+        input.dbPath,
+        'Pull request observation query is out of bounds',
+        'invalid-input',
+      ),
+    );
+  }
+  if (batch?.length === 0) {
+    return Effect.succeed({ items: [], skipped: 0, truncated: false });
+  }
+  const legacyLinkFilter =
+    links.length === 0 ? '' : `AND (${links.map(() => '(host = ? AND repository = ? AND number = ?)').join(' OR ')})`;
+  const linkFilter =
+    batch === undefined
+      ? legacyLinkFilter
+      : `AND (machine_id, LOWER(host), LOWER(repository), number) IN (
           SELECT json_extract(value, '$.machineId'), LOWER(json_extract(value, '$.host')),
             LOWER(json_extract(value, '$.repository')), json_extract(value, '$.number') FROM json_each(?)
         )`;
-    const linkParams =
-      batch === undefined
-        ? links.flatMap((link) => [link.host, link.repository, link.number])
-        : [JSON.stringify(batch)];
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const caseInsensitive = batch !== undefined;
-          const identityColumns = caseInsensitive
-            ? 'machine_id, LOWER(host), LOWER(repository), number'
-            : 'machine_id, host, repository, number';
-          const records = db
-            .query(`
+  const linkParams =
+    batch === undefined ? links.flatMap((link) => [link.host, link.repository, link.number]) : [JSON.stringify(batch)];
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const caseInsensitive = batch !== undefined;
+        const identityColumns = caseInsensitive
+          ? 'machine_id, LOWER(host), LOWER(repository), number'
+          : 'machine_id, host, repository, number';
+        const records = db
+          .query(`
               WITH ranked AS (
                 SELECT *,
                   ROW_NUMBER() OVER (
@@ -1193,78 +1030,73 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, ${identityColumns}, rank_all
               LIMIT ?
             `)
-            .all(
-              input.machineId ?? null,
-              input.machineId ?? null,
-              ...linkParams,
-              2 * (limit + 1),
-            ) as PullRequestRecord[];
-          return groupLatest(
-            records,
-            (record) =>
-              JSON.stringify([
-                record.machine_id,
-                caseInsensitive ? record.host.toLowerCase() : record.host,
-                caseInsensitive ? record.repository.toLowerCase() : record.repository,
-                record.number,
-              ]),
-            (record) => parsePullRequestObservation(pullRequestValue(record)),
-            limit,
-          );
-        },
-        catch: (cause) => usageStoreReadError('queryLatestPullRequestObservations', input.dbPath, cause),
-      }),
-    );
-  };
+          .all(input.machineId ?? null, input.machineId ?? null, ...linkParams, 2 * (limit + 1)) as PullRequestRecord[];
+        return groupLatest(
+          records,
+          (record) =>
+            JSON.stringify([
+              record.machine_id,
+              caseInsensitive ? record.host.toLowerCase() : record.host,
+              caseInsensitive ? record.repository.toLowerCase() : record.repository,
+              record.number,
+            ]),
+          (record) => parsePullRequestObservation(pullRequestValue(record)),
+          limit,
+        );
+      },
+      catch: (cause) => usageStoreReadError('queryLatestPullRequestObservations', input.dbPath, cause),
+    }),
+  );
+};
 
-  const queryLatestCheckoutStatusObservations = (
-    query: QueryLatestCheckoutStatusObservationsInput | QueryCheckoutStatusObservationBatchInput,
-  ): Effect.Effect<LatestCheckoutStatusObservations, UsageStoreError> => {
-    const batch = 'batch' in query ? query.batch : undefined;
-    const input: QueryLatestCheckoutStatusObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
-    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_CHECKOUT_KEYS;
-    const paths = input.paths ?? [];
-    if (
-      limit === null ||
-      !validMachineId(input.machineId) ||
-      (batch !== undefined &&
-        (batch.length > MAX_WORK_THREAD_CHECKOUT_KEYS ||
-          batch.some(
-            (key) =>
-              typeof key.machineId !== 'string' ||
-              !validMachineId(key.machineId) ||
-              typeof key.checkoutPath !== 'string' ||
-              key.checkoutPath.length === 0 ||
-              key.checkoutPath.length > WORK_ATTENTION_BOUNDS.maxPath,
-          ))) ||
-      paths.length > MAX_WORK_FACT_QUERY_LIMIT ||
-      paths.some((candidate) => typeof candidate !== 'string' || candidate.length === 0)
-    ) {
-      return Effect.fail(
-        usageStoreError(
-          'queryLatestCheckoutStatusObservations',
-          input.dbPath,
-          'Checkout status observation query is out of bounds',
-          'invalid-input',
-        ),
-      );
-    }
-    if (batch?.length === 0) {
-      return Effect.succeed({ items: [], skipped: 0, truncated: false });
-    }
-    const legacyPathFilter = paths.length === 0 ? '' : `AND checkout_path IN (${paths.map(() => '?').join(', ')})`;
-    const pathFilter =
-      batch === undefined
-        ? legacyPathFilter
-        : `AND (machine_id, checkout_path) IN (
+export const queryLatestCheckoutStatusObservations = (
+  query: QueryLatestCheckoutStatusObservationsInput | QueryCheckoutStatusObservationBatchInput,
+): Effect.Effect<LatestCheckoutStatusObservations, UsageStoreError> => {
+  const batch = 'batch' in query ? query.batch : undefined;
+  const input: QueryLatestCheckoutStatusObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+  const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_CHECKOUT_KEYS;
+  const paths = input.paths ?? [];
+  if (
+    limit === null ||
+    !validMachineId(input.machineId) ||
+    (batch !== undefined &&
+      (batch.length > MAX_WORK_THREAD_CHECKOUT_KEYS ||
+        batch.some(
+          (key) =>
+            typeof key.machineId !== 'string' ||
+            !validMachineId(key.machineId) ||
+            typeof key.checkoutPath !== 'string' ||
+            key.checkoutPath.length === 0 ||
+            key.checkoutPath.length > WORK_ATTENTION_BOUNDS.maxPath,
+        ))) ||
+    paths.length > MAX_WORK_FACT_QUERY_LIMIT ||
+    paths.some((candidate) => typeof candidate !== 'string' || candidate.length === 0)
+  ) {
+    return Effect.fail(
+      usageStoreError(
+        'queryLatestCheckoutStatusObservations',
+        input.dbPath,
+        'Checkout status observation query is out of bounds',
+        'invalid-input',
+      ),
+    );
+  }
+  if (batch?.length === 0) {
+    return Effect.succeed({ items: [], skipped: 0, truncated: false });
+  }
+  const legacyPathFilter = paths.length === 0 ? '' : `AND checkout_path IN (${paths.map(() => '?').join(', ')})`;
+  const pathFilter =
+    batch === undefined
+      ? legacyPathFilter
+      : `AND (machine_id, checkout_path) IN (
           SELECT json_extract(value, '$.machineId'), json_extract(value, '$.checkoutPath') FROM json_each(?)
         )`;
-    const pathParams = batch === undefined ? paths : [JSON.stringify(batch)];
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const records = db
-            .query(`
+  const pathParams = batch === undefined ? paths : [JSON.stringify(batch)];
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const records = db
+          .query(`
               WITH ranked AS (
                 SELECT *,
                   ROW_NUMBER() OVER (
@@ -1284,92 +1116,92 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, machine_id, checkout_path, rank_all
               LIMIT ?
             `)
-            .all(
-              input.machineId ?? null,
-              input.machineId ?? null,
-              ...pathParams,
-              2 * (limit + 1),
-            ) as CheckoutStatusRecord[];
-          const grouped = groupLatest(
-            records,
-            (record) => JSON.stringify([record.machine_id, record.checkout_path]),
-            (record) =>
-              record.counts_changed_at != null && normalizeIsoTimestamp(record.counts_changed_at) === null
+          .all(
+            input.machineId ?? null,
+            input.machineId ?? null,
+            ...pathParams,
+            2 * (limit + 1),
+          ) as CheckoutStatusRecord[];
+        const grouped = groupLatest(
+          records,
+          (record) => JSON.stringify([record.machine_id, record.checkout_path]),
+          (record) =>
+            record.counts_changed_at != null && normalizeIsoTimestamp(record.counts_changed_at) === null
+              ? null
+              : parseCheckoutStatusObservation(checkoutStatusValue(record)),
+          limit,
+        );
+        const changedByIdentity = new Map(
+          records
+            .filter((record) => record.outcome === 'observed')
+            .map((record) => [
+              JSON.stringify([record.machine_id, record.checkout_path]),
+              record.counts_changed_at == null ? null : normalizeIsoTimestamp(record.counts_changed_at),
+            ]),
+        );
+        return {
+          ...grouped,
+          items: grouped.items.map((item) => ({
+            ...item,
+            countsChangedAt:
+              item.latestObserved === null
                 ? null
-                : parseCheckoutStatusObservation(checkoutStatusValue(record)),
-            limit,
-          );
-          const changedByIdentity = new Map(
-            records
-              .filter((record) => record.outcome === 'observed')
-              .map((record) => [
-                JSON.stringify([record.machine_id, record.checkout_path]),
-                record.counts_changed_at == null ? null : normalizeIsoTimestamp(record.counts_changed_at),
-              ]),
-          );
-          return {
-            ...grouped,
-            items: grouped.items.map((item) => ({
-              ...item,
-              countsChangedAt:
-                item.latestObserved === null
-                  ? null
-                  : (changedByIdentity.get(JSON.stringify([item.latest.machineId, item.latest.checkoutPath])) ?? null),
-            })),
-          };
-        },
-        catch: (cause) => usageStoreReadError('queryLatestCheckoutStatusObservations', input.dbPath, cause),
-      }),
-    );
-  };
+                : (changedByIdentity.get(JSON.stringify([item.latest.machineId, item.latest.checkoutPath])) ?? null),
+          })),
+        };
+      },
+      catch: (cause) => usageStoreReadError('queryLatestCheckoutStatusObservations', input.dbPath, cause),
+    }),
+  );
+};
 
-  const queryLatestJiraIssueObservations = (
-    query: QueryLatestJiraIssueObservationsInput | QueryJiraIssueObservationBatchInput,
-  ): Effect.Effect<LatestJiraIssueObservations, UsageStoreError> => {
-    const batch = 'batch' in query ? query.batch : undefined;
-    const input: QueryLatestJiraIssueObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
-    const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
-    const keys = input.keys ?? [];
-    if (
-      limit === null ||
-      !validMachineId(input.machineId) ||
-      (batch !== undefined &&
-        (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
-          batch.some(
-            (key) =>
-              typeof key.machineId !== 'string' ||
-              !validMachineId(key.machineId) ||
-              typeof key.key !== 'string' ||
-              !JIRA_ISSUE_KEY_PATTERN.test(key.key),
-          ))) ||
-      keys.length > MAX_WORK_FACT_QUERY_LIMIT ||
-      keys.some((key) => typeof key !== 'string' || !JIRA_ISSUE_KEY_PATTERN.test(key))
-    ) {
-      return Effect.fail(
-        usageStoreError(
-          'queryLatestJiraIssueObservations',
-          input.dbPath,
-          'Jira issue observation query is out of bounds',
-          'invalid-input',
-        ),
-      );
-    }
-    if (batch?.length === 0) {
-      return Effect.succeed({ items: [], skipped: 0, truncated: false });
-    }
-    const legacyKeyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
-    const keyFilter =
-      batch === undefined
-        ? legacyKeyFilter
-        : `AND (machine_id, issue_key) IN (
+export const queryLatestJiraIssueObservations = (
+  query: QueryLatestJiraIssueObservationsInput | QueryJiraIssueObservationBatchInput,
+): Effect.Effect<LatestJiraIssueObservations, UsageStoreError> => {
+  const batch = 'batch' in query ? query.batch : undefined;
+  const input: QueryLatestJiraIssueObservationsInput = 'batch' in query ? { dbPath: query.dbPath } : query;
+  const limit = batch === undefined ? validLimit(input.limit) : MAX_WORK_THREAD_FACT_KEYS;
+  const keys = input.keys ?? [];
+  if (
+    limit === null ||
+    !validMachineId(input.machineId) ||
+    (batch !== undefined &&
+      (batch.length > MAX_WORK_THREAD_FACT_KEYS ||
+        batch.some(
+          (key) =>
+            typeof key.machineId !== 'string' ||
+            !validMachineId(key.machineId) ||
+            typeof key.key !== 'string' ||
+            !JIRA_ISSUE_KEY_PATTERN.test(key.key),
+        ))) ||
+    keys.length > MAX_WORK_FACT_QUERY_LIMIT ||
+    keys.some((key) => typeof key !== 'string' || !JIRA_ISSUE_KEY_PATTERN.test(key))
+  ) {
+    return Effect.fail(
+      usageStoreError(
+        'queryLatestJiraIssueObservations',
+        input.dbPath,
+        'Jira issue observation query is out of bounds',
+        'invalid-input',
+      ),
+    );
+  }
+  if (batch?.length === 0) {
+    return Effect.succeed({ items: [], skipped: 0, truncated: false });
+  }
+  const legacyKeyFilter = keys.length === 0 ? '' : `AND issue_key IN (${keys.map(() => '?').join(', ')})`;
+  const keyFilter =
+    batch === undefined
+      ? legacyKeyFilter
+      : `AND (machine_id, issue_key) IN (
           SELECT json_extract(value, '$.machineId'), json_extract(value, '$.key') FROM json_each(?)
         )`;
-    const keyParams = batch === undefined ? keys : [JSON.stringify(batch)];
-    return withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const records = db
-            .query(`
+  const keyParams = batch === undefined ? keys : [JSON.stringify(batch)];
+  return withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const records = db
+          .query(`
               WITH ranked AS (
                 SELECT *,
                   ROW_NUMBER() OVER (
@@ -1389,72 +1221,58 @@ export const createWorkFactStore = (dependencies: WorkFactStoreDependencies) => 
               ORDER BY key_latest DESC, machine_id, issue_key, rank_all
               LIMIT ?
             `)
-            .all(input.machineId ?? null, input.machineId ?? null, ...keyParams, 2 * (limit + 1)) as JiraIssueRecord[];
-          return groupLatest(
-            records,
-            (record) => JSON.stringify([record.machine_id, record.issue_key]),
-            (record) => parseJiraIssueObservation(jiraIssueValue(record)),
-            limit,
-          );
-        },
-        catch: (cause) => usageStoreReadError('queryLatestJiraIssueObservations', input.dbPath, cause),
-      }),
-    );
-  };
-
-  const queryWorkFactRunStates = (
-    input: QueryWorkFactRunStatesInput,
-  ): Effect.Effect<WorkFactRunStates, UsageStoreError> =>
-    withUsageStoreReader(input.dbPath, (db) =>
-      Effect.try({
-        try: () => {
-          const records = db.query('SELECT * FROM work_fact_run_state ORDER BY source_id').all() as RunStateRecord[];
-          const runs: WorkFactRunState[] = [];
-          let skipped = 0;
-          for (const record of records) {
-            const ranAt: CanonicalInstant | null = normalizeIsoTimestamp(record.ran_at);
-            const outcomeCode = record.outcome_code ?? null;
-            if (
-              !isWorkFactSourceId(record.source_id) ||
-              ranAt === null ||
-              typeof record.machine_id !== 'string' ||
-              record.machine_id.length === 0 ||
-              !(Number.isSafeInteger(record.observed) && record.observed >= 0) ||
-              !(Number.isSafeInteger(record.failed) && record.failed >= 0) ||
-              !(record.disabled === 0 || record.disabled === 1) ||
-              !(record.message === null || typeof record.message === 'string') ||
-              !(outcomeCode === null || outcomeCode === 'unauthenticated')
-            ) {
-              skipped += 1;
-              continue;
-            }
-            runs.push({
-              disabled: record.disabled === 1,
-              failed: record.failed,
-              machineId: record.machine_id,
-              message: record.message,
-              observed: record.observed,
-              outcomeCode,
-              ranAt,
-              sourceId: record.source_id,
-            });
-          }
-          return { runs, skipped };
-        },
-        catch: (cause) => usageStoreReadError('queryWorkFactRunStates', input.dbPath, cause),
-      }),
-    );
-
-  return {
-    queryJiraSyncState,
-    recordJiraSyncState,
-    importCheckoutStatusObservations,
-    importJiraIssueObservations,
-    importPullRequestObservations,
-    queryLatestCheckoutStatusObservations,
-    queryLatestJiraIssueObservations,
-    queryLatestPullRequestObservations,
-    queryWorkFactRunStates,
-    recordWorkFactRun,
-  };
+          .all(input.machineId ?? null, input.machineId ?? null, ...keyParams, 2 * (limit + 1)) as JiraIssueRecord[];
+        return groupLatest(
+          records,
+          (record) => JSON.stringify([record.machine_id, record.issue_key]),
+          (record) => parseJiraIssueObservation(jiraIssueValue(record)),
+          limit,
+        );
+      },
+      catch: (cause) => usageStoreReadError('queryLatestJiraIssueObservations', input.dbPath, cause),
+    }),
+  );
 };
+
+export const queryWorkFactRunStates = (
+  input: QueryWorkFactRunStatesInput,
+): Effect.Effect<WorkFactRunStates, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const records = db.query('SELECT * FROM work_fact_run_state ORDER BY source_id').all() as RunStateRecord[];
+        const runs: WorkFactRunState[] = [];
+        let skipped = 0;
+        for (const record of records) {
+          const ranAt: CanonicalInstant | null = normalizeIsoTimestamp(record.ran_at);
+          const outcomeCode = record.outcome_code ?? null;
+          if (
+            !isWorkFactSourceId(record.source_id) ||
+            ranAt === null ||
+            typeof record.machine_id !== 'string' ||
+            record.machine_id.length === 0 ||
+            !(Number.isSafeInteger(record.observed) && record.observed >= 0) ||
+            !(Number.isSafeInteger(record.failed) && record.failed >= 0) ||
+            !(record.disabled === 0 || record.disabled === 1) ||
+            !(record.message === null || typeof record.message === 'string') ||
+            !(outcomeCode === null || outcomeCode === 'unauthenticated')
+          ) {
+            skipped += 1;
+            continue;
+          }
+          runs.push({
+            disabled: record.disabled === 1,
+            failed: record.failed,
+            machineId: record.machine_id,
+            message: record.message,
+            observed: record.observed,
+            outcomeCode,
+            ranAt,
+            sourceId: record.source_id,
+          });
+        }
+        return { runs, skipped };
+      },
+      catch: (cause) => usageStoreReadError('queryWorkFactRunStates', input.dbPath, cause),
+    }),
+  );

@@ -1,3 +1,4 @@
+import { isRecord } from '@ai-usage/report-core/datasets';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { isJsonWireValue } from '@ai-usage/web-contract/schema-conventions';
 import { parseSyncFleet, parseSyncMachineLabelResult, type SyncFleet, syncContract } from '@ai-usage/web-contract/sync';
@@ -15,9 +16,6 @@ interface OwnerError {
 type OwnerResult<Data> =
   | { readonly data: Data; readonly ok: true }
   | { readonly error: OwnerError; readonly ok: false };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const hasExactKeys = (record: Record<string, unknown>, expected: readonly string[]): boolean => {
   const keys = Object.keys(record);
