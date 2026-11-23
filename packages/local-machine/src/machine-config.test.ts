@@ -207,8 +207,8 @@ describe('machine config', () => {
           projectGroups: [
             {
               id: 'group-1',
-              name: 'exalibur',
-              sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+              name: 'meridian',
+              sources: [{ machineId: 'machine-a', sourcePath: '/work/meridian' }],
             },
           ],
         }),
@@ -218,7 +218,7 @@ describe('machine config', () => {
         readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
 
-      expect(config.projectGroups?.[0]?.name).toBe('exalibur');
+      expect(config.projectGroups?.[0]?.name).toBe('meridian');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -232,7 +232,7 @@ describe('machine config', () => {
       writeFileSync(
         aiUsageConfigPath(storage),
         JSON.stringify({
-          projectGroups: [{ id: 'group-1', name: 'exalibur', sources: [{}] }],
+          projectGroups: [{ id: 'group-1', name: 'meridian', sources: [{}] }],
         }),
       );
 
@@ -320,12 +320,12 @@ describe('machine config', () => {
             {
               id: 'group-1',
               name: 'broad',
-              sources: [{ machineId: 'machine-a', project: 'Exalibur' }],
+              sources: [{ machineId: 'machine-a', project: 'Meridian' }],
             },
             {
               id: 'group-2',
               name: 'precise',
-              sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+              sources: [{ machineId: 'machine-a', sourcePath: '/work/meridian' }],
             },
           ],
         }),
@@ -365,8 +365,8 @@ describe('machine config', () => {
           projectGroups: [
             {
               id: 'group-1',
-              name: 'exalibur',
-              sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+              name: 'meridian',
+              sources: [{ machineId: 'machine-a', sourcePath: '/work/meridian' }],
             },
           ],
         }),
@@ -381,7 +381,7 @@ describe('machine config', () => {
         readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
 
-      expect(config.projectGroups?.[0]?.name).toBe('exalibur');
+      expect(config.projectGroups?.[0]?.name).toBe('meridian');
       expect(config.cursor?.clusterGapMs).toBe(1234);
     } finally {
       rmSync(home, { recursive: true, force: true });

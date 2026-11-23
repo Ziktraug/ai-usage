@@ -813,7 +813,7 @@ sequence overlapping files and rebase/re-read before execution.
   shallow speculative interface. Plan 021 standardizes normalized ingestion and
   keeps source-specific lifecycle behind focused adapters until a second real
   provider proves what must vary.
-- Copy Exalibur's HTTP/cache event model into ai-usage: rejected because plan
+- Copy Meridian's HTTP/cache event model into ai-usage: rejected because plan
   037 needs its terminal projection and detail-level pattern, not its unrelated
   domain fields. The `@ai-usage/effect-runtime` model remains domain-free.
 - Make pretty JSON or NDJSON multi-line: rejected. Plan 037 permits multi-line

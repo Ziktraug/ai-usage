@@ -69,14 +69,14 @@ const RECONSIDERED_UNCERTAINTY = 'This does not prove it is the same work; the q
 const MERGED_INTERPRETATION =
   'fixture/ai-usage#90 merged at 2026-10-20T10:00:00.000Z; merge does not prove deployment.';
 const JIRA_DIFFERS_INTERPRETATION =
-  'XLB-2101 is still To Do (Jira status To Do, observed 2026-10-20T11:00:00.000Z) while fixture/ai-usage#90 is MERGED (GitHub 2026-10-20T10:00:00.000Z); a different status is not automatically an error.';
+  'XYZ-2101 is still To Do (Jira status To Do, observed 2026-10-20T11:00:00.000Z) while fixture/ai-usage#90 is MERGED (GitHub 2026-10-20T10:00:00.000Z); a different status is not automatically an error.';
 const SATISFIED_TITLE = 'Fixture: collector branch awaiting a pull request';
 const SATISFIED_INTERPRETATION =
   'Possibly answered elsewhere: fixture/ai-usage#117 (OPEN) listed by a child session (last active at 2026-10-20T09:00:00.000Z), after the question.';
 const REVIEW_READY_ROOT_ID = 'local_fixture-review-ready-root';
 const REVIEW_READY_TITLE = 'Fixture: review the store migration';
 const JIRA_REPLY_INTERPRETATION =
-  "1 comment arrived on XLB-2090 after this session family's last activity (2026-10-20T01:00:00.000Z); no resumption observed.";
+  "1 comment arrived on XYZ-2090 after this session family's last activity (2026-10-20T01:00:00.000Z); no resumption observed.";
 const PROPOSAL_TITLE = 'Fixture: proposals pending';
 const CONTINUED_TITLE = 'Fixture: toolbar refresh';
 
@@ -204,7 +204,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   );
   await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('possibly answered · PR #90');
   await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('PR #90 merged · observed 1 h ago');
-  await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('Jira XLB-2101 · To Do · observed 1 h ago');
+  await expect(rowNamed(page, MERGED_BEFORE_TITLE)).toContainText('Jira XYZ-2101 · To Do · observed 1 h ago');
   await expect(main.locator('[data-work-reconsider]').locator(rowNamed(page, STALE_TITLE))).toHaveCount(1);
   await expect(needsYou.last()).toContainText(STALE_TITLE);
   await expect(rowNamed(page, STALE_TITLE)).toContainText('blocked · 40 d ago, no activity since');
@@ -213,7 +213,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
   );
   await expect(rowNamed(page, STALE_TITLE)).not.toContainText('possibly answered');
   await expect(rowNamed(page, REVIEW_READY_TITLE)).toContainText(
-    'Jira XLB-2090 · In Progress · 1 new reply · newest reply 6 h ago',
+    'Jira XYZ-2090 · In Progress · 1 new reply · newest reply 6 h ago',
   );
 
   // The pull request GitHub showed awaiting review waits on others; the dirty worktree marks its roots.
@@ -230,7 +230,7 @@ test('reads the seeded registry through work.attention and renders its roots, fa
     1,
   );
   await expect(rowNamed(page, PROPOSAL_TITLE)).toContainText(
-    'Jira XLB-1998 read failed (unauthenticated) · observed 30 min ago',
+    'Jira XYZ-1998 read failed (unauthenticated) · observed 30 min ago',
   );
   await expectAxeClean(page);
 
@@ -273,10 +273,10 @@ test('names the pull requests and Jira issues that may answer, wait on or contra
   await expect(mergedBefore.getByRole('heading', { level: 4, name: 'GitHub' })).toBeVisible();
   await expect(mergedBefore.getByRole('heading', { level: 4, name: 'Jira' })).toBeVisible();
   await expect(mergedBefore).toContainText(
-    'Declared PR #90 merged on fixture/ai-usage (fix/XLB-2101/earlier-merged-fix)',
+    'Declared PR #90 merged on fixture/ai-usage (fix/XYZ-2101/earlier-merged-fix)',
   );
   await expect(mergedBefore).toContainText('PR #90 merged, checks success, approved');
-  await expect(mergedBefore).toContainText('Jira XLB-2101 To Do, 0 comments');
+  await expect(mergedBefore).toContainText('Jira XYZ-2101 To Do, 0 comments');
   await expect(main.locator('[data-work-section="human-request"] [data-work-root][aria-current="true"]')).toHaveCount(
     1,
   );
@@ -294,7 +294,7 @@ test('names the pull requests and Jira issues that may answer, wait on or contra
   const reviewReady = await openWorkRoot(page, REVIEW_READY_ROOT_ID);
   await expect(reviewReady).toContainText(JIRA_REPLY_INTERPRETATION);
   await expect(reviewReady).toContainText(
-    'Jira XLB-2090 In Progress, 2 comments, 1 new reply since the latest activity on this key',
+    'Jira XYZ-2090 In Progress, 2 comments, 1 new reply since the latest activity on this key',
   );
 
   // The open pull request awaiting review, with GitHub's own state beside the declaration.

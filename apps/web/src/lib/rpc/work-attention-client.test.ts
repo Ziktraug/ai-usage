@@ -176,8 +176,8 @@ describe('parseWorkAttentionDataset: Jira facts and coverage', () => {
       );
       return parseWorkAttentionDataset({ ...value, roots: value.roots.map((r) => (r === root ? { ...r, facts } : r)) });
     };
-    expect(corrupt({ url: 'https://example.atlassian.net/browse/XLB-2090' })).toBeUndefined();
-    expect(corrupt({ key: 'xlb-2090' })).toBeUndefined();
+    expect(corrupt({ url: 'https://example.atlassian.net/browse/XYZ-2090' })).toBeUndefined();
+    expect(corrupt({ key: 'xyz-2090' })).toBeUndefined();
     expect(corrupt({ statusCategory: 'open' })).toBeUndefined();
     expect(corrupt({ outcome: 'ok' })).toBeUndefined();
     const { value } = withJira();

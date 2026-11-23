@@ -9,7 +9,7 @@ interface RecordJiraIntakeInput {
   /** Only a complete search proves that an issue absent from it is no longer assigned. */
   readonly complete: boolean;
   readonly dbPath: string;
-  /** Issue keys (`XLB-1`) the assigned-issue search returned this run. */
+  /** Issue keys (`XYZ-1`) the assigned-issue search returned this run. */
   readonly keys: readonly string[];
   readonly machineId: string;
   readonly now: string;

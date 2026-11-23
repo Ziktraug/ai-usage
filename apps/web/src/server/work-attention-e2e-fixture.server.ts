@@ -61,11 +61,11 @@ export const WORK_ATTENTION_E2E_WORKTREE = `${WORK_ATTENTION_E2E_REPOSITORY}/.cl
 const E2E_TRANSCRIPT_ID = 'claude-fixture-025';
 const E2E_REPOSITORY_SLUG = 'fixture/ai-usage';
 /** The ticket on which a reply arrived after the review-ready family's last activity. */
-export const WORK_ATTENTION_E2E_JIRA_REPLY_KEY = 'XLB-2090';
+export const WORK_ATTENTION_E2E_JIRA_REPLY_KEY = 'XYZ-2090';
 /** The ticket still To Do while the merged-before family's pull request is merged. */
-export const WORK_ATTENTION_E2E_JIRA_TODO_KEY = 'XLB-2101';
+export const WORK_ATTENTION_E2E_JIRA_TODO_KEY = 'XYZ-2101';
 /** The ticket Jira refused to read, with an older successful read behind it. */
-export const WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY = 'XLB-1998';
+export const WORK_ATTENTION_E2E_JIRA_UNREADABLE_KEY = 'XYZ-1998';
 /** The served revision the e2e Codex families are said to come from. */
 export const WORK_ATTENTION_E2E_CODEX_REVISION = 'e2e-codex-revision';
 export const WORK_ATTENTION_E2E_CODEX_ROOT_TITLE = 'Fixture Codex: refactor the collector';
@@ -172,9 +172,9 @@ const pullRequestObservation = (
  * merged two hours ago as GitHub shows it, after the request. Pull request 117 (declared by the
  * satisfied root's child) could not be read half an hour ago for lack of credentials; the last
  * successful read, a day ago, showed it open. The shared worktree had uncommitted changes forty
- * minutes ago. On Jira, XLB-2090 received a reply six hours ago, after the review-ready family's
- * last activity (eleven hours ago); XLB-2101 is still To Do while pull request 90 is merged;
- * XLB-1998 could not be read half an hour ago for lack of credentials, and its last successful
+ * minutes ago. On Jira, XYZ-2090 received a reply six hours ago, after the review-ready family's
+ * last activity (eleven hours ago); XYZ-2101 is still To Do while pull request 90 is merged;
+ * XYZ-1998 could not be read half an hour ago for lack of credentials, and its last successful
  * read, a day ago, showed it in progress. Pull request 131, listed by the settings root's child
  * (which predates the question), merged five hours ago and answers nothing: the question asks for
  * no pull request. All three producers ran.

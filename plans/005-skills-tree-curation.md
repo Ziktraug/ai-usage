@@ -133,13 +133,13 @@ SKILL.md visible for every skill, read-only where writing is unsafe.
 
 ```text
 ┌ Skills ──────────────────┐  ┌ Detail ───────────────────────┐  ┌ Context ─────────────┐
-│ [filter…]                │  │ exalibur-caching  (valid|Auto)│  │ Source health        │
+│ [filter…]                │  │ meridian-caching  (valid|Auto)│  │ Source health        │
 │ ▾ Global             12 │  │ description…                  │  │  Healthy 58/72       │
 │    pr-review          ⚠2 │  │ [metadata grid]               │  │  To repair 3  →      │
 │    recent-work-context   │  │ Runtime placement (1 path/row)│  │  Blocked 1    →      │
 │ ▸ example-app         8 │  │ SKILL.md (read-only)          │  │  Consolidate 8→      │
 │ ▸ example-app-fork    8 │  │  ┌──────────────────────────┐ │  │ ──────────────       │
-│ ▸ other-repo          3 │  │  │ # exalibur-caching       │ │  │ Project skill        │
+│ ▸ other-repo          3 │  │  │ # meridian-caching       │ │  │ Project skill        │
 │                          │  │  │ Repository guidance for… │ │  │ [Copy skill path]    │
 │ ▸ Projects without       │  │  └──────────────────────────┘ │  │ Read-only — adopt    │
 │   skills (14)            │  │ Also present in: example-app… │  │ flow arrives later   │

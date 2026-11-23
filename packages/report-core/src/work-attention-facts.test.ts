@@ -338,7 +338,7 @@ const jiraIssue = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObse
     { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-21T20:30:00.000Z'), excerpt: 'Second.', id: '2' },
     { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-21T17:00:00.000Z'), excerpt: 'First.', id: '1' },
   ],
-  key: 'XLB-2090',
+  key: 'XYZ-2090',
   machineId: 'machine-a',
   observedAt: FRESH,
   outcome: 'observed',
@@ -377,24 +377,24 @@ const session = (
 
 describe('explicitJiraKeys', () => {
   test('reads a key only from a branch segment, never from a title, a cwd or a bare number', () => {
-    expect(jiraKeysInBranch('feat/XLB-2090/slug')).toEqual(['XLB-2090']);
-    expect(jiraKeysInBranch('fix/XLB-2091/mobile-nav')).toEqual(['XLB-2091']);
-    expect(jiraKeysInBranch('XLB-2092')).toEqual(['XLB-2092']);
-    expect(jiraKeysInBranch('chore/XLB-0/agent-setup')).toEqual([]);
+    expect(jiraKeysInBranch('feat/XYZ-2090/slug')).toEqual(['XYZ-2090']);
+    expect(jiraKeysInBranch('fix/XYZ-2091/mobile-nav')).toEqual(['XYZ-2091']);
+    expect(jiraKeysInBranch('XYZ-2092')).toEqual(['XYZ-2092']);
+    expect(jiraKeysInBranch('chore/XYZ-0/agent-setup')).toEqual([]);
     expect(jiraKeysInBranch('pr/user/123')).toEqual([]);
-    expect(jiraKeysInBranch('feat/xlb-2090/slug')).toEqual([]);
-    expect(jiraKeysInBranch('feat/XLB-1998-promo-badge')).toEqual([]);
-    expect(explicitJiraKeys(session({ writtenBranches: ['feat/XLB-2090/slug', 'chore/XLB-0/agent-setup'] }))).toEqual([
-      'XLB-2090',
+    expect(jiraKeysInBranch('feat/xyz-2090/slug')).toEqual([]);
+    expect(jiraKeysInBranch('feat/XYZ-1998-promo-badge')).toEqual([]);
+    expect(explicitJiraKeys(session({ writtenBranches: ['feat/XYZ-2090/slug', 'chore/XYZ-0/agent-setup'] }))).toEqual([
+      'XYZ-2090',
     ]);
     expect(
       explicitJiraKeys(
         session({
-          branch: 'fix/XLB-2091/mobile-nav',
+          branch: 'fix/XYZ-2091/mobile-nav',
           declaredPullRequests: [
             {
               baseRef: 'main',
-              branch: 'release/XLB-2093/cut',
+              branch: 'release/XYZ-2093/cut',
               host: 'github.com',
               number: 1,
               own: true,
@@ -403,13 +403,13 @@ describe('explicitJiraKeys', () => {
               url: null,
             },
           ],
-          sourceBranch: 'hotfix/XLB-2092/urgent',
-          writtenBranches: ['feat/XLB-2090/slug', 'fix/XLB-2091/mobile-nav'],
+          sourceBranch: 'hotfix/XYZ-2092/urgent',
+          writtenBranches: ['feat/XYZ-2090/slug', 'fix/XYZ-2091/mobile-nav'],
         }),
       ),
-    ).toEqual(['XLB-2090', 'XLB-2091', 'XLB-2092', 'XLB-2093']);
+    ).toEqual(['XYZ-2090', 'XYZ-2091', 'XYZ-2092', 'XYZ-2093']);
     // The title is not an input of this function at all; a key there cannot reach the result.
-    expect(explicitJiraKeys({ ...session(), title: 'XLB-1998 promo badge' } as never)).toEqual([]);
+    expect(explicitJiraKeys({ ...session(), title: 'XYZ-1998 promo badge' } as never)).toEqual([]);
   });
 });
 
@@ -419,7 +419,7 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
     expect(fact).toEqual({
       commentCount: 2,
       id: 'jira-1',
-      key: 'XLB-2090',
+      key: 'XYZ-2090',
       kind: 'jira-issue',
       newCommentsSince: 1,
       newestCommentAt: parseCanonicalInstant('2026-10-21T20:30:00.000Z'),
@@ -434,7 +434,7 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
       {
         evidence: ['jira-1'],
         kind: 'jira-reply-arrived',
-        text: `1 comment arrived on XLB-2090 after this session family's last activity (${ACTIVITY_BEFORE_REPLY}); no resumption observed.`,
+        text: `1 comment arrived on XYZ-2090 after this session family's last activity (${ACTIVITY_BEFORE_REPLY}); no resumption observed.`,
         uncertainty: `You may have read them in Jira; this view cannot tell. Newest comment 2026-10-21T20:30:00.000Z, observed ${FRESH}.`,
       },
     ]);
@@ -452,7 +452,7 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
   test('a reply is asked of the family last active on the key; an older family is told where it is carried', () => {
     const fact = jiraIssueFact(jiraIssue(), 'jira-1', ACTIVITY_BEFORE_REPLY);
     const keyActivity = new Map([
-      ['XLB-2090', { lastActivityAt: ACTIVITY_BEFORE_REPLY, latestFamilyTitle: 'Fixture: the later family' }],
+      ['XYZ-2090', { lastActivityAt: ACTIVITY_BEFORE_REPLY, latestFamilyTitle: 'Fixture: the later family' }],
     ]);
     // The family whose activity is the key's latest one carries the request.
     expect(
@@ -466,8 +466,8 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
       {
         evidence: ['jira-1'],
         kind: 'jira-reply-elsewhere',
-        text: `1 comment arrived on XLB-2090 after the latest activity on this key (${ACTIVITY_BEFORE_REPLY}); the most recent family on this key is “Fixture: the later family”, which carries the request.`,
-        uncertainty: `This family last worked on XLB-2090 at ${earlier}; whether the reply concerns it is not known. Newest comment 2026-10-21T20:30:00.000Z, observed ${FRESH}.`,
+        text: `1 comment arrived on XYZ-2090 after the latest activity on this key (${ACTIVITY_BEFORE_REPLY}); the most recent family on this key is “Fixture: the later family”, which carries the request.`,
+        uncertainty: `This family last worked on XYZ-2090 at ${earlier}; whether the reply concerns it is not known. Newest comment 2026-10-21T20:30:00.000Z, observed ${FRESH}.`,
       },
     ]);
     // A key the index does not know was written by this family alone: the request is its own.
@@ -490,10 +490,10 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
     ];
     const result = interpretJiraFacts({ facts, familyLastActivityAt: ACTIVITY_BEFORE_REPLY, now: NOW });
     expect(result.map(({ kind }) => kind)).toEqual(['coverage-gap', 'coverage-gap', 'coverage-gap']);
-    expect(result[0]?.text).toBe(`Jira rejected the read of XLB-2090 as unauthenticated at ${FRESH}.`);
+    expect(result[0]?.text).toBe(`Jira rejected the read of XYZ-2090 as unauthenticated at ${FRESH}.`);
     expect(result[0]?.uncertainty).toContain('sign in to Jira (acli jira auth login)');
-    expect(result[1]?.text).toBe(`XLB-2090 could not be read at ${FRESH}: the Atlassian CLI (acli) is not installed.`);
-    expect(result[2]?.text).toBe(`XLB-2090 could not be read from Jira at ${FRESH} (network).`);
+    expect(result[1]?.text).toBe(`XYZ-2090 could not be read at ${FRESH}: the Atlassian CLI (acli) is not installed.`);
+    expect(result[2]?.text).toBe(`XYZ-2090 could not be read from Jira at ${FRESH} (network).`);
   });
 
   test('a To Do ticket beside an open or merged pull request is a difference, not an error', () => {
@@ -512,13 +512,13 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
       {
         evidence: ['jira-1'],
         kind: 'jira-status-differs',
-        text: `XLB-2090 is still To Do (Jira status To Do, observed ${FRESH}) while fixture/project#66 is MERGED (GitHub ${FRESH}); a different status is not automatically an error.`,
+        text: `XYZ-2090 is still To Do (Jira status To Do, observed ${FRESH}) while fixture/project#66 is MERGED (GitHub ${FRESH}); a different status is not automatically an error.`,
         uncertainty:
           'Whether the ticket should follow the pull request is a team convention this view does not know; both are dated reads, not current states.',
       },
     ]);
     const declared: WorkFact = {
-      branch: 'feat/XLB-2090/slug',
+      branch: 'feat/XYZ-2090/slug',
       host: 'github.com',
       id: 'decl-1',
       declaredBy: 'child',
@@ -553,7 +553,7 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
       {
         evidence: ['jira-1'],
         kind: 'coverage-gap',
-        text: `XLB-2090 was In Progress when last observed at ${STALE}; nothing fresher.`,
+        text: `XYZ-2090 was In Progress when last observed at ${STALE}; nothing fresher.`,
         uncertainty: `last observation ${STALE}; current state unknown`,
       },
     ]);
@@ -568,7 +568,7 @@ describe('jiraIssueFact and interpretJiraFacts', () => {
   test('ignores facts of other kinds and caps at the contract bound', () => {
     const facts = Array.from({ length: 20 }, (_value, index) =>
       jiraIssueFact(
-        failedJiraIssue({ key: `XLB-${String(index + 1)}` }),
+        failedJiraIssue({ key: `XYZ-${String(index + 1)}` }),
         `jira-${String(index)}`,
         ACTIVITY_BEFORE_REPLY,
       ),

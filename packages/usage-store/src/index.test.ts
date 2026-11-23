@@ -2098,7 +2098,7 @@ describe('usage-store public boundary', () => {
   test('migrates stored pre-VCS row fingerprints and republishes them exactly once', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-pre-vcs-'));
     const dbPath = usageStorePath(home);
-    const row = makeRow({ sourceSessionId: 'pre-vcs-row', project: 'Exalibur' });
+    const row = makeRow({ sourceSessionId: 'pre-vcs-row', project: 'Meridian' });
     await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
 
     const current = toSerializedMergeRow(row, machineA);
@@ -2142,8 +2142,8 @@ describe('usage-store public boundary', () => {
     await Effect.runPromise(initializeUsageStore({ dbPath }));
     const second = await Effect.runPromise(queryReportRows({ dbPath }));
 
-    expect(first).toMatchObject({ rows: [{ project: 'Exalibur' }], skipped: 0 });
-    expect(second).toMatchObject({ rows: [{ project: 'Exalibur' }], skipped: 0 });
+    expect(first).toMatchObject({ rows: [{ project: 'Meridian' }], skipped: 0 });
+    expect(second).toMatchObject({ rows: [{ project: 'Meridian' }], skipped: 0 });
     expect(generationAfterMigration).toBe(2);
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationAfterMigration);
 
