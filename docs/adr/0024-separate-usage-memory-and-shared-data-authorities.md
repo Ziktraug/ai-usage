@@ -70,6 +70,6 @@ shutdown, recovery, authentication, and IPC ownership in a new ADR.
 
 ## Evidence
 
-- [Platform data ownership](../architecture.md#platform-data-ownership)
+- [Platform data ownership](../architecture.md#data-ownership)
 - [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
 - [Plan 100](../../plans/100-platform-topology-capabilities-data-ownership.md)

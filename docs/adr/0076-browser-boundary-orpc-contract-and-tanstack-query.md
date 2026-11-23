@@ -198,7 +198,7 @@ procedure, and it would keep the multi-place registration problem.
 - [Browser RPC client](../../apps/web/src/lib/rpc/client.ts)
 - [Query composition](../../apps/web/src/lib/query/composition.ts) and
   [policies](../../apps/web/src/lib/query/policies.ts)
-- [Subrequest normalization](../../apps/web/src/lib/server/rpc/subrequest-normalization.server.ts)
+- Subrequest normalization: `apps/web/src/lib/server/rpc/subrequest-normalization.server.ts`, removed by this ADR (git history keeps it)
 - [Report server load](<../../apps/web/src/routes/(report)/+layout.server.ts>)
 - `node_modules/@sveltejs/kit/types/index.d.ts` (`experimental.remoteFunctions`,
   `RemoteQuery`) and `node_modules/@orpc/contract/dist/index.d.mts`

@@ -57,5 +57,5 @@ data class.
 
 ## Evidence
 
-- [Platform data ownership](../architecture.md#platform-data-ownership)
+- [Platform data ownership](../architecture.md#data-ownership)
 - [Plan 109](../../plans/109-session-detail-archive.md)
