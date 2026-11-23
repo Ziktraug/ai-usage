@@ -11,6 +11,7 @@ import {
   type WorkThreadsListInput,
   type WorkThreadsListOutput,
 } from '@ai-usage/web-contract/work-threads';
+import { ORPCError } from '@orpc/client';
 
 export interface WorkThreadsClientCallOptions {
   readonly signal?: AbortSignal;
@@ -53,29 +54,49 @@ const aborted = (error: unknown, signal: AbortSignal | undefined) => {
     throw error;
   }
 };
+type WorkThreadsReadFailure = Extract<WorkThreadsListOutput | WorkThreadsDetailOutput, { readonly ok: false }>;
+const unavailable = (message: string): WorkThreadsReadFailure => ({
+  ok: false,
+  error: { tag: 'Unavailable', message },
+});
+
+// Each failure says what broke: the server is gone, it answered an error, or this page predates its answer.
+const transportFailure = (error: unknown): WorkThreadsReadFailure => {
+  if (error instanceof ORPCError) {
+    return unavailable(
+      error.defined
+        ? error.message
+        : `The web server answered with an error (HTTP ${error.status}). Its output names the cause.`,
+    );
+  }
+  return unavailable('The web server could not be reached; it may have stopped. Restart it, then retry.');
+};
+
+const read = async <Output>(
+  request: () => Promise<unknown>,
+  parse: (value: unknown) => Output,
+  signal: AbortSignal | undefined,
+): Promise<Output | WorkThreadsReadFailure> => {
+  let result: unknown;
+  try {
+    signal?.throwIfAborted();
+    result = await request();
+    signal?.throwIfAborted();
+  } catch (error) {
+    aborted(error, signal);
+    return transportFailure(error);
+  }
+  try {
+    return parse(result);
+  } catch {
+    return unavailable('The web server answered in a shape this page does not read; reload the page.');
+  }
+};
+
 export const createWorkThreadsClient = (transport: WorkThreadsContractClient): WorkThreadsClient => ({
-  list: async (input, options = {}) => {
-    try {
-      options.signal?.throwIfAborted();
-      const result = await transport.list(input, options);
-      options.signal?.throwIfAborted();
-      return parseWorkThreadsListOutput(result);
-    } catch (error) {
-      aborted(error, options.signal);
-      return { ok: false, error: { tag: 'Unavailable', message: 'Tasks are unavailable.' } };
-    }
-  },
-  detail: async (input, options = {}) => {
-    try {
-      options.signal?.throwIfAborted();
-      const result = await transport.detail(input, options);
-      options.signal?.throwIfAborted();
-      return parseWorkThreadsDetailOutput(result);
-    } catch (error) {
-      aborted(error, options.signal);
-      return { ok: false, error: { tag: 'Unavailable', message: 'This task is unavailable.' } };
-    }
-  },
+  list: (input, options = {}) => read(() => transport.list(input, options), parseWorkThreadsListOutput, options.signal),
+  detail: (input, options = {}) =>
+    read(() => transport.detail(input, options), parseWorkThreadsDetailOutput, options.signal),
   command: async (input, options = {}) => {
     try {
       options.signal?.throwIfAborted();

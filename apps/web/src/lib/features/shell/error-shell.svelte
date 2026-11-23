@@ -4,7 +4,7 @@
   import WorkspaceHeader from './workspace-header.svelte';
 
   let {
-    message = 'Report data could not be loaded.',
+    message,
     onRetry,
     pending = false,
     hydrated = false,
