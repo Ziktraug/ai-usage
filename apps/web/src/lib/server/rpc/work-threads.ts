@@ -23,25 +23,44 @@ const aborted = (error: unknown, signal: AbortSignal | undefined) => {
     throw error;
   }
 };
+type WorkThreadsReadFailure = Extract<WorkThreadsListOutput | WorkThreadsDetailOutput, { readonly ok: false }>;
+const unavailable = (message: string): WorkThreadsReadFailure => ({
+  ok: false,
+  error: { tag: 'Unavailable', message },
+});
+
+// The reader answers its own typed failures; reaching a catch here means the reader itself broke,
+// or its answer does not fit the contract, and the message says which.
+const read = async <Output>(
+  request: () => Promise<unknown>,
+  parse: (value: unknown) => Output,
+  signal: AbortSignal | undefined,
+): Promise<Output | WorkThreadsReadFailure> => {
+  let result: unknown;
+  try {
+    result = await request();
+  } catch (error) {
+    aborted(error, signal);
+    return unavailable('The web server failed while reading tasks; retry, or restart it if this persists.');
+  }
+  try {
+    return parse(result);
+  } catch {
+    return unavailable('The task data does not fit what this version can display.');
+  }
+};
+
 export const createWorkThreadsRpcRouter = (dependencies: WorkThreadsRpcDependencies) => {
   const threads = implement(workThreadsContract);
   return {
-    list: threads.list.handler(async ({ input, signal }): Promise<WorkThreadsListOutput> => {
-      try {
-        return parseWorkThreadsListOutput(await dependencies.list(input, signal));
-      } catch (error) {
-        aborted(error, signal);
-        return { ok: false, error: { tag: 'Unavailable', message: 'Tasks are unavailable.' } };
-      }
-    }),
-    detail: threads.detail.handler(async ({ input, signal }): Promise<WorkThreadsDetailOutput> => {
-      try {
-        return parseWorkThreadsDetailOutput(await dependencies.detail(input, signal));
-      } catch (error) {
-        aborted(error, signal);
-        return { ok: false, error: { tag: 'Unavailable', message: 'This task is unavailable.' } };
-      }
-    }),
+    list: threads.list.handler(
+      ({ input, signal }): Promise<WorkThreadsListOutput> =>
+        read(() => dependencies.list(input, signal), parseWorkThreadsListOutput, signal),
+    ),
+    detail: threads.detail.handler(
+      ({ input, signal }): Promise<WorkThreadsDetailOutput> =>
+        read(() => dependencies.detail(input, signal), parseWorkThreadsDetailOutput, signal),
+    ),
     command: threads.command.handler(async ({ input, signal }): Promise<WorkThreadsCommandOutput> => {
       try {
         return parseWorkThreadsCommandOutput(await dependencies.command(input, signal));

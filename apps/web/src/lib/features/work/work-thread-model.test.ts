@@ -299,9 +299,15 @@ describe('task presentation model', () => {
     if (!marker?.latest) {
       throw new Error('Expected a local marker');
     }
-    const other = { ...marker, latest: { ...marker.latest, checkoutPath: `${marker.latest.checkoutPath}-2` } };
+    const otherPath = `${marker.latest.checkoutPath}-2`;
+    const other = { ...marker, checkoutPath: otherPath, latest: { ...marker.latest, checkoutPath: otherPath } };
     expect(localMarkerKey(marker)).not.toBe(localMarkerKey(other));
     expect(localMarkerKey(marker).startsWith(marker.key)).toBe(true);
+    // Two worktrees of one branch, neither observed yet: only the marker's own path tells them apart.
+    const unobserved = { ...marker, latest: null, latestSuccessful: null };
+    expect(localMarkerKey({ ...unobserved, checkoutPath: '/repo/.claude/worktrees/a' })).not.toBe(
+      localMarkerKey({ ...unobserved, checkoutPath: '/repo/.claude/worktrees/b' }),
+    );
   });
   test('the list keeps explanations, not source and date captions, and shortens projects', () => {
     expect(projectShortLabel('exaprint/Exalibur')).toBe('Exalibur');

@@ -593,7 +593,7 @@ test('renders retryable route errors and the default accessible Not Found shell'
   expect(failed?.status()).toBe(503);
   await expect(page.locator('[data-error-route][data-hydrated="true"]')).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
-  await expect(page.getByText('Report data could not be loaded.')).toBeVisible();
+  await expect(page.getByText('Synthetic shell route failure')).toBeVisible();
   const historyLength = await page.evaluate(() => history.length);
   await page.getByRole('button', { name: 'Retry' }).click();
   await expect(page.locator('[data-route-shell="report"]')).toBeAttached();

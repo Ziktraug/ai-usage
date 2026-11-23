@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import ErrorShell from '#lib/features/shell/error-shell.svelte';
+  import { routeErrorMessage } from '#lib/features/shell/report-render-error.ts';
   import { createRetryController } from '#lib/foundation/navigation/svelte/retry.ts';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -53,7 +54,7 @@
 {:else}
   <ErrorShell
     {hydrated}
-    message={retryFailed ? 'Retry failed. Try again.' : undefined}
+    message={retryFailed ? 'Retry failed. Try again.' : routeErrorMessage(page.status, page.error)}
     onRetry={retry}
     {pending}
     retryHref={`${page.url.pathname}${page.url.search}`}
