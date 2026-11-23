@@ -23,8 +23,8 @@ server needs no Memory service.
 
 `work.context` is annotated read-only, idempotent and closed-world. It opens
 the store per call and never creates it; it answers while the engine is down.
-The answer's fields, coverage and bounds are described in the root
-[README, section 10](../README.md#10-give-a-harness-session-the-work-context-of-its-checkout).
+The answer's fields, coverage and bounds are described in
+[Work view setup](work.md#give-a-harness-session-the-work-context-of-its-checkout).
 The delegation tools carry annotations that state their real effects; their
 setup, rules, results and limits are in [Delegation](delegation.md).
 

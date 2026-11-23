@@ -7,6 +7,15 @@ disagree with living reference, the living reference wins.
 
 ## Living reference
 
+- [`../README.md`](../README.md) — what ai-usage is and the quick start.
+- [`reports.md`](reports.md) — reading usage: CLI report and options, output
+  formats, provider quota and its JSON feed, the interactive report.
+- [`multi-machine.md`](multi-machine.md) — usage snapshots, merging them, the
+  file-only `/sync` transfer, and project groups across machines.
+- [`work.md`](work.md) — optional Work view setup in the home config (review
+  executors and checkouts, Jira, branch evidence) and the Work context read.
+- [`development.md`](development.md) — run modes, checks and test suites for
+  contributors.
 - [`architecture.md`](architecture.md) — data flow, process/package ownership,
   the data-plane/control-plane split.
 - [`delegation.md`](delegation.md) — delegating read-only reviews from any MCP

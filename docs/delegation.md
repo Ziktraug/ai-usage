@@ -29,9 +29,10 @@ What this version does and does not do:
 - In the home config (`~/.config/ai-usage/config.json`), or from
   **Manage › Delegation** in the web app:
   - `routing.executors[]` — which harness, account and models may run a
-    read-only review (README section 7);
-  - `routing.reviewTargets[]` — which checkouts a worker may read (README
-    section 9). An entry must name the repository's canonical top level (its
+    read-only review
+    ([Work view setup](work.md#declare-which-local-harness-may-run-a-read-only-review));
+  - `routing.reviewTargets[]` — which checkouts a worker may read
+    ([Work view setup](work.md#declare-which-checkouts-a-launched-review-may-run-in)). An entry must name the repository's canonical top level (its
     real path, symlinks resolved) or an ancestor of it: an entry naming a
     symlink or a subdirectory admits nothing, and the refusal names the path
     to add. This holds for the Work view's review button too;
