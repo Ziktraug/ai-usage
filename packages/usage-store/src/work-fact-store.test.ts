@@ -733,12 +733,12 @@ const jiraIssue = (overrides: Partial<JiraIssueObservation> = {}): JiraIssueObse
       { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-21T18:30:00.000Z'), excerpt: 'Second.', id: '2' },
       { authorLabel: 'Sam', createdAt: parseCanonicalInstant('2026-10-20T08:00:00.000Z'), excerpt: 'First.', id: '1' },
     ],
-    key: 'XLB-2090',
+    key: 'XYZ-2090',
     machineId: 'machine-a',
     observedAt: at(0),
     outcome: 'observed',
     outcomeMessage: null,
-    parentKey: 'XLB-2000',
+    parentKey: 'XYZ-2000',
     sprint: 'Sprint 42',
     status: 'In Progress',
     statusCategory: 'in-progress',
@@ -774,8 +774,8 @@ describe('work fact store: Jira issue observations', () => {
           observations: [
             jiraIssue(),
             jiraIssue(), // same identity and instant: unchanged
-            jiraIssue({ key: 'XLB-2091', machineId: 'machine-b', observedAt: at(1) }),
-            { ...jiraIssue(), key: 'xlb-2090' }, // not an issue key: rejected
+            jiraIssue({ key: 'XYZ-2091', machineId: 'machine-b', observedAt: at(1) }),
+            { ...jiraIssue(), key: 'xyz-2090' }, // not an issue key: rejected
             { ...jiraIssue(), comments: [{ authorLabel: 'sam@example.com', createdAt: at(0), excerpt: '', id: '9' }] },
           ],
         }),
@@ -791,17 +791,17 @@ describe('work fact store: Jira issue observations', () => {
     expect(
       all.items.map(({ latest, latestObserved }) => [latest.key, latest.outcome, latestObserved?.observedAt]),
     ).toEqual([
-      ['XLB-2090', 'unauthenticated', at(0)],
-      ['XLB-2091', 'observed', at(1)],
+      ['XYZ-2090', 'unauthenticated', at(0)],
+      ['XYZ-2091', 'observed', at(1)],
     ]);
     expect(all.items[0]?.latestObserved).toEqual(jiraIssue());
     expect(all.items[0]?.latest).toEqual(failedJiraIssue(5));
 
     const filtered = await Effect.runPromise(
-      queryLatestJiraIssueObservations({ dbPath, keys: ['XLB-2091', 'XLB-9'], machineId: 'machine-b' }),
+      queryLatestJiraIssueObservations({ dbPath, keys: ['XYZ-2091', 'XYZ-9'], machineId: 'machine-b' }),
     );
-    expect(filtered.items.map(({ latest }) => latest.key)).toEqual(['XLB-2091']);
-    expect((await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, keys: ['XLB-9'] }))).items).toEqual([]);
+    expect(filtered.items.map(({ latest }) => latest.key)).toEqual(['XYZ-2091']);
+    expect((await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath, keys: ['XYZ-9'] }))).items).toEqual([]);
     const invalid = await Effect.runPromise(
       Effect.flip(queryLatestJiraIssueObservations({ dbPath, keys: ['not a key'] })),
     );
@@ -928,7 +928,7 @@ describe('work fact store: exact page batches', () => {
       skipped: 0,
       truncated: false,
     });
-    const secondJira = jiraIssue({ machineId: 'machine-b', key: 'XLB-7', observedAt: at(1) });
+    const secondJira = jiraIssue({ machineId: 'machine-b', key: 'XYZ-7', observedAt: at(1) });
     await Effect.runPromise(
       importJiraIssueObservations({
         dbPath,
@@ -937,7 +937,7 @@ describe('work fact store: exact page batches', () => {
           failedJiraIssue(3),
           secondJira,
           jiraIssue({ machineId: 'machine-b', observedAt: at(5) }),
-          jiraIssue({ key: 'XLB-7', observedAt: at(5) }),
+          jiraIssue({ key: 'XYZ-7', observedAt: at(5) }),
         ],
       }),
     );
@@ -970,7 +970,7 @@ describe('work fact store: exact page batches', () => {
   test('returns more than 500 exact identities without the generic query ceiling or SQL expression limit', async () => {
     const dbPath = await createStore('page-large');
     const pullRequests = Array.from({ length: 501 }, (_, index) => pullRequest({ number: index + 1 }));
-    const jiraIssues = Array.from({ length: 501 }, (_, index) => jiraIssue({ key: `XLB-${index + 1}` }));
+    const jiraIssues = Array.from({ length: 501 }, (_, index) => jiraIssue({ key: `XYZ-${index + 1}` }));
     const checkouts = Array.from({ length: 501 }, (_, index) => checkout({ checkoutPath: `/checkout/${index}` }));
     for (let start = 0; start < 501; start += 500) {
       await Effect.runPromise(
@@ -1047,7 +1047,7 @@ describe('work fact store: exact page batches', () => {
 
 test('Jira browser URL survives storage without fabricating links for old observations', async () => {
   const dbPath = await createStore('jira-url');
-  const observation = jiraIssue({ url: 'https://jira.example.test/browse/XLB-2090' });
+  const observation = jiraIssue({ url: 'https://jira.example.test/browse/XYZ-2090' });
   await Effect.runPromise(importJiraIssueObservations({ dbPath, observations: [observation] }));
   const result = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath }));
   expect(result.items[0]?.latest.url).toBe(observation.url);

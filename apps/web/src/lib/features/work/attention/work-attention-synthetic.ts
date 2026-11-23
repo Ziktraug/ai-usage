@@ -353,7 +353,7 @@ const seeds = (): readonly RootSeed[] => [
         provenance: desktop(),
         text: 'Nothing was lost: the store captured the history five days before the purge. A snapshot re-import is due within two weeks.',
       },
-      jiraIssue('enquete-retention', 'XLB-2090', { newCommentsSince: 2 }),
+      jiraIssue('enquete-retention', 'XYZ-2090', { newCommentsSince: 2 }),
     ],
     id: 'enquete-retention',
     interpretations: [
@@ -365,9 +365,9 @@ const seeds = (): readonly RootSeed[] => [
       ),
       interpretation(
         'jira-reply-arrived',
-        `2 comments arrived on XLB-2090 after this session family's last activity (${hoursAgo(9)}); no resumption observed.`,
+        `2 comments arrived on XYZ-2090 after this session family's last activity (${hoursAgo(9)}); no resumption observed.`,
         `You may have read them in Jira; this view cannot tell. Newest comment ${hoursAgo(4)}, observed ${OBSERVED_AT}.`,
-        ['enquete-retention:jira-XLB-2090'],
+        ['enquete-retention:jira-XYZ-2090'],
       ),
     ],
     lastActivityHoursAgo: 9,

@@ -530,7 +530,7 @@ allowed. Revert or exclude unrelated generated output before completion.
 - Raw Effect `Cause`, stack traces, provider payloads, session rows, prompts,
   transcripts, raw filters, cursors, serialized requests, and serialized
   responses.
-- HTTP/cache-specific fields copied from `../exalibur-svelte`.
+- HTTP/cache-specific fields copied from `../meridian-svelte`.
 - Changes to CLI stdout/stderr product output.
 - A new logging dependency or terminal-color dependency.
 - Refactoring the Promise-based revision registry beyond the small diagnostic
@@ -1045,7 +1045,7 @@ Stop and report back; do not improvise if any condition occurs:
   and event-scope decision that remains in force.
 - `docs/adr/0002-effect-runtime-package-for-wide-events.md` — package and sink
   ownership decision partially superseded by ADR 0008.
-- `../exalibur-svelte/packages/effect-runtime/src/runtime-logger.ts` — reference
+- `../meridian-svelte/packages/effect-runtime/src/runtime-logger.ts` — reference
   for ANSI outcome symbols, tree projection, and info/debug detail; do not copy
   its HTTP/cache domain model.
 - Honeycomb, “Logging Best Practices: An Engineer's Checklist”:

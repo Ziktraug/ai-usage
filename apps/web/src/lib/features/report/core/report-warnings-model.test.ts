@@ -67,14 +67,14 @@ describe('report warning presentation', () => {
   test('names an unresolved machine by a shortened id instead of hiding it', () => {
     const notice = presentReportWarning({
       groupId: 'g1',
-      groupName: 'Exalibur',
+      groupName: 'Meridian',
       message: 'x',
       reason: 'partial-group',
-      selectors: [{ machineId: machine, sourcePath: '/Users/nathan/projects/Exalibur' }],
+      selectors: [{ machineId: machine, sourcePath: '/Users/nathan/projects/Meridian' }],
     });
-    expect(notice.headline).toBe('Project group "Exalibur": 1 configured source matched nothing');
+    expect(notice.headline).toBe('Project group "Meridian": 1 configured source matched nothing');
     expect(notice.selectorGroups[0]?.machine).toBe('Unknown machine 87df7ab3');
-    expect(notice.selectorGroups[0]?.paths).toEqual(['~/projects/Exalibur']);
+    expect(notice.selectorGroups[0]?.paths).toEqual(['~/projects/Meridian']);
   });
 
   test('keeps collector warnings verbatim and the harness separate', () => {

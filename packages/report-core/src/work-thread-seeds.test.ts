@@ -144,15 +144,15 @@ describe('work thread seeds', () => {
   test('only an authored PR whose branch names exactly one ticket carries a routing key', () => {
     const routing = (overrides: Partial<PullRequestObservation>) =>
       workThreadSeedsFromPullRequests([pullRequest(overrides)])[0]?.routingJiraKey;
-    expect(routing({ headRef: 'fix/XLB-2085/wallet' })).toBe('jira:default/XLB-2085');
-    expect(routing({ headRef: 'fix/XLB-2085/XLB-2086' })).toBeNull();
-    expect(routing({ headRef: 'fix/xlb-2085-wallet' })).toBeNull();
-    expect(routing({ headRef: 'chore/XLB-0/setup' })).toBeNull();
-    expect(routing({ discoveryRole: 'review-requested', headRef: 'fix/XLB-2085/wallet' })).toBeNull();
+    expect(routing({ headRef: 'fix/XYZ-2085/wallet' })).toBe('jira:default/XYZ-2085');
+    expect(routing({ headRef: 'fix/XYZ-2085/XYZ-2086' })).toBeNull();
+    expect(routing({ headRef: 'fix/xyz-2085-wallet' })).toBeNull();
+    expect(routing({ headRef: 'chore/XYZ-0/setup' })).toBeNull();
+    expect(routing({ discoveryRole: 'review-requested', headRef: 'fix/XYZ-2085/wallet' })).toBeNull();
   });
 
   test('only a name git accepts as a branch stands for work on a branch', () => {
-    for (const ref of ['feat/parser', 'fix/XLB-2085/wallet', 'ws/fix-cart', 'release-1.2']) {
+    for (const ref of ['feat/parser', 'fix/XYZ-2085/wallet', 'ws/fix-cart', 'release-1.2']) {
       expect(isBranchRefName(ref)).toBe(true);
     }
     for (const ref of [

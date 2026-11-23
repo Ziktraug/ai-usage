@@ -471,21 +471,21 @@ describe('Work attention dates and fact chips', () => {
       throw new Error('Synthetic dataset must carry a Jira fact');
     }
     const chips = workRootFactChips(withJira);
-    expect(chips.map((chip) => chip.label)).toContain('Jira XLB-2090 · In Progress · 2 new replies');
+    expect(chips.map((chip) => chip.label)).toContain('Jira XYZ-2090 · In Progress · 2 new replies');
     expect(chips.find((chip) => chip.label.startsWith('Jira'))?.tone).toBe('warn');
     const fact = withJira.facts.find((candidate) => candidate.kind === 'jira-issue');
     if (fact === undefined || fact.kind !== 'jira-issue') {
       throw new Error('expected a Jira fact');
     }
     expect(workFactSummary(fact)).toBe(
-      'Jira XLB-2090 In Progress, 2 comments, 2 new replies since the latest activity on this key',
+      'Jira XYZ-2090 In Progress, 2 comments, 2 new replies since the latest activity on this key',
     );
     const failed = { ...fact, newCommentsSince: null, outcome: 'unauthenticated' as const, status: null };
-    expect(workFactSummary(failed)).toBe('Jira XLB-2090 read failed: unauthenticated');
+    expect(workFactSummary(failed)).toBe('Jira XYZ-2090 read failed: unauthenticated');
     expect(workRootFactChips({ ...withJira, facts: [fact, failed] }).map((chip) => chip.label)).toEqual([
-      'Jira XLB-2090 read failed (unauthenticated)',
+      'Jira XYZ-2090 read failed (unauthenticated)',
     ]);
-    expect(matchesWorkAttentionSearch(withJira, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'xlb-2090' })).toBe(true);
+    expect(matchesWorkAttentionSearch(withJira, { ...EMPTY_WORK_ATTENTION_SEARCH, query: 'xyz-2090' })).toBe(true);
   });
   test('facts group by their source in first-seen order', () => {
     const groups = groupWorkFactsBySource(rootNamed('Fix mobile navigation label overlap').facts);

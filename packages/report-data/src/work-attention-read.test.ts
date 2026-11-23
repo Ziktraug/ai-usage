@@ -1000,7 +1000,7 @@ const jiraObservation = (overrides: Partial<JiraIssueObservation> = {}): JiraIss
   assigneeLabel: 'Alex',
   commentCount: 1,
   comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(2), excerpt: 'Reply from Jira.', id: '1' }],
-  key: 'XLB-2090',
+  key: 'XYZ-2090',
   machineId: MACHINE,
   observedAt: hoursAgo(1),
   outcome: 'observed',
@@ -1030,24 +1030,24 @@ const failedJiraObservation = (overrides: Partial<JiraIssueObservation> = {}): J
   });
 
 /**
- * A family whose root wrote XLB-2090 and whose child wrote XLB-2091 (last activity 5 h ago), a
- * root on the same number in another project, and a root on XLB-2092 with a merged pull request.
+ * A family whose root wrote XYZ-2090 and whose child wrote XYZ-2091 (last activity 5 h ago), a
+ * root on the same number in another project, and a root on XYZ-2092 with a merged pull request.
  */
 const jiraSessions: readonly ClaudeDesktopSessionObservation[] = [
   session({
     id: 'j1',
     lastActivityHoursAgo: 6,
     status: 'completed',
-    title: 'Fixture: J1 works on XLB-2090',
-    writtenBranches: ['feat/XLB-2090/slug', 'chore/XLB-0/agent-setup'],
+    title: 'Fixture: J1 works on XYZ-2090',
+    writtenBranches: ['feat/XYZ-2090/slug', 'chore/XYZ-0/agent-setup'],
   }),
   session({
     id: 'j1c',
     lastActivityHoursAgo: 5,
     spawnedFromId: 'local_j1',
     status: 'completed',
-    title: 'Fixture: J1 child on XLB-2091',
-    writtenBranches: ['fix/XLB-2091/child'],
+    title: 'Fixture: J1 child on XYZ-2091',
+    writtenBranches: ['fix/XYZ-2091/child'],
   }),
   session({
     id: 'j2',
@@ -1061,8 +1061,8 @@ const jiraSessions: readonly ClaudeDesktopSessionObservation[] = [
     lastActivityHoursAgo: 4,
     pullRequestState: 'MERGED',
     status: 'completed',
-    title: 'Fixture: J3 merged XLB-2092',
-    writtenBranches: ['feat/XLB-2092/merged'],
+    title: 'Fixture: J3 merged XYZ-2092',
+    writtenBranches: ['feat/XYZ-2092/merged'],
   }),
 ];
 
@@ -1086,8 +1086,8 @@ describe('assembleWorkAttention with Jira facts', () => {
     expect(j1.facts.filter((fact) => fact.kind === 'jira-issue')).toEqual([
       {
         commentCount: 1,
-        id: `local_j1:jira:XLB-2090@${hoursAgo(1)}`,
-        key: 'XLB-2090',
+        id: `local_j1:jira:XYZ-2090@${hoursAgo(1)}`,
+        key: 'XYZ-2090',
         kind: 'jira-issue',
         newCommentsSince: 1,
         newestCommentAt: hoursAgo(2),
@@ -1101,20 +1101,20 @@ describe('assembleWorkAttention with Jira facts', () => {
     ]);
     expect(j1.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-arrived']);
     expect(j1.interpretations[0]?.text).toBe(
-      `1 comment arrived on XLB-2090 after this session family's last activity (${hoursAgo(5)}); no resumption observed.`,
+      `1 comment arrived on XYZ-2090 after this session family's last activity (${hoursAgo(5)}); no resumption observed.`,
     );
     expect(j1.interpretations[0]?.uncertainty).toContain('You may have read them in Jira; this view cannot tell.');
     const j2 = rootOf(dataset, 'local_j2');
     expect(j2.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.key)).toEqual(['OTH-2090']);
     expect(j2.attention).toBe('none');
-    expect(JSON.stringify(j2)).not.toContain('XLB-2090');
+    expect(JSON.stringify(j2)).not.toContain('XYZ-2090');
   });
 
   test('a reply before the family resumed leaves the root alone; a key written only by a child still attaches to the root', () => {
     const earlier = jiraObservation({
       comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(8), excerpt: 'Early.', id: '1' }],
     });
-    const childKey = jiraObservation({ key: 'XLB-2091' });
+    const childKey = jiraObservation({ key: 'XYZ-2091' });
     const dataset = assembleJira([
       { latest: earlier, latestObserved: earlier },
       { latest: childKey, latestObserved: childKey },
@@ -1122,11 +1122,11 @@ describe('assembleWorkAttention with Jira facts', () => {
     const j1 = rootOf(dataset, 'local_j1');
     const jira = j1.facts.filter((fact) => fact.kind === 'jira-issue');
     expect(jira.map((fact) => [fact.key, fact.newCommentsSince])).toEqual([
-      ['XLB-2090', 0],
-      ['XLB-2091', 1],
+      ['XYZ-2090', 0],
+      ['XYZ-2091', 1],
     ]);
     expect(j1.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-arrived']);
-    expect(j1.interpretations[0]?.text).toContain('XLB-2091');
+    expect(j1.interpretations[0]?.text).toContain('XYZ-2091');
     const quiet = assembleJira([{ latest: earlier, latestObserved: earlier }]);
     expect(rootOf(quiet, 'local_j1').attention).toBe('none');
     expect(rootOf(quiet, 'local_j1').interpretations).toEqual([]);
@@ -1138,27 +1138,27 @@ describe('assembleWorkAttention with Jira facts', () => {
   });
 
   test('a key relayed by a later family: a reply is new only after the latest activity on the key, and asked of that family alone', () => {
-    // KA wrote XLB-3000 sixty days ago and completed; KB relayed the key two days ago.
+    // KA wrote XYZ-3000 sixty days ago and completed; KB relayed the key two days ago.
     const relay = [
       session({
         id: 'ka',
         lastActivityHoursAgo: 60 * 24,
         status: 'completed',
-        title: 'Fixture: KA first on XLB-3000',
-        writtenBranches: ['feat/XLB-3000/first'],
+        title: 'Fixture: KA first on XYZ-3000',
+        writtenBranches: ['feat/XYZ-3000/first'],
       }),
       session({
         id: 'kb',
         lastActivityHoursAgo: 2 * 24,
         status: 'completed',
-        title: 'Fixture: KB relayed XLB-3000',
-        writtenBranches: ['fix/XLB-3000/relay'],
+        title: 'Fixture: KB relayed XYZ-3000',
+        writtenBranches: ['fix/XYZ-3000/relay'],
       }),
     ];
     const commented = (hours: number) =>
       jiraObservation({
         comments: [{ authorLabel: 'Sam', createdAt: hoursAgo(hours), excerpt: 'Reply.', id: '1' }],
-        key: 'XLB-3000',
+        key: 'XYZ-3000',
         updatedAt: hoursAgo(hours),
       });
     const relayed = (observation: JiraIssueObservation, sinceDays?: number) =>
@@ -1191,7 +1191,7 @@ describe('assembleWorkAttention with Jira facts', () => {
     expect(ka.attention).toBe('none');
     expect(ka.interpretations.map(({ kind }) => kind)).toEqual(['jira-reply-elsewhere', 'declared-status-stale']);
     expect(ka.interpretations[0]?.text).toBe(
-      `1 comment arrived on XLB-3000 after the latest activity on this key (${hoursAgo(2 * 24)}); the most recent family on this key is “Fixture: KB relayed XLB-3000”, which carries the request.`,
+      `1 comment arrived on XYZ-3000 after the latest activity on this key (${hoursAgo(2 * 24)}); the most recent family on this key is “Fixture: KB relayed XYZ-3000”, which carries the request.`,
     );
     expect(afterRelay.roots.map((root) => root.desktopSessionId)).toEqual(['local_kb', 'local_ka']);
     // Under the default window KA, with nothing pending, is hidden like any other old root.
@@ -1210,7 +1210,7 @@ describe('assembleWorkAttention with Jira facts', () => {
     const todo = jiraObservation({
       comments: [],
       commentCount: 0,
-      key: 'XLB-2092',
+      key: 'XYZ-2092',
       status: 'To Do',
       statusCategory: 'todo',
     });
@@ -1220,12 +1220,12 @@ describe('assembleWorkAttention with Jira facts', () => {
     const j3 = rootOf(differs, 'local_j3');
     expect(j3.attention).toBe('none');
     expect(j3.interpretations.map(({ kind }) => kind)).toEqual(['pull-request-merged', 'jira-status-differs']);
-    expect(j3.interpretations[1]?.text).toContain('XLB-2092 is still To Do');
+    expect(j3.interpretations[1]?.text).toContain('XYZ-2092 is still To Do');
     expect(j3.interpretations[1]?.text).toContain('fixture/project#117 is MERGED');
 
-    const lastSuccess = jiraObservation({ comments: [], commentCount: 0, key: 'XLB-2092', observedAt: hoursAgo(26) });
+    const lastSuccess = jiraObservation({ comments: [], commentCount: 0, key: 'XYZ-2092', observedAt: hoursAgo(26) });
     const unreadable = assembleJira([
-      { latest: failedJiraObservation({ key: 'XLB-2092' }), latestObserved: lastSuccess },
+      { latest: failedJiraObservation({ key: 'XYZ-2092' }), latestObserved: lastSuccess },
     ]);
     const kept = rootOf(unreadable, 'local_j3');
     expect(
@@ -1276,15 +1276,15 @@ describe('assembleWorkAttention with Jira facts', () => {
     await Effect.runPromise(
       importJiraIssueObservations({
         dbPath,
-        observations: [jiraObservation(), jiraObservation({ key: 'XLB-5555', summary: 'Linked by nobody' })],
+        observations: [jiraObservation(), jiraObservation({ key: 'XYZ-5555', summary: 'Linked by nobody' })],
       }),
     );
     await Effect.runPromise(recordWorkFactRun({ ...runInput('jira.issues', { failed: 0, observed: 2 }), dbPath }));
     const dataset = await Effect.runPromise(queryWorkAttention({ dbPath, machineId: MACHINE, now: NOW }));
     const j1 = dataset.roots.find((root) => root.desktopSessionId === 'local_j1');
     expect(j1?.attention).toBe('human-request');
-    expect(j1?.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.key)).toEqual(['XLB-2090']);
-    expect(JSON.stringify(dataset)).not.toContain('XLB-5555');
+    expect(j1?.facts.filter((fact) => fact.kind === 'jira-issue').map((fact) => fact.key)).toEqual(['XYZ-2090']);
+    expect(JSON.stringify(dataset)).not.toContain('XYZ-5555');
     expect(dataset.coverage.jira).toEqual({
       disabled: false,
       failed: 0,

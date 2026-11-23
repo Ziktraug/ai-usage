@@ -124,7 +124,7 @@ export const threadSideUrl = (url: URL, threadId: string, day?: string): string 
 export const localMarkerKey = (marker: WorkThreadMarkers['local'][number]): string =>
   `${marker.key}\n${marker.latest?.checkoutPath ?? marker.latestSuccessful?.checkoutPath ?? ''}`;
 
-/** The repository name alone ("Exalibur" for "exaprint/Exalibur"): the owner rarely tells tasks apart. */
+/** The repository name alone ("Meridian" for "acmecorp/Meridian"): the owner rarely tells tasks apart. */
 export const projectShortLabel = (label: string | null): string =>
   label === null ? 'No project' : (label.split('/').filter(Boolean).at(-1) ?? label);
 

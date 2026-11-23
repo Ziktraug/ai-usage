@@ -238,7 +238,7 @@ const isPlaceholderJiraKey = (key: string): boolean => Number(key.slice(key.last
 
 /**
  * The Jira keys one branch name writes explicitly: every `/`-separated segment that is a whole
- * issue key. The typed-prefix convention (`feat/XLB-2090/slug`, `fix/…`, `chore/…`, `hotfix/…`,
+ * issue key. The typed-prefix convention (`feat/XYZ-2090/slug`, `fix/…`, `chore/…`, `hotfix/…`,
  * `release/…`) is the common case of that rule; a number alone (`pr/user/123`), a key embedded
  * in prose, or anything outside the branch name is never a link.
  */

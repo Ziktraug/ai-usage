@@ -23,7 +23,7 @@ export interface WorkThreadSeed {
   readonly originKey: string;
   readonly projectLabel: string;
   /**
-   * The one Jira link key (`jira:default/XLB-1`) an authored pull request's head branch names as a
+   * The one Jira link key (`jira:default/XYZ-1`) an authored pull request's head branch names as a
    * whole segment. It lets the PR join the task that already follows that ticket. Reviews never
    * carry one: a teammate's ticket is context, not the operator's delivery.
    */

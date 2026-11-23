@@ -161,8 +161,8 @@ while already existing in the data.
 `const projectLabel = row.project || '(unknown)'` then `projectKey: projectLabel`.
 The **filter key is the display string**, and the machine qualifier is baked
 inconsistently into the upstream value rather than applied as a display rule.
-Observed in one PROJECT column: `Exalibur` (bare) alongside `ai-usage · nixos` and
-`svelte-news · nixos`. `/skills` compounds it — `Exalibur` is addressed by UUID
+Observed in one PROJECT column: `Meridian` (bare) alongside `ai-usage · nixos` and
+`svelte-news · nixos`. `/skills` compounds it — `Meridian` is addressed by UUID
 while every sibling uses a slug. The same repository seen from two machines becomes
 two projects with no stable key to merge them.
 

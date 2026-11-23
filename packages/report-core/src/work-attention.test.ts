@@ -258,12 +258,12 @@ describe('parseJiraIssueObservation', () => {
     comments: [
       { authorLabel: 'Sam', createdAt: '2026-10-21T18:00:00.000Z', excerpt: 'Looks fine, one question.', id: '1' },
     ],
-    key: 'XLB-2090',
+    key: 'XYZ-2090',
     machineId: 'machine-a',
     observedAt: '2026-10-21T19:05:00.000Z',
     outcome: 'observed',
     outcomeMessage: null,
-    parentKey: 'XLB-2000',
+    parentKey: 'XYZ-2000',
     sprint: 'Sprint 42',
     status: 'In Progress',
     statusCategory: 'in-progress',
@@ -294,7 +294,7 @@ describe('parseJiraIssueObservation', () => {
     });
   });
   test('rejects a malformed key, an unknown category, an address as a person, and over-bound comments', () => {
-    expect(parseJiraIssueObservation({ ...observed, key: 'xlb-2090' })).toBeNull();
+    expect(parseJiraIssueObservation({ ...observed, key: 'xyz-2090' })).toBeNull();
     expect(parseJiraIssueObservation({ ...observed, key: '2090' })).toBeNull();
     expect(parseJiraIssueObservation({ ...observed, statusCategory: 'open' })).toBeNull();
     expect(parseJiraIssueObservation({ ...observed, outcome: 'ok' })).toBeNull();
