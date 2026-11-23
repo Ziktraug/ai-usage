@@ -9,11 +9,13 @@
       "!**/.claude/settings.local.json",
       "!**/.claude/worktrees",
       "!**/.output-build",
+      "!**/.stryker-tmp",
       "!**/.svelte-kit",
       "!**/.turbo",
       "!**/.worktrees",
       "!**/dist",
       "!**/node_modules",
+      "!**/reports/mutation",
       "!**/styled-system"
     ]
   },

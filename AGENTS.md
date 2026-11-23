@@ -55,6 +55,8 @@ and external systems; reuse authorization already granted for the current scope.
 - `bun run check:effect` — optional advisory Effect diagnostics on selected TS packages; compiler/tool failures still fail. Compiler-fixture tests run via `bun test tools` as part of `verify`.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
+- `bun run test:mutation <package-dir> [--mutate <files>]` — optional Stryker
+  mutation testing of one package's `src` tests; not a `verify` gate
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)
 - `bun run mcp` / `bun run mcp:register:codex` / `bun run mcp:register:opencode` —
   local stdio MCP server (`work.context`, delegation tools) and its Codex and

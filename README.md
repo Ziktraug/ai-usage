@@ -677,6 +677,32 @@ Run unit/integration tests:
 bun run test
 ```
 
+Optional mutation testing of one package:
+
+```sh
+bun run test:mutation packages/report-core --mutate src/work-thread-seeds.ts
+```
+
+Stryker (pinned `@stryker-mutator/core` with the `@hughescr/stryker-bun-runner`
+test runner) changes the code under `--mutate` and reports each change that no
+test detects. The shared `stryker.config.json` runs the package's `src` tests
+with per-test coverage, so each mutant runs only the tests that reach it.
+Without `--mutate`, Stryker mutates the whole package `src`, which is slow for
+the large packages; target the files you changed. Other Stryker options follow
+the package directory, for example `--incremental` to reuse earlier results.
+The HTML report is written to `<package-dir>/reports/mutation/mutation.html`.
+Mutation testing is advisory and is not part of `verify`.
+
+Stryker copies the package into a sandbox under `<package-dir>/.stryker-tmp/`,
+so a test that reads a file outside its package through a relative path fails
+the initial run (in `apps/web`, the README checks of
+`first-run.test.ts`). For such a package, add `--inPlace`, which mutates the
+checkout itself and restores it afterwards: run it only in a worktree that no
+other session uses. `apps/web` also needs the preparation its `test` script
+runs first (`bun --filter @ai-usage/design-system build` and
+`bun run --cwd apps/web dev:prepare`). Stryker stops when a test already fails without mutation; restrict the
+run with `--testFiles <test-file>` to the tests that cover the mutated files.
+
 Run the deterministic browser suites (after `bun x playwright install chromium` once):
 
 ```sh
