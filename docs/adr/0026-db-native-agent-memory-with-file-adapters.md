@@ -59,5 +59,5 @@ that the Memory store tests pin today (replication and the connected mode left w
 ## Evidence
 
 - [Memory language](../../CONTEXT.md#ai-usage-context)
-- [Platform data ownership](../architecture.md#platform-data-ownership)
+- [Platform data ownership](../architecture.md#data-ownership)
 - [Plan 105](../../plans/105-db-native-agent-memory.md)

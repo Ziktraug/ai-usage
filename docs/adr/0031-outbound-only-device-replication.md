@@ -59,5 +59,5 @@ the complete idempotency protocol.
 
 ## Evidence
 
-- [Connected topology](../architecture.md#connectedshared-composition)
+- Connected topology: the "Connected/shared composition" section of `docs/architecture.md`, removed with the platform by plan 120 (git history keeps it)
 - [Plan 107](../../plans/107-device-outbox-replication.md)

@@ -48,6 +48,6 @@ offline contracts without introducing a hidden network dependency.
 
 ## Evidence
 
-- [Platform topology](../architecture.md#accepted-platform-topology)
+- [Platform topology](../architecture.md#local-topology)
 - [Program plan](../../plans/099-ai-operations-memory-platform-program.md)
 - [Plan 100](../../plans/100-platform-topology-capabilities-data-ownership.md)
