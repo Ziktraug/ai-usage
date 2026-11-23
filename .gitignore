@@ -14,3 +14,5 @@ ai-usage-reports/
 apps/web/playwright-report/
 apps/web/test-results/
 logs/
+.stryker-tmp/
+**/reports/mutation/
