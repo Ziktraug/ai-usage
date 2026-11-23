@@ -46,8 +46,8 @@ const root = (overrides: Partial<WorkRootWire> = {}): WorkRootWire => ({
     },
     {
       commentCount: 3,
-      id: 'local_root:jira:XLB-2090@2026-10-20T12:00:00.000Z',
-      key: 'XLB-2090',
+      id: 'local_root:jira:XYZ-2090@2026-10-20T12:00:00.000Z',
+      key: 'XYZ-2090',
       kind: 'jira-issue',
       newCommentsSince: 1,
       newestCommentAt: AT,
@@ -257,7 +257,7 @@ describe('Work contract', () => {
     if (jira === undefined || jira.kind !== 'jira-issue') {
       throw new Error('fixture root must carry a Jira fact');
     }
-    expect(accepts(dataset([root({ facts: [{ ...jira, key: 'xlb-2090' }] })]))).toBe(false);
+    expect(accepts(dataset([root({ facts: [{ ...jira, key: 'xyz-2090' }] })]))).toBe(false);
     expect(accepts(dataset([root({ facts: [{ ...jira, outcome: 'ok' as never }] })]))).toBe(false);
     expect(accepts(dataset([root({ facts: [{ ...jira, statusCategory: 'open' as never }] })]))).toBe(false);
     expect(accepts(dataset([root({ facts: [{ ...jira, url: 'https://example.atlassian.net' as never }] })]))).toBe(

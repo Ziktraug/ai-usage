@@ -226,16 +226,16 @@ describe('skills page model', () => {
       targets: [target('codex', 'Codex')],
     });
     const inventories = [
-      projectInventory('/work/first/Exalibur', [projectObservation('alpha-skill', 'claude-project')]),
-      projectInventory('/work/second/Exalibur', [projectObservation('alpha-skill', 'claude-project')]),
+      projectInventory('/work/first/Meridian', [projectObservation('alpha-skill', 'claude-project')]),
+      projectInventory('/work/second/Meridian', [projectObservation('alpha-skill', 'claude-project')]),
       projectInventory('/work/solo', [projectObservation('alpha-skill', 'claude-project')]),
     ];
 
     const tree = buildSkillTree(snapshot, inventories);
     const scopeByPath = new Map(tree.scopes.map((scope) => [scope.path, scope]));
 
-    expect(scopeByPath.get('/work/first/Exalibur')?.shortPath).toBe('…/first/Exalibur');
-    expect(scopeByPath.get('/work/second/Exalibur')?.shortPath).toBe('…/second/Exalibur');
+    expect(scopeByPath.get('/work/first/Meridian')?.shortPath).toBe('…/first/Meridian');
+    expect(scopeByPath.get('/work/second/Meridian')?.shortPath).toBe('…/second/Meridian');
     expect(scopeByPath.get('/work/solo')?.shortPath).toBeUndefined();
   });
 
@@ -265,23 +265,23 @@ describe('skills page model', () => {
       targets: [target('codex', 'Codex')],
     });
     const inventories = [
-      projectInventory('/work/exalibur', [projectObservation('shared-skill', 'claude-project')]),
-      projectInventory('/work/exalibur2', [projectObservation('other-skill', 'agents-project')]),
+      projectInventory('/work/meridian', [projectObservation('shared-skill', 'claude-project')]),
+      projectInventory('/work/meridian2', [projectObservation('other-skill', 'agents-project')]),
     ];
     const knownProjects = [
       {
-        label: 'exalibur',
+        label: 'meridian',
         path: projectKey,
         routeKey: projectKey,
-        sourcePaths: ['/work/exalibur', '/work/exalibur2'],
+        sourcePaths: ['/work/meridian', '/work/meridian2'],
       },
     ];
 
     const tree = buildSkillTree(snapshot, inventories, knownProjects);
 
-    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'exalibur']);
+    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'meridian']);
     expect(tree.scopes[1]?.path).toBe(projectKey);
-    expect(tree.scopes[1]?.sourcePaths).toEqual(['/work/exalibur', '/work/exalibur2']);
+    expect(tree.scopes[1]?.sourcePaths).toEqual(['/work/meridian', '/work/meridian2']);
     expect(tree.scopes[1]?.skills.map((node) => node.name)).toEqual(['other-skill', 'shared-skill']);
     expect(projectRouteKey(projectKey, knownProjects)).toBe(projectKey);
     expect(
@@ -292,8 +292,8 @@ describe('skills page model', () => {
       type: 'project-skill',
     });
     expect(findProjectSkillRow(inventories, projectKey, 'shared-skill', knownProjects)?.observations[0]).toMatchObject({
-      projectLabel: 'exalibur',
-      projectPath: '/work/exalibur',
+      projectLabel: 'meridian',
+      projectPath: '/work/meridian',
     });
   });
 
@@ -340,8 +340,8 @@ describe('skills page model', () => {
   });
 
   test('parses route paths for skill selections', () => {
-    const projectPath = '/Users/nathan/projects/github/Exalibur';
-    const knownProjects = [{ label: 'Exalibur', path: projectPath }];
+    const projectPath = '/Users/nathan/projects/github/Meridian';
+    const knownProjects = [{ label: 'Meridian', path: projectPath }];
 
     expect(skillSelectionFromPath('/skills', knownProjects)).toBeUndefined();
     expect(skillSelectionFromPath('/skills/matrix', knownProjects)).toEqual({ type: 'global-scope' });
@@ -350,11 +350,11 @@ describe('skills page model', () => {
       skillName: 'alpha-skill',
       type: 'global-skill',
     });
-    expect(skillSelectionFromPath('/skills/projects/Exalibur', knownProjects)).toEqual({
+    expect(skillSelectionFromPath('/skills/projects/Meridian', knownProjects)).toEqual({
       projectPath,
       type: 'project-scope',
     });
-    expect(skillSelectionFromPath('/skills/projects/Exalibur/no-use-effect', knownProjects)).toEqual({
+    expect(skillSelectionFromPath('/skills/projects/Meridian/no-use-effect', knownProjects)).toEqual({
       projectPath,
       skillName: 'no-use-effect',
       type: 'project-skill',
@@ -404,18 +404,18 @@ describe('skills page model', () => {
   });
 
   test('uses the project name as the route key when it is unambiguous', () => {
-    const projectPath = '/Users/nathan/projects/github/Exalibur';
+    const projectPath = '/Users/nathan/projects/github/Meridian';
 
-    expect(projectRouteKey(projectPath)).toBe('Exalibur');
-    expect(projectRouteKey(projectPath, [{ label: 'Exalibur', path: projectPath }])).toBe('Exalibur');
+    expect(projectRouteKey(projectPath)).toBe('Meridian');
+    expect(projectRouteKey(projectPath, [{ label: 'Meridian', path: projectPath }])).toBe('Meridian');
   });
 
   test('falls back to the full path when project names collide', () => {
-    const firstProjectPath = '/Users/nathan/projects/github/Exalibur';
-    const secondProjectPath = '/private/tmp/Exalibur';
+    const firstProjectPath = '/Users/nathan/projects/github/Meridian';
+    const secondProjectPath = '/private/tmp/Meridian';
     const knownProjects = [
-      { label: 'Exalibur', path: firstProjectPath },
-      { label: 'Exalibur', path: secondProjectPath },
+      { label: 'Meridian', path: firstProjectPath },
+      { label: 'Meridian', path: secondProjectPath },
     ];
 
     expect(projectRouteKey(firstProjectPath, knownProjects)).toBe(firstProjectPath);
@@ -426,8 +426,8 @@ describe('skills page model', () => {
     });
     // A legacy ambiguous basename key no longer resolves to an arbitrary
     // project; the unresolved key falls through to the stale-URL fallback.
-    expect(skillSelectionFromPath('/skills/projects/Exalibur', knownProjects)).toEqual({
-      projectPath: 'Exalibur',
+    expect(skillSelectionFromPath('/skills/projects/Meridian', knownProjects)).toEqual({
+      projectPath: 'Meridian',
       type: 'project-scope',
     });
   });

@@ -460,9 +460,9 @@ describe('a compact row', () => {
     expect(body).toContain('data-band="yours"');
   });
   test('leads with the short project and links the title to the task, its only control', () => {
-    const row = { ...payments, thread: { ...payments.thread, projectLabel: 'exaprint/Exalibur' } };
+    const row = { ...payments, thread: { ...payments.thread, projectLabel: 'acmecorp/Meridian' } };
     const named = html(CompactRow, rowProps(row));
-    expect(named).toContain('<span class="wt-project-tag" title="exaprint/Exalibur">Exalibur</span>');
+    expect(named).toContain('<span class="wt-project-tag" title="acmecorp/Meridian">Meridian</span>');
     // The stretched link covers the row, so its tooltip carries the full next step under the title.
     const raw = render(CompactRow, { props: rowProps(row) }).body;
     expect(raw).toContain(

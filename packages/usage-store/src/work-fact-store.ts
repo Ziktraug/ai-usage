@@ -98,7 +98,7 @@ export interface LatestPullRequestObservations {
 
 export interface QueryLatestJiraIssueObservationsInput {
   readonly dbPath: string;
-  /** Issue keys as Jira writes them (`XLB-2090`); no filter means every stored key. */
+  /** Issue keys as Jira writes them (`XYZ-2090`); no filter means every stored key. */
   readonly keys?: readonly string[];
   /** Distinct issues returned at most. Default 200, maximum 500. */
   readonly limit?: number;

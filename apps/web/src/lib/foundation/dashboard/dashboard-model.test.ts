@@ -198,10 +198,10 @@ describe('dashboard model', () => {
     const bounds: DateBounds = { from: null, to: null };
     const rows = [
       row({
-        project: 'exalibur — Machine A',
-        projectGroupId: 'source:machine-a|/work/exalibur',
-        projectSourceId: 'machine-a|/work/exalibur',
-        rawProject: 'exalibur',
+        project: 'meridian — Machine A',
+        projectGroupId: 'source:machine-a|/work/meridian',
+        projectSourceId: 'machine-a|/work/meridian',
+        rawProject: 'meridian',
         source: {
           harnessKey: 'codex',
           sourceSessionId: 'machine-a-session',
@@ -210,10 +210,10 @@ describe('dashboard model', () => {
         },
       }),
       row({
-        project: 'exalibur — Machine B',
-        projectGroupId: 'source:machine-b|/work/exalibur',
-        projectSourceId: 'machine-b|/work/exalibur',
-        rawProject: 'exalibur',
+        project: 'meridian — Machine B',
+        projectGroupId: 'source:machine-b|/work/meridian',
+        projectSourceId: 'machine-b|/work/meridian',
+        rawProject: 'meridian',
         source: {
           harnessKey: 'codex',
           sourceSessionId: 'machine-b-session',
@@ -222,10 +222,10 @@ describe('dashboard model', () => {
         },
       }),
       row({
-        project: 'exalibur',
-        projectGroupId: 'group:exalibur',
-        projectSourceId: 'machine-c|/work/exalibur2',
-        rawProject: 'exalibur2',
+        project: 'meridian',
+        projectGroupId: 'group:meridian',
+        projectSourceId: 'machine-c|/work/meridian2',
+        rawProject: 'meridian2',
         source: {
           harnessKey: 'codex',
           sourceSessionId: 'aliased-session',
@@ -240,9 +240,9 @@ describe('dashboard model', () => {
     expect(
       groups.map(({ key, label }) => ({ key, label })).sort((left, right) => left.key.localeCompare(right.key)),
     ).toEqual([
-      { key: 'group:exalibur', label: 'exalibur' },
-      { key: 'source:machine-a|/work/exalibur', label: 'exalibur — Machine A' },
-      { key: 'source:machine-b|/work/exalibur', label: 'exalibur — Machine B' },
+      { key: 'group:meridian', label: 'meridian' },
+      { key: 'source:machine-a|/work/meridian', label: 'meridian — Machine A' },
+      { key: 'source:machine-b|/work/meridian', label: 'meridian — Machine B' },
     ]);
   });
 

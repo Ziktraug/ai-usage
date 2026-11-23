@@ -392,13 +392,13 @@ describe('stored reporting', () => {
       const config = {
         projectGroups: [
           {
-            id: 'exalibur',
-            name: 'exalibur',
+            id: 'meridian',
+            name: 'meridian',
             sources: [
-              { machineId: 'peer-a', sourcePath: '/work/exalibur' },
-              { machineId: 'peer-a', sourcePath: '/work/exalibur2' },
-              { machineId: 'peer-b', sourcePath: '/Users/example/exalibur' },
-              { machineId: 'peer-b', sourcePath: '/missing/exalibur3' },
+              { machineId: 'peer-a', sourcePath: '/work/meridian' },
+              { machineId: 'peer-a', sourcePath: '/work/meridian2' },
+              { machineId: 'peer-b', sourcePath: '/Users/example/meridian' },
+              { machineId: 'peer-b', sourcePath: '/missing/meridian3' },
             ],
           },
         ],
@@ -408,8 +408,8 @@ describe('stored reporting', () => {
           bundle: createUsageMergeBundle({
             machine: { id: 'peer-a', label: 'Machine A' },
             rows: [
-              makeSourcedRow({ project: 'exalibur', sessionId: 'a-exalibur', sourcePath: '/work/exalibur' }),
-              makeSourcedRow({ project: 'exalibur2', sessionId: 'a-exalibur2', sourcePath: '/work/exalibur2' }),
+              makeSourcedRow({ project: 'meridian', sessionId: 'a-meridian', sourcePath: '/work/meridian' }),
+              makeSourcedRow({ project: 'meridian2', sessionId: 'a-meridian2', sourcePath: '/work/meridian2' }),
             ],
           }),
           dbPath,
@@ -422,9 +422,9 @@ describe('stored reporting', () => {
             machine: { id: 'peer-b', label: 'Machine B' },
             rows: [
               makeSourcedRow({
-                project: 'exalibur',
-                sessionId: 'b-exalibur',
-                sourcePath: '/Users/example/exalibur',
+                project: 'meridian',
+                sessionId: 'b-meridian',
+                sourcePath: '/Users/example/meridian',
               }),
             ],
           }),
@@ -447,19 +447,19 @@ describe('stored reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(3);
-      expect(payload.rows.every((row) => row.project === 'exalibur')).toBe(true);
-      expect(payload.rows.map((row) => row.rawProject).sort()).toEqual(['exalibur', 'exalibur', 'exalibur2']);
-      expect(payload.projectGroups?.find((group) => group.id === 'group:exalibur')).toMatchObject({
+      expect(payload.rows.every((row) => row.project === 'meridian')).toBe(true);
+      expect(payload.rows.map((row) => row.rawProject).sort()).toEqual(['meridian', 'meridian', 'meridian2']);
+      expect(payload.projectGroups?.find((group) => group.id === 'group:meridian')).toMatchObject({
         grouped: true,
-        name: 'exalibur',
+        name: 'meridian',
         sessions: 3,
       });
-      expect(payload.projectGroups?.find((group) => group.id === 'group:exalibur')?.sources).toHaveLength(3);
-      expect(payload.projectGroupConfigs?.[0]?.name).toBe('exalibur');
+      expect(payload.projectGroups?.find((group) => group.id === 'group:meridian')?.sources).toHaveLength(3);
+      expect(payload.projectGroupConfigs?.[0]?.name).toBe('meridian');
       expect(payload.warnings?.find((warning) => warning.reason === 'partial-group')).toMatchObject({
-        groupId: 'exalibur',
+        groupId: 'meridian',
         operation: 'projectGrouping',
-        selectors: [{ machineId: 'peer-b', sourcePath: '/missing/exalibur3' }],
+        selectors: [{ machineId: 'peer-b', sourcePath: '/missing/meridian3' }],
       });
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -506,7 +506,7 @@ describe('portable reporting', () => {
   });
 
   test('keeps portable Claude worktree-looking paths opaque', () => {
-    const parentPath = '/Users/example/projects/github/Exalibur2';
+    const parentPath = '/Users/example/projects/github/Meridian2';
     const snapshot = createUsageSnapshot({
       machine: testMachine,
       rows: [

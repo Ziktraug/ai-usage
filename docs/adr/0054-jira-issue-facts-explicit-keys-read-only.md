@@ -32,8 +32,8 @@ runs beside `github.pull-requests`:
 - **Explicit links only.** A key is linked to a Desktop session family when it
   appears as a whole `/`-separated segment of a branch name the session wrote:
   `writtenBranches[]`, its own `branch` and `sourceBranch`, or the branch of a
-  pull request it declared (`feat/XLB-2090/slug`, `fix/XLB-2091/nav`,
-  `XLB-2092`). The title, the working directory, the transcript and a bare
+  pull request it declared (`feat/XYZ-2090/slug`, `fix/XYZ-2091/nav`,
+  `XYZ-2092`). The title, the working directory, the transcript and a bare
   number (`pr/user/123`) never link. `<PROJECT>-0` is the local "no ticket"
   placeholder and is ignored. The rule is the pure `explicitJiraKeys` in
   `report-core`; the engine and the read model share it.

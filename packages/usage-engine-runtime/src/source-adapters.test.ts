@@ -1459,9 +1459,9 @@ const fakeJiraRunner =
 
 /**
  * Three Desktop registry files for the Jira source: a root whose declared pull request branch and
- * own branch carry XLB-2090 and whose written branches add XLB-2091 and the XLB-0 placeholder, its
- * more recent child writing XLB-2091 again and XLB-2092, and a session last active twenty days ago
- * on XLB-1999, which the fourteen-day window leaves out. Titles carry a key that must never link.
+ * own branch carry XYZ-2090 and whose written branches add XYZ-2091 and the XYZ-0 placeholder, its
+ * more recent child writing XYZ-2091 again and XYZ-2092, and a session last active twenty days ago
+ * on XYZ-1999, which the fourteen-day window leaves out. Titles carry a key that must never link.
  */
 const writeClaudeDesktopJiraRegistry = (home: string, now: Date): void => {
   const directory = path.join(home, '.config', 'Claude', 'claude-code-sessions', 'account-a', 'org-a');
@@ -1506,7 +1506,7 @@ const writeClaudeDesktopJiraRegistry = (home: string, now: Date): void => {
               },
             ],
       sessionId: `local_${spec.id}`,
-      title: `XLB-7777 ${spec.id}`,
+      title: `XYZ-7777 ${spec.id}`,
       titleSource: 'auto',
       ...(spec.branch === undefined ? {} : { branch: spec.branch }),
       ...(spec.writtenBranches === undefined ? {} : { writtenBranches: spec.writtenBranches }),
@@ -1517,19 +1517,19 @@ const writeClaudeDesktopJiraRegistry = (home: string, now: Date): void => {
   };
   const documents = [
     document({
-      branch: 'feat/XLB-2090/collector',
+      branch: 'feat/XYZ-2090/collector',
       hoursAgo: 1,
       id: 'desktop-jira-root',
-      pullRequestBranch: 'feat/XLB-2090/collector',
-      writtenBranches: ['fix/XLB-2091/nav', 'chore/XLB-0/agent-setup'],
+      pullRequestBranch: 'feat/XYZ-2090/collector',
+      writtenBranches: ['fix/XYZ-2091/nav', 'chore/XYZ-0/agent-setup'],
     }),
     document({
       hoursAgo: 0.5,
       id: 'desktop-jira-child',
       spawnedFrom: 'local_desktop-jira-root',
-      writtenBranches: ['XLB-2091', 'hotfix/XLB-2092/urgent'],
+      writtenBranches: ['XYZ-2091', 'hotfix/XYZ-2092/urgent'],
     }),
-    document({ hoursAgo: 20 * 24, id: 'desktop-jira-old', writtenBranches: ['feat/XLB-1999/old'] }),
+    document({ hoursAgo: 20 * 24, id: 'desktop-jira-old', writtenBranches: ['feat/XYZ-1999/old'] }),
   ];
   for (const entry of documents) {
     writeFileSync(path.join(directory, `${entry.sessionId}.json`), JSON.stringify(entry));
@@ -1596,7 +1596,7 @@ describe('jira issue source', () => {
           'jira',
           'workitem',
           'view',
-          'XLB-2091',
+          'XYZ-2091',
           '--fields',
           'key,summary,status,assignee,updated,parent,comment',
           '--json',
@@ -1606,7 +1606,7 @@ describe('jira issue source', () => {
           'jira',
           'workitem',
           'view',
-          'XLB-2092',
+          'XYZ-2092',
           '--fields',
           'key,summary,status,assignee,updated,parent,comment',
           '--json',
@@ -1616,7 +1616,7 @@ describe('jira issue source', () => {
           'jira',
           'workitem',
           'view',
-          'XLB-2090',
+          'XYZ-2090',
           '--fields',
           'key,summary,status,assignee,updated,parent,comment',
           '--json',
@@ -1626,15 +1626,15 @@ describe('jira issue source', () => {
         true,
       );
       const stored = await Effect.runPromise(queryLatestJiraIssueObservations({ dbPath: usageStorePath(home) }));
-      expect(stored.items.map(({ latest }) => latest.key).sort()).toEqual(['XLB-2090', 'XLB-2091', 'XLB-2092']);
+      expect(stored.items.map(({ latest }) => latest.key).sort()).toEqual(['XYZ-2090', 'XYZ-2091', 'XYZ-2092']);
       expect(stored.items.every(({ latest }) => latest.outcome === 'observed' && latest.comments.length === 1)).toBe(
         true,
       );
       expect(stored.items.every(({ latest }) => latest.handedOff === true)).toBe(true);
       const serialized = JSON.stringify(stored);
-      expect(serialized).not.toContain('XLB-1999');
-      expect(serialized).not.toContain('XLB-7777');
-      expect(serialized).not.toContain('XLB-0"');
+      expect(serialized).not.toContain('XYZ-1999');
+      expect(serialized).not.toContain('XYZ-7777');
+      expect(serialized).not.toContain('XYZ-0"');
       const { runs } = await Effect.runPromise(queryWorkFactRunStates({ dbPath: usageStorePath(home) }));
       expect(runs).toContainEqual({
         disabled: false,
@@ -2239,7 +2239,7 @@ test('Jira discovery keeps explicit keys first and reports the observation ceili
             durationMs: 1,
             exitCode: 0,
             stdout: JSON.stringify([
-              { key: 'XLB-2091' },
+              { key: 'XYZ-2091' },
               ...Array.from({ length: 25 }, (_, index) => ({ key: `DEMO-${String(index + 1)}` })),
             ]),
           });
@@ -2257,8 +2257,8 @@ test('Jira discovery keeps explicit keys first and reports the observation ceili
       warnings: [{ code: 'jira-sync-pending', message: expect.stringContaining('8') }],
     });
     const viewedKeys = calls.filter(({ args }) => args[2] === 'view').map(({ args }) => args[3]);
-    expect(viewedKeys.slice(0, 4)).toEqual(['XLB-2091', 'XLB-2092', 'XLB-2090', 'DEMO-1']);
-    expect(viewedKeys.filter((key) => key === 'XLB-2091')).toHaveLength(1);
+    expect(viewedKeys.slice(0, 4)).toEqual(['XYZ-2091', 'XYZ-2092', 'XYZ-2090', 'DEMO-1']);
+    expect(viewedKeys.filter((key) => key === 'XYZ-2091')).toHaveLength(1);
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
@@ -2972,7 +2972,7 @@ test('one unreadable Jira issue retains its retry while healthy remaining batche
             stdout: JSON.stringify(Array.from({ length: 25 }, (_, i) => ({ key: `DEMO-${i + 1}` }))),
           });
         }
-        if (options.args[3] === 'XLB-2091') {
+        if (options.args[3] === 'XYZ-2091') {
           return Effect.succeed({ durationMs: 1, exitCode: 1, stdout: 'unreadable' });
         }
         return fakeJiraRunner(calls)(options);
