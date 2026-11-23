@@ -48,7 +48,7 @@ reader real effort; **C** = inconsistency with no reading cost.
 | 9 | B | drawer | `TOTAL TOKENS 1,401,461,167` sits about 200 px from `Cache read 1.38B` — two formats for the same magnitude in one panel. |
 | 10 | B | drawer | `SUB VALUE`, `PARTIAL Yes`, and `TASK-OPEN TIME` have no explanation. `TASK-OPEN TIME 44.8h` against `STARTED Jul 12, 14:34` / `ENDED Jul 15, 09:31` (66.9h elapsed) is actively confusing without one. The dashboard's `i` pattern is not present in the drawer. |
 | 11 | B | dashboard | `Token anatomy`'s legend places each label left and its value right within four equal columns, so the gap between a label and its own value exceeds the gap to the next label. It reads as `Cache read … 12.72B ■ Cache write`. The drawer's 2x2 legend for the same data is unambiguous — adopt that. |
-| 12 | B | `/skills` | The tree clips scope names against the count badge with no ellipsis: `exalibur-svelt`, `spotify-playlis`. |
+| 12 | B | `/skills` | The tree clips scope names against the count badge with no ellipsis: `meridian-svelt`, `spotify-playlis`. |
 | 13 | B | `/skills` | `SkillMarkdownTokenWarning` breaks mid-word across two lines in the Inspector. Long identifiers need `overflow-wrap`. |
 | 14 | B | `/skills` | Validation stacks two identical `warning` pills with only one description, so the second is unidentifiable. The same warning appears a third time beside the title. |
 | 15 | B | `/skills` | The SKILL.md editor does not wrap and shows no horizontal scrollbar, so prose is cut at roughly 95 characters. For a Markdown authoring workspace this is the page's most costly defect. |
@@ -61,7 +61,7 @@ reader real effort; **C** = inconsistency with no reading cost.
 | 22 | C | `/sources` + dashboard | `Opencode` in Provider status versus `OpenCode` in the chart legend. |
 | 23 | C | Breakdown | `<synthetic>` and bare `codex` appear as model names — internal placeholders in a user-facing list. |
 | 24 | C | dashboard | `From` / `To` render as native `MM/DD/YYYY` date inputs (`06/26/2026`) while every other date on the page reads `Jun 26, 2026`. |
-| 25 | C | `/skills` | `Exalibur` is addressed by UUID (`/skills/projects/eb2f5015-00d3-40eb-a4e8-2b5ca5af8e55`) while every sibling scope uses a readable slug. **Do not fix here** — plan 045 Wave 4 owns project identity. Listed so it is not lost. |
+| 25 | C | `/skills` | `Meridian` is addressed by UUID (`/skills/projects/eb2f5015-00d3-40eb-a4e8-2b5ca5af8e55`) while every sibling scope uses a readable slug. **Do not fix here** — plan 045 Wave 4 owns project identity. Listed so it is not lost. |
 | 26 | C | `/skills` | The `Skills reloaded.` banner persists until dismissed, holding about 60 px of the workspace. |
 
 ## Not defects — verified, do not "fix"

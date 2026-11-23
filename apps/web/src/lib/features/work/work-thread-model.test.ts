@@ -304,8 +304,8 @@ describe('task presentation model', () => {
     expect(localMarkerKey(marker).startsWith(marker.key)).toBe(true);
   });
   test('the list keeps explanations, not source and date captions, and shortens projects', () => {
-    expect(projectShortLabel('exaprint/Exalibur')).toBe('Exalibur');
-    expect(projectShortLabel('XLB')).toBe('XLB');
+    expect(projectShortLabel('acmecorp/Meridian')).toBe('Meridian');
+    expect(projectShortLabel('XYZ')).toBe('XYZ');
     expect(projectShortLabel(null)).toBe('No project');
   });
   test('analysis copy permits ending without implying automatic closure', () => {
@@ -532,7 +532,7 @@ describe('task presentation model', () => {
     }
     for (const [linkKey, label] of [
       ['github.example/team/repo#68', 'PR #68 · team/repo'],
-      ['jira:example/XLB-2085', 'XLB-2085'],
+      ['jira:example/XYZ-2085', 'XYZ-2085'],
       ['branch:github.example/team/repo@fix/payment/retry', 'fix/payment/retry'],
     ] as const) {
       expect(threadEventCopy({ ...event, kind: 'link-detached', linkKey, reason: null }, []).detail).toBe(label);

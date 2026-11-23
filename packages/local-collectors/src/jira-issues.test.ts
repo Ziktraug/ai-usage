@@ -98,7 +98,7 @@ const view = (key: string, overrides: Record<string, unknown> = {}, fields: Reco
         total: 2,
       },
       customfield_10020: 'ignored',
-      parent: { key: 'XLB-2000' },
+      parent: { key: 'XYZ-2000' },
       sprint: [{ name: 'Sprint 41' }, { name: 'Sprint 42' }],
       status: { name: 'In Progress', statusCategory: { key: 'indeterminate', name: 'In Progress' } },
       summary: 'Promo badge',
@@ -113,7 +113,7 @@ const view = (key: string, overrides: Record<string, unknown> = {}, fields: Reco
 const observe = (fake: FakeAcli, options: Partial<Parameters<typeof observeJiraIssues>[0]> = {}) =>
   Effect.runPromise(
     observeJiraIssues({
-      keys: ['XLB-2090'],
+      keys: ['XYZ-2090'],
       machineId: 'machine-a',
       now: () => NOW,
       run: fake.run,
@@ -135,7 +135,7 @@ describe('personLabel', () => {
 
 describe('parseJiraIssueView', () => {
   test('maps the assumed shape, ignores unknown keys, keeps the newest comments first without addresses', () => {
-    const parsed = parseJiraIssueView(view('XLB-2090'), 'XLB-2090');
+    const parsed = parseJiraIssueView(view('XYZ-2090'), 'XYZ-2090');
     expect(parsed).toEqual({
       assigneeLabel: 'Alex',
       commentCount: 2,
@@ -153,7 +153,7 @@ describe('parseJiraIssueView', () => {
           id: '10001',
         },
       ],
-      parentKey: 'XLB-2000',
+      parentKey: 'XYZ-2000',
       sprint: 'Sprint 42',
       status: 'In Progress',
       statusCategory: 'in-progress',
@@ -164,7 +164,7 @@ describe('parseJiraIssueView', () => {
   });
   test('accepts a flat shape and absent families, and maps the three status categories', () => {
     expect(
-      parseJiraIssueView(JSON.stringify({ status: { name: 'Done', statusCategory: { key: 'done' } } }), 'XLB-1'),
+      parseJiraIssueView(JSON.stringify({ status: { name: 'Done', statusCategory: { key: 'done' } } }), 'XYZ-1'),
     ).toMatchObject({
       commentCount: null,
       comments: [],
@@ -176,21 +176,21 @@ describe('parseJiraIssueView', () => {
       updatedAt: null,
     });
     expect(
-      parseJiraIssueView(JSON.stringify({ status: { name: 'Backlog', statusCategory: { name: 'To Do' } } }), 'XLB-1')
+      parseJiraIssueView(JSON.stringify({ status: { name: 'Backlog', statusCategory: { name: 'To Do' } } }), 'XYZ-1')
         ?.statusCategory,
     ).toBe('todo');
-    expect(parseJiraIssueView(JSON.stringify({ status: 'Weird' }), 'XLB-1')?.statusCategory).toBe('unknown');
+    expect(parseJiraIssueView(JSON.stringify({ status: 'Weird' }), 'XYZ-1')?.statusCategory).toBe('unknown');
   });
   test('refuses another key, mistyped used fields and unreadable bodies', () => {
-    expect(parseJiraIssueView(view('XLB-2091'), 'XLB-2090')).toBeNull();
-    expect(parseJiraIssueView(view('XLB-2090', {}, { summary: 42 }), 'XLB-2090')).toBeNull();
-    expect(parseJiraIssueView(view('XLB-2090', {}, { status: { statusCategory: {} } }), 'XLB-2090')).toBeNull();
-    expect(parseJiraIssueView(view('XLB-2090', {}, { updated: 'yesterday' }), 'XLB-2090')).toBeNull();
+    expect(parseJiraIssueView(view('XYZ-2091'), 'XYZ-2090')).toBeNull();
+    expect(parseJiraIssueView(view('XYZ-2090', {}, { summary: 42 }), 'XYZ-2090')).toBeNull();
+    expect(parseJiraIssueView(view('XYZ-2090', {}, { status: { statusCategory: {} } }), 'XYZ-2090')).toBeNull();
+    expect(parseJiraIssueView(view('XYZ-2090', {}, { updated: 'yesterday' }), 'XYZ-2090')).toBeNull();
     expect(
-      parseJiraIssueView(view('XLB-2090', {}, { comment: { comments: [{ body: 'no date' }] } }), 'XLB-2090'),
+      parseJiraIssueView(view('XYZ-2090', {}, { comment: { comments: [{ body: 'no date' }] } }), 'XYZ-2090'),
     ).toBeNull();
-    expect(parseJiraIssueView('not json', 'XLB-2090')).toBeNull();
-    expect(parseJiraIssueView('[]', 'XLB-2090')).toBeNull();
+    expect(parseJiraIssueView('not json', 'XYZ-2090')).toBeNull();
+    expect(parseJiraIssueView('[]', 'XYZ-2090')).toBeNull();
   });
   test('bounds the excerpt and the kept comments', () => {
     const comments = Array.from({ length: 14 }, (_value, index) => ({
@@ -199,7 +199,7 @@ describe('parseJiraIssueView', () => {
       created: `2026-10-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
       id: index,
     }));
-    const parsed = parseJiraIssueView(view('XLB-2090', {}, { comment: { comments, total: 14 } }), 'XLB-2090');
+    const parsed = parseJiraIssueView(view('XYZ-2090', {}, { comment: { comments, total: 14 } }), 'XYZ-2090');
     expect(parsed?.commentCount).toBe(14);
     expect(parsed?.comments).toHaveLength(10);
     expect(parsed?.comments[0]?.id).toBe('13');
@@ -220,17 +220,17 @@ describe('httpStatusOf', () => {
 describe('observeJiraIssues through a fake acli on PATH', () => {
   test('observes issues with the assumed command, deduplicates keys, rejects placeholders and bounds the batch', async () => {
     const fake = installFakeAcli({
-      issues: { 'XLB-2090': { stdout: view('XLB-2090') }, 'XLB-2091': { stdout: view('XLB-2091') } },
+      issues: { 'XYZ-2090': { stdout: view('XYZ-2090') }, 'XYZ-2091': { stdout: view('XYZ-2091') } },
     });
     const batch = await observe(fake, {
-      keys: ['XLB-2090', 'xlb-2090 ', 'XLB-0', 'not-a-key', '2090', 'XLB-2091', 'XLB-2092'],
+      keys: ['XYZ-2090', 'xyz-2090 ', 'XYZ-0', 'not-a-key', '2090', 'XYZ-2091', 'XYZ-2092'],
       maxKeys: 2,
     });
     expect(batch.rejected).toBe(3);
     expect(batch.truncated).toBe(true);
     expect(batch.observations.map(({ key, outcome }) => [key, outcome])).toEqual([
-      ['XLB-2090', 'observed'],
-      ['XLB-2091', 'observed'],
+      ['XYZ-2090', 'observed'],
+      ['XYZ-2091', 'observed'],
     ]);
     expect(batch.observations[0]).toMatchObject({
       assigneeLabel: 'Alex',
@@ -246,7 +246,7 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
         'jira',
         'workitem',
         'view',
-        'XLB-2090',
+        'XYZ-2090',
         '--fields',
         'key,summary,status,assignee,updated,parent,comment',
         '--json',
@@ -255,7 +255,7 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
         'jira',
         'workitem',
         'view',
-        'XLB-2091',
+        'XYZ-2091',
         '--fields',
         'key,summary,status,assignee,updated,parent,comment',
         '--json',
@@ -269,11 +269,11 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
   test('classifies 401/403 as unauthenticated and halts, 404 as not found, other bodies as network', async () => {
     const forbidden = installFakeAcli({
       issues: {
-        'XLB-1': { exitCode: 1, stdout: JSON.stringify({ errorMessages: ['Forbidden'], status: 403 }) },
-        'XLB-2': { stdout: view('XLB-2') },
+        'XYZ-1': { exitCode: 1, stdout: JSON.stringify({ errorMessages: ['Forbidden'], status: 403 }) },
+        'XYZ-2': { stdout: view('XYZ-2') },
       },
     });
-    const halted = await observe(forbidden, { keys: ['XLB-1', 'XLB-2'] });
+    const halted = await observe(forbidden, { keys: ['XYZ-1', 'XYZ-2'] });
     expect(halted.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
       ['unauthenticated', 'Jira rejected the credentials (HTTP 403); sign in to Jira (acli jira auth login)'],
       [
@@ -285,43 +285,43 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
 
     const mixed = installFakeAcli({
       issues: {
-        'XLB-1': { exitCode: 1, stdout: JSON.stringify({ error: { status: '401' } }) },
+        'XYZ-1': { exitCode: 1, stdout: JSON.stringify({ error: { status: '401' } }) },
       },
     });
-    expect((await observe(mixed, { keys: ['XLB-1'] })).observations[0]?.outcome).toBe('unauthenticated');
+    expect((await observe(mixed, { keys: ['XYZ-1'] })).observations[0]?.outcome).toBe('unauthenticated');
 
     const notFound = installFakeAcli({
       issues: {
-        'XLB-1': { exitCode: 1, stdout: JSON.stringify({ errorMessages: ['Issue does not exist'], status: 404 }) },
-        'XLB-2': { exitCode: 2, stdout: JSON.stringify({ status: 500 }) },
-        'XLB-3': { exitCode: 1, stdout: 'plain text error' },
-        'XLB-4': { stdout: view('XLB-4') },
+        'XYZ-1': { exitCode: 1, stdout: JSON.stringify({ errorMessages: ['Issue does not exist'], status: 404 }) },
+        'XYZ-2': { exitCode: 2, stdout: JSON.stringify({ status: 500 }) },
+        'XYZ-3': { exitCode: 1, stdout: 'plain text error' },
+        'XYZ-4': { stdout: view('XYZ-4') },
       },
     });
-    const perKey = await observe(notFound, { keys: ['XLB-1', 'XLB-2', 'XLB-3', 'XLB-4'] });
+    const perKey = await observe(notFound, { keys: ['XYZ-1', 'XYZ-2', 'XYZ-3', 'XYZ-4'] });
     expect(perKey.observations.map(({ outcome }) => outcome)).toEqual(['not-found', 'network', 'invalid', 'observed']);
     expect(perKey.observations[1]?.outcomeMessage).toBe('Jira returned HTTP 500');
   });
 
   test('a silent failure is network and halts the run; a timeout halts it too', async () => {
-    const silent = installFakeAcli({ issues: { 'XLB-1': { exitCode: 1 }, 'XLB-2': { stdout: view('XLB-2') } } });
-    const offline = await observe(silent, { keys: ['XLB-1', 'XLB-2'] });
+    const silent = installFakeAcli({ issues: { 'XYZ-1': { exitCode: 1 }, 'XYZ-2': { stdout: view('XYZ-2') } } });
+    const offline = await observe(silent, { keys: ['XYZ-1', 'XYZ-2'] });
     expect(offline.observations.map(({ outcome }) => outcome)).toEqual(['network', 'network']);
     expect(offline.observations[0]?.outcomeMessage).toContain('without output');
     expect(silent.calls()).toHaveLength(1);
 
     const slow = installFakeAcli({
-      issues: { 'XLB-1': { delayMs: 2000, stdout: view('XLB-1') }, 'XLB-2': { stdout: view('XLB-2') } },
+      issues: { 'XYZ-1': { delayMs: 2000, stdout: view('XYZ-1') }, 'XYZ-2': { stdout: view('XYZ-2') } },
     });
     // Allow the Bun fixture to start on a busy machine, while still timing out before its 2s response.
-    const timedOut = await observe(slow, { keys: ['XLB-1', 'XLB-2'], timeoutMs: 1000 });
+    const timedOut = await observe(slow, { keys: ['XYZ-1', 'XYZ-2'], timeoutMs: 1000 });
     expect(timedOut.observations.map(({ outcome }) => outcome)).toEqual(['timeout', 'timeout']);
     expect(slow.calls()).toHaveLength(1);
   });
 
   test('a missing acli records every key as disabled after one lookup', async () => {
     const absent = installFakeAcli({}, false);
-    const batch = await observe(absent, { keys: ['XLB-1', 'XLB-2'] });
+    const batch = await observe(absent, { keys: ['XYZ-1', 'XYZ-2'] });
     expect(batch.observations.map(({ outcome, outcomeMessage }) => [outcome, outcomeMessage])).toEqual([
       ['disabled', 'acli not installed'],
       ['disabled', 'not attempted: acli not installed'],
@@ -331,19 +331,19 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
 
   test('an unexpected success body or another key is invalid, not a fact', async () => {
     const fake = installFakeAcli({
-      issues: { 'XLB-1': { stdout: 'ok' }, 'XLB-2': { stdout: view('XLB-9') } },
+      issues: { 'XYZ-1': { stdout: 'ok' }, 'XYZ-2': { stdout: view('XYZ-9') } },
     });
-    const batch = await observe(fake, { keys: ['XLB-1', 'XLB-2'] });
+    const batch = await observe(fake, { keys: ['XYZ-1', 'XYZ-2'] });
     expect(batch.observations.map(({ outcome }) => outcome)).toEqual(['invalid', 'invalid']);
     expect(batch.observations.every(({ status, comments }) => status === null && comments.length === 0)).toBe(true);
   });
 
   test('acli receives only the allow-listed environment: no token variable reaches it', async () => {
-    const fake = installFakeAcli({ issues: { 'XLB-1': { stdout: view('XLB-1') } } });
+    const fake = installFakeAcli({ issues: { 'XYZ-1': { stdout: view('XYZ-1') } } });
     const previous = process.env.JIRA_API_TOKEN;
     process.env.JIRA_API_TOKEN = 'PRIVATE_JIRA_TOKEN_SENTINEL_0042';
     try {
-      await observe(fake, { keys: ['XLB-1'] });
+      await observe(fake, { keys: ['XYZ-1'] });
     } finally {
       if (previous === undefined) {
         delete process.env.JIRA_API_TOKEN;
@@ -368,14 +368,14 @@ describe('observeJiraIssues through a fake acli on PATH', () => {
 test('Jira provides its own browser authority, including a self-hosted context path', () => {
   expect(
     parseJiraIssueView(
-      JSON.stringify({ key: 'XLB-42', self: 'https://jira.example.test/jira/rest/api/2/issue/123', fields: {} }),
-      'XLB-42',
+      JSON.stringify({ key: 'XYZ-42', self: 'https://jira.example.test/jira/rest/api/2/issue/123', fields: {} }),
+      'XYZ-42',
     )?.url,
-  ).toBe('https://jira.example.test/jira/browse/XLB-42');
+  ).toBe('https://jira.example.test/jira/browse/XYZ-42');
   expect(
     parseJiraIssueView(
-      JSON.stringify({ key: 'XLB-42', self: 'https://secret@jira.example.test/rest/api/2/issue/123', fields: {} }),
-      'XLB-42',
+      JSON.stringify({ key: 'XYZ-42', self: 'https://secret@jira.example.test/rest/api/2/issue/123', fields: {} }),
+      'XYZ-42',
     )?.url,
   ).toBeUndefined();
 });
@@ -384,7 +384,7 @@ test('Atlassian internal REST URLs use the public CLI site, read once per batch'
   const fake = installFakeAcli({
     auth: { stdout: 'Authenticated\n  Site: example.atlassian.net\n  Email: private@example.test' },
     issues: Object.fromEntries(
-      ['XLB-1', 'XLB-2'].map((key) => [
+      ['XYZ-1', 'XYZ-2'].map((key) => [
         key,
         {
           stdout: JSON.stringify({
@@ -396,10 +396,10 @@ test('Atlassian internal REST URLs use the public CLI site, read once per batch'
       ]),
     ),
   });
-  const result = await observe(fake, { keys: ['XLB-1', 'XLB-2'] });
+  const result = await observe(fake, { keys: ['XYZ-1', 'XYZ-2'] });
   expect(result.observations.map((item) => item.url)).toEqual([
-    'https://example.atlassian.net/browse/XLB-1',
-    'https://example.atlassian.net/browse/XLB-2',
+    'https://example.atlassian.net/browse/XYZ-1',
+    'https://example.atlassian.net/browse/XYZ-2',
   ]);
   expect(fake.calls().filter((call) => call.args.join(' ') === 'jira auth status')).toHaveLength(1);
   expect(JSON.stringify(result)).not.toContain('private@example.test');

@@ -6,10 +6,10 @@
 > status in `plans/README.md` only after every success criterion passes.
 >
 > **Prior art** (read before editing code):
-> - `../../exalibur-svelte/packages/effect-runtime`
-> - `../../exalibur-svelte/docs/adr/0011-effect-runtime-and-wide-event-hop-tree-observability.md`
-> - `../../exalibur-svelte/plans/done/020-wide-event-logging-effect-runtime.md`
-> - `../../../github/exalibur` branch `feat/XLB-0/effect-poc`
+> - `../../meridian-svelte/packages/effect-runtime`
+> - `../../meridian-svelte/docs/adr/0011-effect-runtime-and-wide-event-hop-tree-observability.md`
+> - `../../meridian-svelte/plans/done/020-wide-event-logging-effect-runtime.md`
+> - `../../../github/meridian` branch `feat/XYZ-0/effect-poc`
 >   (`packages/effect-runtime/src/observability`, `timer`)
 > - Local ADRs:
 >   `../docs/adr/0001-boundary-scoped-observability-on-bounded-workers.md`
@@ -17,7 +17,7 @@
 >
 > Port the model, not either package wholesale. Keep boundary-owned emission,
 > immutable hop reconstruction, a current-parent `FiberRef`, canonical
-> sanitize-on-emit, and a bounded async file appender. Drop Exalibur-specific
+> sanitize-on-emit, and a bounded async file appender. Drop Meridian-specific
 > environment labels, OpenAPI blocks, cache summaries, and slow-span views.
 
 ## Status
@@ -502,5 +502,5 @@ git diff --check
 ## References
 
 - Stripe canonical log lines and Charity Majors' wide-event guidance
-- Exalibur `@exalibur/effect-runtime` hop-tree implementation
+- Meridian `@meridian/effect-runtime` hop-tree implementation
 - Plans 022-024, which own the control plane instrumented here

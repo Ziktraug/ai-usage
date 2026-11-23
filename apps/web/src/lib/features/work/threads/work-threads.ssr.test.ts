@@ -11,7 +11,7 @@ import {
 import { threadListQuery } from '../work-thread-model';
 import { buildSessionCascade } from './work-session-cascade';
 
-const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="exaprint\/Exalibur">Exalibur</;
+const PROJECT_TAG_PATTERN = /class="wt-project-tag[^"]*" title="acmecorp\/Meridian">Meridian</;
 const SOURCE_CAPTION_PATTERN = /GitHub · [A-Z][a-z]{2} \d/;
 // Lane glyphs are hidden from assistive technology (the day button names them); legend glyphs are not.
 const DAY_MILESTONE_PATTERN = /aria-hidden="true" class="wt-mark wt-milestone" data-milestone="([^"]+)"/g;
@@ -235,7 +235,7 @@ describe('work thread SSR presentation', () => {
     const old = new Date(Date.parse(list.generatedAt) - 40 * 86_400_000).toISOString();
     const row = {
       ...payments.row,
-      thread: { ...payments.row.thread, projectLabel: 'exaprint/Exalibur' },
+      thread: { ...payments.row.thread, projectLabel: 'acmecorp/Meridian' },
       firstActivityAt: old,
       marks: [
         { at: old, fact: null, harness: 'codex', kind: 'session' as const, label: 'Old exploration', source: null },
@@ -552,7 +552,7 @@ describe('work thread SSR presentation', () => {
       nested.linkKey,
       'session:fixture-machine/claude/missing',
       'github.example/team/repo#68',
-      'jira:example/XLB-2085',
+      'jira:example/XYZ-2085',
       'branch:github.example/team/repo@fix/payment/retry',
     ];
     const data = {

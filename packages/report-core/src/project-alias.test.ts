@@ -33,20 +33,20 @@ const row = (project: string, sourcePath?: string): UsageRowWithOptionalSource =
 describe('project aliases', () => {
   test('applies first matching alias against source paths', () => {
     const rows = applyProjectAliases(
-      [row('exalibur-spike', '/Users/alex/tmp/exalibur-spike')],
+      [row('meridian-spike', '/Users/alex/tmp/meridian-spike')],
       [
-        { name: 'exalibur', match: ['*/exalibur-*'] },
-        { name: 'other', match: ['*/exalibur-spike'] },
+        { name: 'meridian', match: ['*/meridian-*'] },
+        { name: 'other', match: ['*/meridian-spike'] },
       ],
     );
 
-    expect(rows[0]?.project).toBe('exalibur');
+    expect(rows[0]?.project).toBe('meridian');
   });
 
   test('falls back to project basename when source path is missing', () => {
-    const rows = applyProjectAliases([row('exalibur')], [{ name: 'exalibur-main', match: ['exalibur'] }]);
+    const rows = applyProjectAliases([row('meridian')], [{ name: 'meridian-main', match: ['meridian'] }]);
 
-    expect(rows[0]?.project).toBe('exalibur-main');
+    expect(rows[0]?.project).toBe('meridian-main');
   });
 
   test('matches every character but the * wildcard literally', () => {

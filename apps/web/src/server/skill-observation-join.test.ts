@@ -433,7 +433,7 @@ describe('skill observation join', () => {
       observations: createSkillObservationDataset([
         observation({
           harnessKey: 'opencode',
-          resolvedPath: '/home/alex/Projects/nixos-exaprint/.agents/skills/printer',
+          resolvedPath: '/home/alex/Projects/nixos-acmecorp/.agents/skills/printer',
           skillName: 'printer',
           tier: 'declared',
         }),
@@ -441,7 +441,7 @@ describe('skill observation join', () => {
       projectPathPrefixes: ['/home/alex/Projects/nixos'],
     });
 
-    // `/home/alex/Projects/nixos-exaprint` is a different project, not a subdirectory of `nixos`.
+    // `/home/alex/Projects/nixos-acmecorp` is a different project, not a subdirectory of `nixos`.
     expect(skillNamed(result, 'printer')?.unmanagedResidence).toBe('external');
   });
 

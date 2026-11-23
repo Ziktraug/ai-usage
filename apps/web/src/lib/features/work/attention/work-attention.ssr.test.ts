@@ -133,7 +133,7 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('· observed 40 min ago');
     expect(body).toContain('checkout 3 modified · 1 untracked · 2 ahead');
     expect(body).not.toContain('checkout dirty');
-    expect(body).toContain('Jira XLB-2090 · In Progress · 2 new replies');
+    expect(body).toContain('Jira XYZ-2090 · In Progress · 2 new replies');
   });
   test('says per harness what was read and keeps a Codex row apart from nothing pending (ADR 0059)', () => {
     const body = withoutMarkers(html(EMPTY_WORK_ATTENTION_SEARCH));
@@ -215,9 +215,9 @@ describe('Work resume surface server rendering from the synthetic dataset', () =
     expect(body).toContain('data-work-detail=');
     expect(body).toContain('>Jira<');
     expect(body).toContain(
-      'Jira XLB-2090 In Progress, 2 comments, 2 new replies since the latest activity on this key',
+      'Jira XYZ-2090 In Progress, 2 comments, 2 new replies since the latest activity on this key',
     );
-    expect(body).toContain('2 comments arrived on XLB-2090 after this session family');
+    expect(body).toContain('2 comments arrived on XYZ-2090 after this session family');
     expect(body).toContain('You may have read them in Jira; this view cannot tell.');
   });
   test('the coverage line says why Jira was not observed, or that it was not', () => {
